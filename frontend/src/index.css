@@ -926,6 +926,7 @@ a:hover.hover\:underline,
 
 /* ── Notification badge pulse ── */
 @keyframes pulseNotif {
+
   0%,
   100% {
     box-shadow: 0 2px 6px rgba(249, 93, 0, 0.5);

@@ -383,10 +383,10 @@ export default function SuperAdminUsers({ session }) {
                       <td className="px-4 py-3.5 text-xs text-on-surface-variant">{dateInscrit}</td>
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-1.5 justify-end">
-                          {/* Activer / Suspendre */}
+                          {/* Activer / Suspendre / Approuver */}
                           {u.statut_compte === 'actif' ? (
                             <button
-                              onClick={() => handleEdit.name && superAdminApi.updateUser(u.id, { statut_compte: 'suspendu' }).then(() => { showToast('Compte suspendu.'); loadUsers(); }).catch(e => showError(e.message))}
+                              onClick={() => superAdminApi.updateUser(u.id, { statut_compte: 'suspendu' }).then(() => { showToast('Compte suspendu.'); loadData(); }).catch(e => showError(e.message))}
                               title="Suspendre"
                               className="w-8 h-8 rounded-xl flex items-center justify-center text-amber-500 hover:bg-amber-50 transition-colors"
                             >
@@ -394,11 +394,18 @@ export default function SuperAdminUsers({ session }) {
                             </button>
                           ) : (
                             <button
-                              onClick={() => superAdminApi.updateUser(u.id, { statut_compte: 'actif' }).then(() => { showToast('Compte activé.'); loadUsers(); }).catch(e => showError(e.message))}
-                              title="Activer"
-                              className="w-8 h-8 rounded-xl flex items-center justify-center text-emerald-600 hover:bg-emerald-50 transition-colors"
+                              onClick={() => superAdminApi.updateUser(u.id, { statut_compte: 'actif' }).then(() => { showToast('Compte approuvé et activé.'); loadData(); }).catch(e => showError(e.message))}
+                              title={u.statut_compte === 'en_attente' ? "Approuver le compte" : "Activer"}
+                              className={`h-8 px-2.5 rounded-xl flex items-center gap-1 font-bold text-xs ${
+                                u.statut_compte === 'en_attente'
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                  : 'text-emerald-600 hover:bg-emerald-50'
+                              } transition-colors`}
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>play_circle</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                                {u.statut_compte === 'en_attente' ? 'check_circle' : 'play_circle'}
+                              </span>
+                              {u.statut_compte === 'en_attente' && <span>Approuver</span>}
                             </button>
                           )}
                           {/* Modifier */}

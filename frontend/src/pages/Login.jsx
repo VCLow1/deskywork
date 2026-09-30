@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
 import { getHomePath, getPostLoginPath } from '../utils/roles';
@@ -29,6 +29,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const reason = searchParams.get('reason');
+    if (reason === 'pending') {
+      setErrorMsg('pending_approval');
+    } else if (reason === 'suspended') {
+      setErrorMsg("Votre compte a été suspendu. Contactez l'administrateur.");
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -240,7 +250,7 @@ export default function Login() {
                   <div>
                     <p className="font-bold text-sm" style={{ color: '#92400e' }}>Compte en attente d'approbation</p>
                     <p className="text-xs mt-0.5 leading-relaxed" style={{ color: '#b45309' }}>
-                      Votre compte administrateur d'espace coworking a bien été créé. Le Super Administrateur doit valider votre espace avant que vous puissiez vous connecter.
+                      Votre compte a été créé avec succès et est en attente d'approbation par le Super Administrateur. Vous pourrez vous connecter dès que votre compte aura été validé.
                     </p>
                   </div>
                 </div>

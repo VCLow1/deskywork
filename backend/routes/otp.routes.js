@@ -237,10 +237,10 @@ router.post('/otp/verify', async (req, res) => {
 });
 
 // ── POST /api/otp/auto-confirm ────────────────────────────────────────────────
-// Auto-confirme l'email dans Supabase Auth après vérification OTP et signUp
+// Auto-confirme l'email dans Supabase Auth et place le compte en attente
 // Règle d'approbation :
-// - Rôle 'admin' (Admin Coworking) -> statut_compte = 'en_attente' (nécessite validation Super Admin)
-// - Tous les autres rôles ('member', 'formateur', etc.) -> statut_compte = 'actif' (création directe sans approbation)
+// - TOUS les comptes créés (admin, member, formateur) -> statut_compte = 'en_attente'
+// - Nécessite l'approbation du Super Admin pour être activé
 router.post('/otp/auto-confirm', async (req, res) => {
   const { userId, email, role } = req.body;
   if (!userId && !email) {
@@ -267,9 +267,10 @@ router.post('/otp/auto-confirm', async (req, res) => {
         .single();
 
       const userRole = role || profile?.role || 'member';
-      const targetStatus = userRole === 'admin' ? 'en_attente' : 'actif';
+      // Règle : tous les nouveaux comptes nécessitent l'approbation du Super Admin
+      const targetStatus = 'en_attente';
 
-      // Mettre à jour le statut du compte selon la règle métier
+      // Mettre à jour le statut du compte en 'en_attente'
       await supabaseAdmin
         .from('profiles')
         .update({
@@ -280,32 +281,37 @@ router.post('/otp/auto-confirm', async (req, res) => {
 
       console.log(`✅ Compte ${idToConfirm} (${userRole}) configuré avec statut_compte = "${targetStatus}"`);
 
-      // Si c'est un compte admin en attente, notifier les super admins
-      if (userRole === 'admin') {
-        try {
-          const { data: superAdmins } = await supabaseAdmin
-            .from('profiles')
-            .select('id')
-            .eq('role', 'super_admin');
+      // Notifier les super admins pour approbation
+      try {
+        const { data: superAdmins } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('role', 'super_admin');
 
-          if (superAdmins && superAdmins.length > 0) {
-            const userName = profile ? `${profile.prenom} ${profile.nom}` : (email || 'Nouvel admin');
-            for (const sa of superAdmins) {
-              await supabaseAdmin.from('notifications').insert({
-                user_id: sa.id,
-                type: 'nouveau_coworking_en_attente',
-                canal: 'Dashboard',
-                message: `🏢 Nouvelle demande de compte Admin Coworking : ${userName} (${email || ''}) — En attente de validation.`,
-              });
-            }
+        if (superAdmins && superAdmins.length > 0) {
+          const userName = profile ? `${profile.prenom} ${profile.nom}`.trim() : (email || 'Nouvel utilisateur');
+          const roleLabels = {
+            admin: 'Admin Coworking',
+            member: 'Membre',
+            formateur: 'Formateur',
+            staff: 'Staff',
+          };
+          const roleLabel = roleLabels[userRole] || userRole;
+          for (const sa of superAdmins) {
+            await supabaseAdmin.from('notifications').insert({
+              user_id: sa.id,
+              type: 'nouveau_compte_en_attente',
+              canal: 'Dashboard',
+              message: `👤 Nouvelle inscription (${roleLabel}) : ${userName} (${email || ''}) — En attente d'approbation Super Admin.`,
+            });
           }
-        } catch (notifErr) {
-          console.warn('⚠️ Erreur notification super admin nouveau coworking:', notifErr.message);
         }
+      } catch (notifErr) {
+        console.warn('⚠️ Erreur notification super admin nouveau compte:', notifErr.message);
       }
     }
 
-    res.json({ success: true });
+    res.json({ success: true, statut_compte: 'en_attente' });
   } catch (err) {
     console.error('❌ Erreur auto-confirm:', err.message);
     res.status(500).json({ error: err.message });

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
@@ -49,106 +49,6 @@ function Field({ id, label, icon, type = 'text', value, onChange, placeholder, r
   );
 }
 
-/* ─── Composant OTP : 6 cases ─── */
-function OtpInput({ onComplete, loading, error, autoCode }) {
-  const [digits, setDigits] = useState(['', '', '', '', '', '']);
-  const refs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()];
-
-  useEffect(() => {
-    // Focus sur la première case à l'affichage
-    refs[0].current?.focus();
-  }, []);
-
-  useEffect(() => {
-    if (autoCode && autoCode.length === 6) {
-      const newDigits = autoCode.split('');
-      setDigits(newDigits);
-    }
-  }, [autoCode]);
-
-  const handleChange = (index, val) => {
-    // N'accepter que les chiffres
-    const digit = val.replace(/\D/g, '').slice(-1);
-    const newDigits = [...digits];
-    newDigits[index] = digit;
-    setDigits(newDigits);
-
-    if (digit && index < 5) {
-      // Avancer au suivant
-      refs[index + 1].current?.focus();
-    }
-
-    // Dès que le 6e chiffre est saisi → soumettre automatiquement
-    if (digit && index === 5) {
-      const fullCode = [...newDigits.slice(0, 5), digit].join('');
-      if (fullCode.length === 6) {
-        onComplete(fullCode);
-      }
-    }
-  };
-
-  const handleKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) {
-      refs[index - 1].current?.focus();
-    }
-    if (e.key === 'ArrowLeft' && index > 0) refs[index - 1].current?.focus();
-    if (e.key === 'ArrowRight' && index < 5) refs[index + 1].current?.focus();
-  };
-
-  const handlePaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (!pasted) return;
-    const newDigits = ['', '', '', '', '', ''];
-    pasted.split('').forEach((d, i) => { newDigits[i] = d; });
-    setDigits(newDigits);
-    const focusIdx = Math.min(pasted.length, 5);
-    refs[focusIdx].current?.focus();
-    if (pasted.length === 6) onComplete(pasted);
-  };
-
-  return (
-    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', margin: '8px 0', flexWrap: 'nowrap', maxWidth: '100%' }}>
-      {digits.map((d, i) => (
-        <input
-          key={i}
-          ref={refs[i]}
-          id={`otp-digit-${i}`}
-          type="text"
-          inputMode="numeric"
-          maxLength={1}
-          value={d}
-          onChange={(e) => handleChange(i, e.target.value)}
-          onKeyDown={(e) => handleKeyDown(i, e)}
-          onPaste={handlePaste}
-          disabled={loading}
-          style={{
-            width: 'clamp(36px, 13vw, 52px)',
-            height: 'clamp(46px, 16vw, 64px)',
-            textAlign: 'center',
-            fontSize: 'clamp(20px, 6vw, 28px)',
-            fontWeight: 800,
-            borderRadius: 12,
-            border: error
-              ? '2px solid #ef4444'
-              : d
-                ? '2px solid #0040a0'
-                : '2px solid #c7d8ff',
-            background: d ? '#eef2ff' : '#f8faff',
-            color: '#000d23',
-            outline: 'none',
-            transition: 'all 0.15s ease',
-            cursor: loading ? 'not-allowed' : 'text',
-            opacity: loading ? 0.6 : 1,
-            flex: '1 1 0',
-            minWidth: 0,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -164,69 +64,26 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-
-  // ── OTP ──
-  const [step, setStep] = useState('form'); // 'form' | 'otp' | 'done'
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otpError, setOtpError] = useState('');
-  const [resendTimer, setResendTimer] = useState(0);
+  const [step, setStep] = useState('form'); // 'form' | 'done'
 
   const navigate = useNavigate();
 
-  // Countdown pour "Renvoyer"
-  useEffect(() => {
-    if (resendTimer <= 0) return;
-    const t = setTimeout(() => setResendTimer(v => v - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendTimer]);
-
-  // ── Étape 1 : Envoyer OTP ─────────────────────────────────────────────────
+  // ── Création du compte (Approbation Super Admin obligatoire, sans OTP) ──────
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
     const cleanEmail = email.trim().toLowerCase();
     setEmail(cleanEmail);
+
     try {
-      const res = await fetch(`${API_URL}/api/otp/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, prenom: prenom.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur lors de l\'envoi du code.');
-
-      if (data.email) setEmail(data.email);
-      setStep('otp');
-      setResendTimer(60);
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Étape 2 : Vérifier OTP + Créer le compte ─────────────────────────────
-  const handleOtpComplete = async (code) => {
-    setOtpLoading(true);
-    setOtpError('');
-    const cleanEmail = email.trim().toLowerCase();
-    try {
-      // 1. Vérifier le code OTP
-      const verifyRes = await fetch(`${API_URL}/api/otp/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, code: code.trim() }),
-      });
-      const verifyData = await verifyRes.json();
-      if (!verifyRes.ok) throw new Error(verifyData.error || 'Code invalide.');
-
-      // 2. Créer le compte Supabase Auth
+      // 1. Préparer les données utilisateur avec statut 'en_attente'
       const userData = {
         nom: nom.trim(),
         prenom: prenom.trim(),
         telephone: telephone.trim(),
         role,
+        statut_compte: 'en_attente',
         type_membre: ['formateur', 'admin'].includes(role) ? null : typeMembre,
       };
       if (role === 'formateur') {
@@ -237,75 +94,51 @@ export default function Register() {
         userData.coworking_name = coworkingName;
       }
 
+      // 2. Créer le compte Supabase Auth
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: { data: userData },
       });
 
-      // Si l'email existe déjà dans Supabase Auth, Supabase ne renvoie pas d'erreur
-      // mais retourne un objet user avec identities vide — on le détecte ici
       if (signUpError) {
-        // Cas particulier : email déjà utilisé
-        if (signUpError.message?.toLowerCase().includes('already registered') ||
-            signUpError.message?.toLowerCase().includes('already been registered') ||
-            signUpError.message?.toLowerCase().includes('user already exists')) {
+        if (
+          signUpError.message?.toLowerCase().includes('already registered') ||
+          signUpError.message?.toLowerCase().includes('already been registered') ||
+          signUpError.message?.toLowerCase().includes('user already exists')
+        ) {
           throw new Error('Cette adresse email est déjà utilisée. Veuillez vous connecter ou utiliser une autre adresse.');
         }
         throw signUpError;
       }
 
-      // Détection du cas "email déjà enregistré" sans erreur explicite de Supabase
       if (signUpData?.user && signUpData.user.identities?.length === 0) {
         throw new Error('Cette adresse email est déjà associée à un compte. Veuillez vous connecter.');
       }
 
-      // 3. Auto-confirmer l'email via le backend (car l'utilisateur a déjà vérifié son OTP)
+      // 3. Forcer le statut 'en_attente' et notifier le Super Admin
       if (signUpData?.user?.id) {
-        const confirmRes = await fetch(`${API_URL}/api/otp/auto-confirm`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: signUpData.user.id, email: cleanEmail, role }),
-        });
-        if (!confirmRes.ok) {
-          const confirmData = await confirmRes.json().catch(() => ({}));
-          console.warn('⚠️ Auto-confirm partiel:', confirmData?.error || 'erreur inconnue');
-          // On continue quand même — le compte est créé, juste la confirmation peut nécessiter
-          // une validation manuelle dans Supabase
+        try {
+          await fetch(`${API_URL}/api/otp/auto-confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: signUpData.user.id, email: cleanEmail, role }),
+          });
+        } catch (apiErr) {
+          console.warn('⚠️ Enregistrement backend en attente:', apiErr.message);
         }
-      } else if (!signUpData?.user) {
-        // Supabase a accepté mais n'a pas renvoyé d'user — probable email de confirmation en attente
-        throw new Error(
-          'Un email de confirmation a été envoyé par notre système. ' +
-          'Vérifiez votre boîte de réception (et les spams) puis réessayez.'
-        );
       }
 
-      // 4. Succès
+      // Déconnecter immédiatement toute session auto-ouverte par Supabase
+      await supabase.auth.signOut().catch(() => {});
+
+      // 4. Passer à l'écran de succès (attente approbation Super Admin)
       setStep('done');
     } catch (err) {
-      setOtpError(err.message || 'Code incorrect. Veuillez réessayer.');
+      setErrorMsg(err.message || 'Erreur lors de la création du compte.');
     } finally {
-      setOtpLoading(false);
+      setLoading(false);
     }
-  };
-
-  // ── Renvoyer le code ──────────────────────────────────────────────────────
-  const handleResend = async () => {
-    if (resendTimer > 0) return;
-    setOtpError('');
-    const cleanEmail = email.trim().toLowerCase();
-    try {
-      const res = await fetch(`${API_URL}/api/otp/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, prenom: prenom.trim() }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setResendTimer(60);
-      }
-    } catch { }
   };
 
   const handleSocialLogin = async (provider) => {
@@ -457,156 +290,56 @@ export default function Register() {
         <main className="w-full flex-1 flex items-center justify-center px-6 py-2 relative z-10">
           <div className="w-full max-w-[520px] animate-fade-up">
 
-            {/* ── VUE SUCCÈS ─────────────────────────────────────────────── */}
+            {/* ── VUE SUCCÈS : EN ATTENTE D'APPROBATION SUPER ADMIN ────────── */}
             {step === 'done' && (
-              <div className="glass-card rounded-3xl shadow-elevated p-8 text-center">
+              <div className="glass-card rounded-3xl shadow-elevated p-8 text-center animate-fade-in">
                 <div style={{
-                  width: 80, height: 80, borderRadius: '50%', margin: '0 auto 24px',
-                  background: 'linear-gradient(135deg, #d1fae5, #a7f3d0)',
+                  width: 80, height: 80, borderRadius: '50%', margin: '0 auto 20px',
+                  background: 'linear-gradient(135deg, #fffbeb, #fef3c7)',
+                  border: '2px solid rgba(245,158,11,0.25)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 40,
-                }}>✅</div>
-                <h1 className="font-sora text-2xl font-bold text-primary mb-3">
-                  Email vérifié !
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#d97706' }}>
+                    schedule
+                  </span>
+                </div>
+
+                <h1 className="font-sora text-2xl font-bold text-primary mb-2">
+                  Demande d'inscription enregistrée !
                 </h1>
-                {role === 'admin' ? (
-                  <>
-                    <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-                      Votre demande de création d'espace coworking a été enregistrée avec succès.<br />
-                      Votre compte est actuellement <strong>en attente d'approbation</strong> par le Super Admin.<br />
-                      Vous recevrez un email dès que votre espace sera validé.
+                
+                <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
+                  Merci <strong>{prenom} {nom}</strong>. Votre compte a bien été créé.<br />
+                  Il est actuellement <strong>en attente d'approbation par le Super Administrateur</strong>.
+                </p>
+
+                <div style={{
+                  background: '#fffbeb', border: '1px solid rgba(245,158,11,0.35)',
+                  borderRadius: 16, padding: '18px 20px', marginBottom: 28,
+                  display: 'flex', gap: 12, alignItems: 'flex-start',
+                }}>
+                  <span className="material-symbols-outlined" style={{ color: '#d97706', fontSize: 22, flexShrink: 0, marginTop: 2 }}>
+                    verified_user
+                  </span>
+                  <div style={{ textAlign: 'left' }}>
+                    <p style={{ margin: '0 0 4px', color: '#92400e', fontSize: 14, fontWeight: 700 }}>
+                      Validation manuelle requise
                     </p>
-                    <div style={{
-                      background: '#fffbeb', border: '1px solid rgba(245,158,11,0.3)',
-                      borderRadius: 12, padding: '14px 18px', marginBottom: 24,
-                      display: 'flex', gap: 10, alignItems: 'flex-start',
-                    }}>
-                      <span className="material-symbols-outlined" style={{ color: '#d97706', fontSize: 20, flexShrink: 0 }}>schedule</span>
-                      <p style={{ margin: 0, color: '#92400e', fontSize: 13, lineHeight: 1.6, textAlign: 'left' }}>
-                        <strong>En attente d'approbation Super Admin</strong><br />
-                        Le Super Administrateur valide votre espace sous 24h. Vous pourrez ensuite configurer vos tarifs, salles et disponibilités.
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-                      Félicitations <strong>{prenom}</strong>, votre compte a été créé et activé avec succès !<br />
-                      Vous pouvez dès maintenant vous connecter pour réserver vos espaces et accéder aux services.
+                    <p style={{ margin: 0, color: '#b45309', fontSize: 13, lineHeight: 1.55 }}>
+                      L'accès à la plateforme est soumis à la validation du Super Administrateur. Dès que votre compte sera approuvé, vous pourrez vous connecter directement.
                     </p>
-                    <div style={{
-                      background: '#f0fdf4', border: '1px solid rgba(34,197,94,0.3)',
-                      borderRadius: 12, padding: '14px 18px', marginBottom: 24,
-                      display: 'flex', gap: 10, alignItems: 'flex-start',
-                    }}>
-                      <span className="material-symbols-outlined" style={{ color: '#16a34a', fontSize: 20, flexShrink: 0 }}>check_circle</span>
-                      <p style={{ margin: 0, color: '#15803d', fontSize: 13, lineHeight: 1.6, textAlign: 'left' }}>
-                        <strong>Compte actif immédiatement</strong><br />
-                        Votre adresse email est confirmée. Vous pouvez vous connecter immédiatement.
-                      </p>
-                    </div>
-                  </>
-                )}
+                  </div>
+                </div>
+
                 <button
                   onClick={() => navigate('/login')}
-                  className="btn-primary w-full"
+                  className="btn-primary w-full flex items-center justify-center gap-2"
                   style={{ padding: '12px 24px', borderRadius: 12 }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span>
-                  Aller à la connexion
+                  Retour à la page de connexion
                 </button>
               </div>
-            )}
-
-            {/* ── VUE OTP ────────────────────────────────────────────────── */}
-            {step === 'otp' && (
-              <>
-                <div className="text-center mb-4">
-                  <h1 className="font-sora text-2xl font-bold text-primary">Vérification email</h1>
-                  <p className="text-on-surface-variant text-sm mt-1">
-                    Un code à 6 chiffres a été envoyé à<br />
-                    <strong style={{ color: '#0040a0' }}>{email}</strong>
-                  </p>
-                </div>
-
-                <div className="glass-card rounded-3xl shadow-elevated p-6">
-
-                  {/* Icône */}
-                  <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                    <div style={{
-                      width: 64, height: 64, borderRadius: '50%', margin: '0 auto',
-                      background: 'linear-gradient(135deg, #dae2ff, #eef1ff)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 32,
-                    }}>🔐</div>
-                  </div>
-
-                  <p style={{ textAlign: 'center', color: '#5a6a8a', fontSize: 14, marginBottom: 20 }}>
-                    Saisissez le code — le compte sera créé automatiquement dès le 6e chiffre
-                  </p>
-
-                  {/* Cases OTP */}
-                  <OtpInput
-                    onComplete={handleOtpComplete}
-                    loading={otpLoading}
-                    error={!!otpError}
-                  />
-
-                  {/* Erreur OTP */}
-                  {otpError && (
-                    <div style={{
-                      marginTop: 12, padding: '10px 14px', borderRadius: 10,
-                      background: '#ffdad6', color: '#93000a',
-                      display: 'flex', gap: 8, alignItems: 'center', fontSize: 13,
-                    }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>error</span>
-                      {otpError}
-                    </div>
-                  )}
-
-                  {/* Chargement */}
-                  {otpLoading && (
-                    <div style={{ textAlign: 'center', marginTop: 16, color: '#0040a0', fontSize: 14 }}>
-                      <span className="animate-spin material-symbols-outlined" style={{ fontSize: 20, verticalAlign: 'middle', marginRight: 6 }}>refresh</span>
-                      Vérification et création du compte…
-                    </div>
-                  )}
-
-                  {/* Renvoyer */}
-                  <div style={{ textAlign: 'center', marginTop: 20 }}>
-                    {resendTimer > 0 ? (
-                      <p style={{ color: '#8a9ab5', fontSize: 13 }}>
-                        Renvoyer dans <strong>{resendTimer}s</strong>
-                      </p>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleResend}
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#0040a0', fontSize: 13, fontWeight: 600, textDecoration: 'underline',
-                        }}
-                      >
-                        Renvoyer le code
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Retour */}
-                  <div style={{ textAlign: 'center', marginTop: 12 }}>
-                    <button
-                      type="button"
-                      onClick={() => { setStep('form'); setOtpError(''); }}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: '#8a9ab5', fontSize: 12,
-                      }}
-                    >
-                      ← Modifier mon email
-                    </button>
-                  </div>
-                </div>
-              </>
             )}
 
             {/* ── VUE FORMULAIRE ─────────────────────────────────────────── */}
@@ -849,12 +582,12 @@ export default function Register() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="btn-primary w-full mt-2"
-                      style={{ padding: '8px 24px', borderRadius: 12 }}
+                      className="btn-primary w-full mt-2 flex items-center justify-center gap-2"
+                      style={{ padding: '10px 24px', borderRadius: 12 }}
                     >
                       {loading
-                        ? <><span className="animate-spin material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span> Envoi du code…</>
-                        : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>mail</span> Recevoir le code de vérification</>
+                        ? <><span className="animate-spin material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span> Création du compte…</>
+                        : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>person_add</span> Créer mon compte</>
                       }
                     </button>
                   </form>
