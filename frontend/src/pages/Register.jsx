@@ -118,6 +118,12 @@ export default function Register() {
 
       // 3. Forcer le statut 'en_attente' et notifier le Super Admin
       if (signUpData?.user?.id) {
+        // Mise à jour directe du profil dans Supabase
+        await supabase
+          .from('profiles')
+          .update({ statut_compte: 'en_attente' })
+          .eq('id', signUpData.user.id);
+
         try {
           await fetch(`${API_URL}/api/otp/auto-confirm`, {
             method: 'POST',

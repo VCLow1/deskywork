@@ -1,0 +1,54 @@
+services:
+  - type: web
+    name: deskywork-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: COWORKING_NAME
+        value: DeskyWork
+      - key: COWORKING_EMAIL
+        value: contact@deskywork.tn
+      - key: COWORKING_TEL
+        value: "+216 52 882 880 / +216 52 882 930"
+      - key: COWORKING_ADRESSE
+        value: "Tunis, Tunisie"
+      - key: DESKYWORK_LOGO_URL
+        value: https://fgqwtbbxtgvnpxtmauua.supabase.co/storage/v1/object/public/avatars/branding/deskywork-logo.png
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 465
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        value: "DeskyWork <alabendawed@gmail.com>"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_CURRENCY
+        value: usd
+      - key: FRONTEND_URL
+        value: https://deskywork.vercel.app
+      - key: WHATSAPP_PROVIDER
+        value: greenapi
+      - key: GREEN_API_URL
+        value: https://7107.api.greenapi.com
+      - key: GREEN_API_INSTANCE_ID
+        sync: false
+      - key: GREEN_API_TOKEN
+        sync: false
