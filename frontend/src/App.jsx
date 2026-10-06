@@ -245,7 +245,7 @@ export default function App() {
 
     <ProtectedRoute>
 
-      <RoleGuard session={session} requireAdmin>
+      <RoleGuard session={session} requireSuperAdmin>
 
         {children}
 

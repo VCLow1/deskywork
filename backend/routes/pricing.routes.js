@@ -1,6 +1,6 @@
 // routes/pricing.routes.js — Routes Tarification & Codes Promo
 const express = require('express');
-const router = Router = express.Router();
+const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
 const ctrl = require('../controllers/pricingController');

@@ -12,9 +12,13 @@ function getRoleFromSession(session) {
   );
 }
 
-export function RoleGuard({ session, requireAdmin = false, requireMember = false, requireTrainer = false, requireBooker = false, children }) {
+export function RoleGuard({ session, requireSuperAdmin = false, requireAdmin = false, requireMember = false, requireTrainer = false, requireBooker = false, children }) {
   // Lecture synchrone depuis les métadonnées JWT — 0 appel DB, 0 délai
   const role = getRoleFromSession(session) ?? 'member';
+
+  if (requireSuperAdmin && role !== 'super_admin') {
+    return <Navigate to={getHomePath(role)} replace />;
+  }
 
   if (requireAdmin && !isAdminRole(role)) {
     return <Navigate to={getHomePath(role)} replace />;

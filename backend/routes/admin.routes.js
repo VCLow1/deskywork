@@ -17,18 +17,18 @@ const {
 } = require('../controllers/adminController');
 
 // Tenant (coworking)
-router.get('/admin/tenant', authenticate, requireRoles('admin', 'staff'), getTenant);
-router.patch('/admin/tenant', authenticate, requireRoles('admin'), updateTenant);
+router.get('/admin/tenant', authenticate, requireRoles('super_admin', 'admin', 'staff'), getTenant);
+router.patch('/admin/tenant', authenticate, requireRoles('super_admin', 'admin'), updateTenant);
 
 // Espaces
-router.post('/admin/espaces', authenticate, requireRoles('admin'), createEspace);
-router.patch('/admin/espaces/:id', authenticate, requireRoles('admin'), updateEspace);
-router.delete('/admin/espaces/:id', authenticate, requireRoles('admin'), deleteEspace);
+router.post('/admin/espaces', authenticate, requireRoles('super_admin', 'admin'), createEspace);
+router.patch('/admin/espaces/:id', authenticate, requireRoles('super_admin', 'admin'), updateEspace);
+router.delete('/admin/espaces/:id', authenticate, requireRoles('super_admin', 'admin'), deleteEspace);
 router.post('/admin/upload', authenticate, uploadPhoto);
 router.post('/upload', authenticate, uploadPhoto);
 
 // Onboarding
-router.post('/admin/onboarding/complete', authenticate, requireRoles('admin'), completeOnboarding);
+router.post('/admin/onboarding/complete', authenticate, requireRoles('super_admin', 'admin'), completeOnboarding);
 
 // Membres (list)
 router.get('/admin/members', authenticate, requireRoles('super_admin', 'admin', 'staff'), listMembers);

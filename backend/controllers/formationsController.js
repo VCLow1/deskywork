@@ -194,7 +194,7 @@ async function createFormation(req, res) {
 
 async function updateFormation(req, res) {
   try {
-    const isStaff = ['admin', 'staff'].includes(req.profile.role);
+    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile.role);
     const { data: existing, error: fetchErr } = await supabaseAdmin
       .from('formations').select('*').eq('id', req.params.id).single();
     if (fetchErr || !existing) return res.status(404).json({ error: 'Formation introuvable.' });
@@ -276,7 +276,7 @@ async function updateFormation(req, res) {
 
 async function deleteFormation(req, res) {
   try {
-    const isAdmin = ['admin'].includes(req.profile.role);
+    const isAdmin = ['super_admin', 'admin'].includes(req.profile.role);
     const isFormateur = req.profile.role === 'formateur';
 
     if (!isAdmin && !isFormateur) {

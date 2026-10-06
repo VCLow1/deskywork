@@ -189,6 +189,12 @@ function emitConversationUpdate(userId, data) {
   emitToUser(userId, 'conversation:update', data);
 }
 
+function emitNotification(userId, notification) {
+  if (io && userId) {
+    io.to(`user:${userId}`).emit('notification:new', notification);
+  }
+}
+
 module.exports = {
   initSocket,
   getIO,
@@ -201,4 +207,5 @@ module.exports = {
   emitTimerUpdate,
   emitMessageReceived,
   emitConversationUpdate,
+  emitNotification,
 };

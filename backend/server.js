@@ -68,11 +68,22 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 
-// ── Route publique : réservation invité ───────────────────────────────────
-const { router: guestRouter } = require('./routes/modulesHJKLN');
-// (guestRouter inclus via modulesHJKLN ci-dessous)
+// ── Healthcheck ───────────────────────────────────────────────────────────
+app.get(['/health', '/api/health'], (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'deskywork-backend',
+    version: '1.0.0',
+  });
+});
 
 // ── Montage des routes ────────────────────────────────────────────────────
 app.use('/api', superAdminRoutes);
@@ -97,6 +108,16 @@ app.use('/api', passwordRoutes);
 // ── Modules H, J, K, L, N (router factory) ───────────────────────────────
 const modulesHJKLNRouter = createModulesHJKLNRouter({ supabaseAdmin, authenticate, requireRoles, applyTenantFilter });
 app.use('/api', modulesHJKLNRouter);
+
+// ── 404 & Error Handlers ───────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: `Route non trouvée : ${req.method} ${req.originalUrl}` });
+});
+
+app.use((err, req, res, next) => {
+  console.error('❌ Erreur serveur:', err);
+  res.status(err.status || 500).json({ error: err.message || 'Erreur interne du serveur' });
+});
 
 // ── Cron Jobs ─────────────────────────────────────────────────────────────
 startPaymentRemindersCron(supabaseAdmin);
