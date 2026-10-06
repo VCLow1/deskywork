@@ -75,10 +75,11 @@ app.use(express.json({
   },
 }));
 
-// ── Healthcheck ───────────────────────────────────────────────────────────
-app.get(['/health', '/api/health'], (req, res) => {
+// ── Healthcheck & Accueil API ─────────────────────────────────────────────
+app.get(['/', '/health', '/api/health'], (req, res) => {
   res.json({
     status: 'ok',
+    message: 'API DeskyWork opérationnelle',
     timestamp: new Date().toISOString(),
     service: 'deskywork-backend',
     version: '1.0.0',
