@@ -117,9 +117,13 @@ export default function App() {
           .single();
 
         if (!error && profile && profile.statut_compte && profile.statut_compte !== 'actif') {
+          const reason = profile.statut_compte === 'en_attente' ? 'pending' : 'suspended';
           localStorage.setItem('pending_auth_status', profile.statut_compte);
           await supabase.auth.signOut();
           setSession(null);
+          if (!window.location.pathname.includes('/login')) {
+            window.location.replace(`/login?reason=${reason}`);
+          }
         }
       } catch (_) {}
     };

@@ -32,10 +32,12 @@ export default function Login() {
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
-    const reason = searchParams.get('reason');
-    if (reason === 'pending') {
+    const reason = searchParams.get('reason') || localStorage.getItem('pending_auth_status');
+    if (reason === 'pending' || reason === 'en_attente') {
+      localStorage.removeItem('pending_auth_status');
       setErrorMsg('pending_approval');
-    } else if (reason === 'suspended') {
+    } else if (reason === 'suspended' || reason === 'suspendu') {
+      localStorage.removeItem('pending_auth_status');
       setErrorMsg("Votre compte a été suspendu. Contactez l'administrateur.");
     }
   }, [searchParams]);
@@ -55,14 +57,18 @@ export default function Login() {
 
       // Compte en attente d'approbation
       if (profile?.statut_compte === 'en_attente') {
+        localStorage.setItem('pending_auth_status', 'en_attente');
         await supabase.auth.signOut();
+        navigate('/login?reason=pending', { replace: true });
         setErrorMsg('pending_approval');
         return;
       }
       // Compte suspendu
       if (profile?.statut_compte && profile.statut_compte !== 'actif') {
+        localStorage.setItem('pending_auth_status', 'suspendu');
         await supabase.auth.signOut();
-        setErrorMsg('Votre compte a été suspendu. Contactez l\'administrateur.');
+        navigate('/login?reason=suspended', { replace: true });
+        setErrorMsg("Votre compte a été suspendu. Contactez l'administrateur.");
         return;
       }
 
