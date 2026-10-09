@@ -238,19 +238,19 @@ export default function Login() {
               </p>
             </div>
 
-            {/* Alerte — En attente d'approbation */}
+            {/* Alerte — En attente d'approbation (Admin Coworking) */}
             {errorMsg === 'pending_approval' && (
               <div className="mb-6 p-4 rounded-2xl animate-fade-in border"
                 style={{ background: 'linear-gradient(135deg, #fffbeb, #fef3c7)', borderColor: 'rgba(245,158,11,0.25)' }}>
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
                     style={{ background: 'rgba(245,158,11,0.15)' }}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#d97706' }}>schedule</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#d97706' }}>domain</span>
                   </div>
                   <div>
-                    <p className="font-bold text-sm" style={{ color: '#92400e' }}>Compte en attente d'approbation</p>
+                    <p className="font-bold text-sm" style={{ color: '#92400e' }}>Espace de coworking en attente d'approbation</p>
                     <p className="text-xs mt-0.5 leading-relaxed" style={{ color: '#b45309' }}>
-                      Votre compte a été créé avec succès et est en attente d'approbation par le Super Administrateur. Vous pourrez vous connecter dès que votre compte aura été validé.
+                      Votre demande de création d'espace de coworking a été enregistrée et est en attente d'approbation par le Super Administrateur. Vous pourrez vous connecter dès que l'espace sera validé.
                     </p>
                   </div>
                 </div>

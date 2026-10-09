@@ -68,7 +68,7 @@ export default function Register() {
 
   const navigate = useNavigate();
 
-  // ── Création du compte (Approbation Super Admin obligatoire, sans OTP) ──────
+  // ── Création du compte (Approbation Super Admin UNIQUEMENT pour admin coworking) ──────
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -76,14 +76,17 @@ export default function Register() {
     const cleanEmail = email.trim().toLowerCase();
     setEmail(cleanEmail);
 
+    const isCoworkingAdmin = role === 'admin';
+    const initialStatus = isCoworkingAdmin ? 'en_attente' : 'actif';
+
     try {
-      // 1. Préparer les données utilisateur avec statut 'en_attente'
+      // 1. Préparer les données utilisateur avec le statut adapté
       const userData = {
         nom: nom.trim(),
         prenom: prenom.trim(),
         telephone: telephone.trim(),
         role,
-        statut_compte: 'en_attente',
+        statut_compte: initialStatus,
         type_membre: ['formateur', 'admin'].includes(role) ? null : typeMembre,
       };
       if (role === 'formateur') {
@@ -116,12 +119,11 @@ export default function Register() {
         throw new Error('Cette adresse email est déjà associée à un compte. Veuillez vous connecter.');
       }
 
-      // 3. Forcer le statut 'en_attente' et notifier le Super Admin
+      // 3. Mettre à jour le profil et confirmer côté backend
       if (signUpData?.user?.id) {
-        // Mise à jour directe du profil dans Supabase
         await supabase
           .from('profiles')
-          .update({ statut_compte: 'en_attente' })
+          .update({ statut_compte: initialStatus })
           .eq('id', signUpData.user.id);
 
         try {
@@ -131,15 +133,19 @@ export default function Register() {
             body: JSON.stringify({ userId: signUpData.user.id, email: cleanEmail, role }),
           });
         } catch (apiErr) {
-          console.warn('⚠️ Enregistrement backend en attente:', apiErr.message);
+          console.warn('⚠️ Enregistrement backend:', apiErr.message);
         }
       }
 
-      // Déconnecter immédiatement toute session auto-ouverte par Supabase
-      await supabase.auth.signOut().catch(() => {});
-
-      // 4. Passer à l'écran de succès (attente approbation Super Admin)
-      setStep('done');
+      // 4. Distinction selon le rôle :
+      if (isCoworkingAdmin) {
+        // Seule la création d'espace de coworking attend l'approbation du Super Admin
+        await supabase.auth.signOut().catch(() => {});
+        setStep('done_coworking');
+      } else {
+        // Tous les autres comptes (membres, formateurs) sont actifs immédiatement
+        setStep('done_normal');
+      }
     } catch (err) {
       setErrorMsg(err.message || 'Erreur lors de la création du compte.');
     } finally {
@@ -296,8 +302,8 @@ export default function Register() {
         <main className="w-full flex-1 flex items-center justify-center px-6 py-2 relative z-10">
           <div className="w-full max-w-[520px] animate-fade-up">
 
-            {/* ── VUE SUCCÈS : EN ATTENTE D'APPROBATION SUPER ADMIN ────────── */}
-            {step === 'done' && (
+            {/* ── VUE SUCCÈS : EN ATTENTE D'APPROBATION SUPER ADMIN (ADMIN COWORKING UNIQUEMENT) ── */}
+            {step === 'done_coworking' && (
               <div className="glass-card rounded-3xl shadow-elevated p-8 text-center animate-fade-in">
                 <div style={{
                   width: 80, height: 80, borderRadius: '50%', margin: '0 auto 20px',
@@ -306,17 +312,17 @@ export default function Register() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#d97706' }}>
-                    schedule
+                    domain
                   </span>
                 </div>
 
                 <h1 className="font-sora text-2xl font-bold text-primary mb-2">
-                  Demande d'inscription enregistrée !
+                  Demande d'espace coworking enregistrée !
                 </h1>
                 
                 <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-                  Merci <strong>{prenom} {nom}</strong>. Votre compte a bien été créé.<br />
-                  Il est actuellement <strong>en attente d'approbation par le Super Administrateur</strong>.
+                  Merci <strong>{prenom} {nom}</strong>. Votre demande pour l'espace <strong>{coworkingName || 'de coworking'}</strong> a bien été enregistrée.<br />
+                  Elle est actuellement <strong>en attente d'approbation par le Super Administrateur</strong>.
                 </p>
 
                 <div style={{
@@ -332,7 +338,7 @@ export default function Register() {
                       Validation manuelle requise
                     </p>
                     <p style={{ margin: 0, color: '#b45309', fontSize: 13, lineHeight: 1.55 }}>
-                      L'accès à la plateforme est soumis à la validation du Super Administrateur. Dès que votre compte sera approuvé, vous pourrez vous connecter directement.
+                      Seule la création d'un espace de coworking requiert la validation du Super Administrateur. Dès son approbation, vous pourrez vous connecter pour configurer vos espaces et vos offres.
                     </p>
                   </div>
                 </div>
@@ -344,6 +350,58 @@ export default function Register() {
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span>
                   Retour à la page de connexion
+                </button>
+              </div>
+            )}
+
+            {/* ── VUE SUCCÈS : COMPTE NORMAL (MEMBRE OU FORMATEUR) CRÉÉ IMMÉDIATEMENT ── */}
+            {step === 'done_normal' && (
+              <div className="glass-card rounded-3xl shadow-elevated p-8 text-center animate-fade-in">
+                <div style={{
+                  width: 80, height: 80, borderRadius: '50%', margin: '0 auto 20px',
+                  background: 'linear-gradient(135deg, #ecfdf5, #d1fae5)',
+                  border: '2px solid rgba(16,185,129,0.25)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#059669' }}>
+                    check_circle
+                  </span>
+                </div>
+
+                <h1 className="font-sora text-2xl font-bold text-primary mb-2">
+                  Compte créé avec succès !
+                </h1>
+                
+                <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
+                  Bienvenue <strong>{prenom} {nom}</strong> ! Votre compte a été activé immédiatement.<br />
+                  Vous pouvez dès à présent vous connecter et profiter de l'écosystème DeskyWork.
+                </p>
+
+                <div style={{
+                  background: '#f0fdf4', border: '1px solid rgba(34,197,94,0.3)',
+                  borderRadius: 16, padding: '18px 20px', marginBottom: 28,
+                  display: 'flex', gap: 12, alignItems: 'flex-start',
+                }}>
+                  <span className="material-symbols-outlined" style={{ color: '#16a34a', fontSize: 22, flexShrink: 0, marginTop: 2 }}>
+                    verified
+                  </span>
+                  <div style={{ textAlign: 'left' }}>
+                    <p style={{ margin: '0 0 4px', color: '#15803d', fontSize: 14, fontWeight: 700 }}>
+                      Compte actif immédiatement
+                    </p>
+                    <p style={{ margin: 0, color: '#166534', fontSize: 13, lineHeight: 1.55 }}>
+                      Aucune approbation n'est requise pour votre compte. Connectez-vous avec vos identifiants pour accéder directement à votre espace.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => navigate('/login')}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                  style={{ padding: '12px 24px', borderRadius: 12 }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span>
+                  Se connecter maintenant
                 </button>
               </div>
             )}
@@ -471,6 +529,17 @@ export default function Register() {
                           ))}
                         </select>
                       </div>
+                      {role === 'admin' ? (
+                        <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200/80 rounded-xl px-3 py-2 flex items-center gap-2 mt-1">
+                          <span className="material-symbols-outlined text-[16px] text-amber-600 shrink-0">info</span>
+                          <span>La création d'un espace de coworking requiert l'approbation du Super Administrateur avant son ouverture.</span>
+                        </p>
+                      ) : (
+                        <p className="text-[12px] text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-xl px-3 py-2 flex items-center gap-2 mt-1">
+                          <span className="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">check_circle</span>
+                          <span>Votre compte sera actif immédiatement dès l'inscription (accès sans attente).</span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Type de membre (uniquement pour les membres) */}
