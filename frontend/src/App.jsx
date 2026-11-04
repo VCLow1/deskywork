@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { supabase } from './supabaseClient';
 
 import { RoleGuard, HomeRedirect } from './components/auth/RoleGuard';
+import { LanguageProvider } from './context/LanguageContext';
 
 const Landing = lazy(() => import('./pages/Landing'));
 const Login = lazy(() => import('./pages/Login'));
@@ -60,6 +61,12 @@ const SuperAdminEspaces = lazy(() => import('./pages/SuperAdminEspaces'));
 const AdminEspaces = lazy(() => import('./pages/AdminEspaces'));
 const AdminCoworkingProfile = lazy(() => import('./pages/AdminCoworkingProfile'));
 const CoworkingDetail = lazy(() => import('./pages/CoworkingDetail'));
+const ProfileChoice = lazy(() => import('./pages/ProfileChoice'));
+const SpaceOnboarding = lazy(() => import('./pages/SpaceOnboarding'));
+const TrainerOnboarding = lazy(() => import('./pages/TrainerOnboarding'));
+const SelectSpace = lazy(() => import('./pages/SelectSpace'));
+const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
+const SuperAdminValidation = lazy(() => import('./pages/SuperAdminValidation'));
 
 function LoadingFallback() {
   // Skeleton transparent — évite le flash blanc au lazy-load des pages
@@ -264,6 +271,7 @@ export default function App() {
   return (
 
     <Router>
+    <LanguageProvider>
       <Suspense fallback={<LoadingFallback />}>
         <Routes>
 
@@ -954,6 +962,7 @@ export default function App() {
 
         </Routes>
       </Suspense>
+    </LanguageProvider>
     </Router>
 
   );

@@ -1,8 +1,10 @@
+// pages/Login.jsx — Écran de connexion unique pour tous les profils & redirection contextuelle
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
-import { getHomePath, getPostLoginPath } from '../utils/roles';
+import { useLanguage, LanguageSwitcher } from '../context/LanguageContext';
+import { authUnifiedApi } from '../services/api/authUnified';
 
 /* ─── Icône SVG Google ─── */
 const GoogleIcon = () => (
@@ -14,178 +16,222 @@ const GoogleIcon = () => (
   </svg>
 );
 
-/* ─── Icône SVG LinkedIn ─── */
-const LinkedInIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-    <rect width="48" height="48" rx="8" fill="#0077B5" />
-    <path fill="white" d="M13 18h5v17h-5V18zm2.5-7a2.9 2.9 0 1 1 0 5.8A2.9 2.9 0 0 1 15.5 11zM21 18h4.8v2.3h.1c.7-1.3 2.3-2.7 4.7-2.7C35.7 17.6 37 20 37 24.3V35h-5v-9.7c0-2.3-.8-3.9-2.7-3.9-1.5 0-2.4 1-2.8 2-.1.4-.2.9-.2 1.4V35h-5V18z" />
-  </svg>
-);
-
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  useEffect(() => {
-    const reason = searchParams.get('reason') || localStorage.getItem('pending_auth_status');
-    if (reason === 'pending' || reason === 'en_attente') {
-      localStorage.removeItem('pending_auth_status');
-      setErrorMsg('pending_approval');
-    } else if (reason === 'suspended' || reason === 'suspendu') {
-      localStorage.removeItem('pending_auth_status');
-      setErrorMsg("Votre compte a été suspendu. Contactez l'administrateur.");
-    }
-  }, [searchParams]);
+  // Mode de connexion : 'password' | 'phone_otp'
+  const [loginMode, setLoginMode] = useState('password');
 
-  const handleLogin = async (e) => {
+  // Champs Mot de passe
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+
+  // Champs OTP WhatsApp/SMS
+  const [phone, setPhone] = useState('+216 ');
+  const [phoneOtpCode, setPhoneOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCountdown, setOtpCountdown] = useState(60);
+
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Vérifier les messages dans l'URL
+  useEffect(() => {
+    const reason = searchParams.get('reason');
+    if (reason === 'pending') {
+      setErrorMsg(t('login.pendingApprovalAlert'));
+    } else if (reason === 'suspended') {
+      setErrorMsg(t('login.suspendedAlert'));
+    }
+  }, [searchParams, t]);
+
+  // Compte à rebours OTP
+  useEffect(() => {
+    if (!otpSent || otpCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setOtpCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [otpSent, otpCountdown]);
+
+  // ── Redirection après connexion réussie ──────────────────────────────────────
+  const handlePostLoginRedirect = async (user) => {
+    try {
+      const context = await authUnifiedApi.getMyContext();
+
+      if (context.hasMultipleOrgs) {
+        // L'utilisateur appartient à plusieurs organisations -> sélecteur d'espace
+        navigate('/select-space', { replace: true });
+        return;
+      }
+
+      if (context.memberships?.length === 1) {
+        const org = context.memberships[0].organization;
+        localStorage.setItem('active_org_id', org.id);
+      }
+
+      navigate(context.recommendedRedirect || '/dashboard', { replace: true });
+    } catch (_) {
+      // Fallback
+      navigate('/dashboard', { replace: true });
+    }
+  };
+
+  // ── 1. Connexion Email + Mot de passe ───────────────────────────────────────
+  const handlePasswordLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
+
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
       if (error) throw error;
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, statut_compte')
-        .eq('id', data.user.id)
-        .single();
 
-      // Compte en attente d'approbation
-      if (profile?.statut_compte === 'en_attente') {
-        localStorage.setItem('pending_auth_status', 'en_attente');
-        await supabase.auth.signOut();
-        navigate('/login?reason=pending', { replace: true });
-        setErrorMsg('pending_approval');
-        return;
-      }
-      // Compte suspendu
-      if (profile?.statut_compte && profile.statut_compte !== 'actif') {
-        localStorage.setItem('pending_auth_status', 'suspendu');
-        await supabase.auth.signOut();
-        navigate('/login?reason=suspended', { replace: true });
-        setErrorMsg("Votre compte a été suspendu. Contactez l'administrateur.");
-        return;
-      }
-
-      navigate(await getPostLoginPath(supabase, data.user.id, profile?.role));
-    } catch (error) {
-      const msg = typeof error?.message === 'string' ? error.message
-        : typeof error === 'string' ? error
-          : JSON.stringify(error) || 'Erreur de connexion.';
-      setErrorMsg(msg);
+      await handlePostLoginRedirect(data.user);
+    } catch (err) {
+      setErrorMsg(err.message || 'Identifiants incorrects.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSocialLogin = async (provider) => {
+  // ── 2. Connexion Sociale Google ────────────────────────────────────────────
+  const handleGoogleLogin = async () => {
     setErrorMsg('');
     try {
       const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
       });
       if (error) throw error;
     } catch (err) {
-      setErrorMsg(err.message || 'Erreur lors de la connexion sociale.');
+      setErrorMsg(err.message || 'Erreur Google OAuth.');
+    }
+  };
+
+  // ── 3. Envoi OTP Téléphone WhatsApp/SMS ─────────────────────────────────────
+  const handleSendPhoneOtp = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      await authUnifiedApi.sendPhoneOtp({ phone: phone.trim(), channel: 'whatsapp' });
+      setOtpSent(true);
+      setOtpCountdown(60);
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur lors de l\'envoi du code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 4. Vérification OTP Téléphone pour Login ────────────────────────────────
+  const handleVerifyPhoneOtpLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      const verifyRes = await authUnifiedApi.verifyPhoneOtp({
+        phone: phone.trim(),
+        code: phoneOtpCode.trim(),
+      });
+
+      if (!verifyRes.success) throw new Error(t('otp.invalidCode'));
+
+      // Connexion via session Supabase
+      const { data: { session } } = await supabase.auth.getSession();
+      await handlePostLoginRedirect(session?.user);
+    } catch (err) {
+      setErrorMsg(err.message || t('otp.invalidCode'));
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen min-w-0 flex font-inter text-on-surface">
+    <div className="min-h-screen min-w-0 flex font-inter text-on-surface bg-[#f8fafc]">
 
       {/* ══════════════════════════════════════════
-          PANNEAU GAUCHE — Illustratif (desktop only)
+          PANNEAU GAUCHE — Illustratif (Desktop)
           ══════════════════════════════════════════ */}
       <div
         className="hidden lg:flex flex-col justify-between shrink-0"
         aria-hidden="true"
         style={{
-          width: '46%',
-          minWidth: 340,
+          width: '45%',
+          minWidth: 380,
           padding: '40px 48px',
           background: 'linear-gradient(145deg, #100f0d 0%, #1c1b18 50%, #291a0c 100%)',
           position: 'relative',
           overflow: 'hidden',
         }}
       >
-        {/* Blobs décoratifs */}
         <div style={{
-          position: 'absolute', top: -80, right: -60,
-          width: 400, height: 400, borderRadius: '50%', opacity: 0.25,
+          position: 'absolute', top: -100, right: -80,
+          width: 420, height: 420, borderRadius: '50%', opacity: 0.22,
           background: 'radial-gradient(circle, #f95d00, transparent)',
           pointerEvents: 'none',
         }} />
         <div style={{
-          position: 'absolute', bottom: -60, left: -40,
-          width: 300, height: 300, borderRadius: '50%', opacity: 0.15,
+          position: 'absolute', bottom: -80, left: -60,
+          width: 320, height: 320, borderRadius: '50%', opacity: 0.15,
           background: 'radial-gradient(circle, #ffedd8, transparent)',
           pointerEvents: 'none',
         }} />
 
-        {/* Logo haut gauche */}
         <div style={{ position: 'relative', zIndex: 10 }}>
-          <BrandLogo to="/" light height={56} />
+          <BrandLogo to="/" light height={54} />
         </div>
 
-        {/* Contenu central */}
-        <div style={{ position: 'relative', zIndex: 10, width: '100%' }} className="animate-fade-up">
-          {/* Badge */}
+        <div style={{ position: 'relative', zIndex: 10 }} className="animate-fade-up">
           <span
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '6px 16px', borderRadius: 99,
               fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-              background: 'rgba(249,93,0,0.12)', color: '#f95d00',
-              border: '1px solid rgba(249,93,0,0.25)',
-              marginBottom: 24,
+              background: 'rgba(249,93,0,0.14)', color: '#f95d00',
+              border: '1px solid rgba(249,93,0,0.3)',
+              marginBottom: 20,
             }}
           >
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', animation: 'pulse 2s infinite', flexShrink: 0 }} />
-            Espace sécurisé
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', animation: 'pulse 2s infinite' }} />
+            Connexion sécurisée
           </span>
 
-          {/* Titre */}
           <h2
             className="font-sora"
-            style={{ color: '#fbffff', fontWeight: 700, fontSize: 'clamp(28px, 3.5vw, 44px)', lineHeight: 1.18, marginBottom: 16 }}
+            style={{ color: '#fbffff', fontWeight: 700, fontSize: 'clamp(28px, 3.2vw, 42px)', lineHeight: 1.18, marginBottom: 16 }}
           >
-            Votre espace<br />
-            <span style={{ color: '#f95d00' }}>de travail</span><br />
-            vous attend.
+            Un seul login,<br />
+            <span style={{ color: '#f95d00' }}>tous vos espaces</span><br />
+            et activités.
           </h2>
 
-          {/* Description */}
-          <p
-            style={{
-              color: 'rgba(251,255,255,0.75)',
-              fontSize: 15, lineHeight: 1.65,
-              marginBottom: 28,
-              width: '100%',
-              overflowWrap: 'break-word',
-            }}
-          >
-            Accédez à des espaces premium, gérez vos réservations et suivez votre abonnement en temps réel.
+          <p style={{ color: 'rgba(251,255,255,0.75)', fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
+            Basculez librement entre vos rôles de particulier, formateur ou gérant sans jamais avoir à recréer de compte.
           </p>
 
-          {/* Features */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
-              { icon: 'wifi', text: 'Wi-Fi fibre gigabit symétrique' },
-              { icon: 'lock', text: 'Accès biométrique 24h/7j' },
-              { icon: 'support_agent', text: 'Conciergerie dédiée on-site' },
+              { icon: 'lock', text: 'Chiffrement de bout en bout et RLS stricte' },
+              { icon: 'swap_horiz', text: 'Changement d\'organisation en 1 clic' },
+              { icon: 'bolt', text: 'Accès instantané à la marketplace et aux sessions' },
             ].map(({ icon, text }) => (
               <div key={icon} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                    background: 'rgba(249,93,0,0.15)', color: '#f95d00',
+                    background: 'rgba(249,93,0,0.18)', color: '#f95d00',
                   }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{icon}</span>
@@ -196,202 +242,262 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Stats bas */}
-        <div
-          style={{ position: 'relative', zIndex: 10, display: 'flex', gap: 32 }}
-          className="animate-fade-up delay-200"
-        >
-          {[
-            { value: '3', label: 'Sites premium' },
-            { value: '200+', label: 'Membres actifs' },
-            { value: '24/7', label: 'Accès garanti' },
-          ].map(({ value, label }) => (
-            <div key={label}>
-              <div className="font-sora" style={{ fontSize: 22, fontWeight: 700, color: '#fbffff' }}>{value}</div>
-              <div style={{ fontSize: 11, color: 'rgba(251,255,255,0.6)', marginTop: 2 }}>{label}</div>
-            </div>
-          ))}
+        <div style={{ position: 'relative', zIndex: 10, display: 'flex', gap: 28 }}>
+          <div>
+            <div className="font-sora text-white text-xl font-bold">24/7</div>
+            <div className="text-xs text-white/60">Accès garanti</div>
+          </div>
+          <div>
+            <div className="font-sora text-white text-xl font-bold">Multi-tenant</div>
+            <div className="text-xs text-white/60">Isolation des données</div>
+          </div>
         </div>
       </div>
 
       {/* ══════════════════════════════════════════
-          PANNEAU DROIT — Formulaire
+          PANNEAU DROIT — Formulaire de connexion
           ══════════════════════════════════════════ */}
       <div className="w-full min-w-0 flex-1 page-gradient flex flex-col relative overflow-hidden">
-        {/* Blobs background */}
-        <div className="absolute -bottom-24 -right-24 w-80 h-80 rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(249,93,0,0.08), transparent)' }} />
-        <div className="absolute -top-24 -left-24 w-80 h-80 rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(16,15,13,0.06), transparent)' }} />
-
-        {/* Header mobile — logo visible uniquement sur petit écran */}
-        <header className="auth-mobile-header lg:hidden flex items-center justify-between px-6 py-4 relative z-10">
-          <BrandLogo to="/" />
-          <Link to="/register" className="text-secondary font-semibold text-sm hover:underline">
-            Créer un compte
-          </Link>
+        {/* Header */}
+        <header className="flex items-center justify-between px-6 py-4 relative z-10 border-b border-outline-variant/15">
+          <div className="lg:hidden">
+            <BrandLogo to="/" height={38} />
+          </div>
+          <div className="hidden lg:block" />
+          <div className="flex items-center gap-4">
+            <LanguageSwitcher />
+            <Link to="/register" className="text-sm font-semibold text-secondary hover:underline">
+              {t('common.register')}
+            </Link>
+          </div>
         </header>
 
-        {/* Formulaire centré */}
-        <main className="w-full flex-1 flex items-center justify-center px-6 py-4 relative z-10">
+        {/* Contenu centré */}
+        <main className="w-full flex-1 flex items-center justify-center px-4 sm:px-6 py-8 relative z-10">
           <div className="w-full max-w-[440px] animate-fade-up">
 
-            {/* En-tête form */}
-            <div className="text-center mb-5">
-              <h1 className="font-sora text-2xl font-bold text-[#100f0d] mb-1">Bon retour</h1>
-              <p className="text-body-sm text-on-surface-variant">
-                Connectez-vous pour accéder à votre espace
+            <div className="text-center mb-6">
+              <h1 className="font-sora text-2xl sm:text-3xl font-bold text-[#100f0d] mb-1">
+                {t('login.title')}
+              </h1>
+              <p className="text-xs sm:text-sm text-on-surface-variant">
+                {t('login.subtitle')}
               </p>
             </div>
 
-            {/* Alerte — En attente d'approbation (Admin Coworking) */}
-            {errorMsg === 'pending_approval' && (
-              <div className="mb-6 p-4 rounded-2xl animate-fade-in border"
-                style={{ background: 'linear-gradient(135deg, #fffbeb, #fef3c7)', borderColor: 'rgba(245,158,11,0.25)' }}>
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(245,158,11,0.15)' }}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#d97706' }}>domain</span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-sm" style={{ color: '#92400e' }}>Espace de coworking en attente d'approbation</p>
-                    <p className="text-xs mt-0.5 leading-relaxed" style={{ color: '#b45309' }}>
-                      Votre demande de création d'espace de coworking a été enregistrée et est en attente d'approbation par le Super Administrateur. Vous pourrez vous connecter dès que l'espace sera validé.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Alerte erreur classique */}
-            {errorMsg && errorMsg !== 'pending_approval' && (
-              <div className="mb-6 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in"
-                style={{ background: '#ffdad6', color: '#93000a', border: '1px solid rgba(186,26,26,0.15)' }}>
+            {errorMsg && (
+              <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in bg-red-50 text-red-700 border border-red-200">
                 <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
                 <span>{errorMsg}</span>
               </div>
             )}
 
+            <div className="glass-card rounded-3xl shadow-elevated p-6 sm:p-8 space-y-5">
+              {/* Connexion Sociale Google */}
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-slate-50 transition-all shadow-sm active:scale-[0.98]"
+              >
+                <GoogleIcon /> {t('common.orContinueWith')} {t('login.withGoogle')}
+              </button>
 
-            {/* Card form */}
-            <div className="glass-card rounded-3xl shadow-elevated p-6 space-y-5">
-              {/* Connexion sociale */}
               <div className="flex items-center gap-4">
-                <div className="flex-1 h-px bg-outline-variant/30" />
-                <span className="text-label-sm text-on-surface-variant font-medium whitespace-nowrap">OU CONTINUER AVEC</span>
-                <div className="flex-1 h-px bg-outline-variant/30" />
+                <div className="flex-1 h-px bg-outline-variant/25" />
+                <span className="text-[11px] text-on-surface-variant font-medium uppercase tracking-wider">
+                  {t('common.or')}
+                </span>
+                <div className="flex-1 h-px bg-outline-variant/25" />
               </div>
 
-              <div className="auth-social-grid grid grid-cols-2 gap-3">
+              {/* Sélecteur de méthode : Mot de passe OU OTP WhatsApp */}
+              <div className="flex p-1 bg-surface-container-low rounded-xl border border-outline-variant/20 text-xs font-semibold">
                 <button
                   type="button"
-                  onClick={() => handleSocialLogin('google')}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-surface-container-low hover:-translate-y-px transition-all active:scale-[0.97] shadow-sm"
+                  onClick={() => setLoginMode('password')}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    loginMode === 'password'
+                      ? 'bg-white text-on-surface shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
                 >
-                  <GoogleIcon /> Google
+                  Email + Mot de passe
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSocialLogin('linkedin_oidc')}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-surface-container-low hover:-translate-y-px transition-all active:scale-[0.97] shadow-sm"
+                  onClick={() => setLoginMode('phone_otp')}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${
+                    loginMode === 'phone_otp'
+                      ? 'bg-white text-on-surface shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
                 >
-                  <LinkedInIcon /> LinkedIn
+                  Code WhatsApp
                 </button>
               </div>
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                {/* Email */}
-                <div className="space-y-1.5">
-                  <label className="block text-label-sm font-semibold text-on-surface" htmlFor="login-email">
-                    Adresse email
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                      <span className="material-symbols-outlined" style={{ fontSize: 19 }}>mail</span>
-                    </span>
-                    <input
-                      id="login-email"
-                      type="email"
-                      required
-                      autoComplete="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="form-input"
-                      placeholder="nom@entreprise.com"
-                    />
-                  </div>
-                </div>
-
-                {/* Mot de passe */}
-                <div className="space-y-1.5">
-                  <label className="block text-label-sm font-semibold text-on-surface" htmlFor="login-password">
-                    Mot de passe
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                      <span className="material-symbols-outlined" style={{ fontSize: 19 }}>lock</span>
-                    </span>
-                    <input
-                      id="login-password"
-                      type={showPwd ? 'text' : 'password'}
-                      required
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="form-input"
-                      style={{ paddingRight: 44 }}
-                      placeholder="••••••••"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPwd((v) => !v)}
-                      className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-outline hover:text-secondary transition-colors"
-                      tabIndex={-1}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
-                        {showPwd ? 'visibility_off' : 'visibility'}
+              {/* Formulaire Mot de passe classique */}
+              {loginMode === 'password' && (
+                <form onSubmit={handlePasswordLogin} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-on-surface" htmlFor="login-email">
+                      {t('login.emailLabel')}
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
+                        <span className="material-symbols-outlined text-[19px]">mail</span>
                       </span>
-                    </button>
+                      <input
+                        id="login-email"
+                        type="email"
+                        required
+                        autoComplete="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder={t('login.emailPlaceholder')}
+                        className="form-input pl-10"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="text-right -mt-1">
-                  <Link to="/forgot-password" className="text-sm font-semibold text-secondary hover:underline">
-                    Mot de passe oublié ?
-                  </Link>
-                </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-on-surface" htmlFor="login-password">
+                      {t('login.passwordLabel')}
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
+                        <span className="material-symbols-outlined text-[19px]">lock</span>
+                      </span>
+                      <input
+                        id="login-password"
+                        type={showPwd ? 'text' : 'password'}
+                        required
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder={t('login.passwordPlaceholder')}
+                        className="form-input pl-10 pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPwd(!showPwd)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline hover:text-on-surface"
+                      >
+                        <span className="material-symbols-outlined text-[19px]">
+                          {showPwd ? 'visibility_off' : 'visibility'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
 
-                {/* CTA */}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="btn-primary w-full mt-2"
-                  style={{ padding: '14px 24px', borderRadius: 12 }}
-                >
-                  {loading
-                    ? <><span className="animate-spin material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span> Connexion…</>
-                    : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span> Se connecter</>
-                  }
-                </button>
-              </form>
+                  <div className="text-right">
+                    <Link to="/forgot-password" className="text-xs font-semibold text-secondary hover:underline">
+                      {t('login.forgotPassword')}
+                    </Link>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="btn-primary w-full py-3 rounded-xl font-semibold text-sm shadow-md flex items-center justify-center gap-2"
+                  >
+                    {loading ? (
+                      <><span className="animate-spin material-symbols-outlined text-[18px]">refresh</span> {t('login.submitting')}</>
+                    ) : (
+                      <><span className="material-symbols-outlined text-[18px]">login</span> {t('login.submitBtn')}</>
+                    )}
+                  </button>
+                </form>
+              )}
+
+              {/* Formulaire Connexion Rapide OTP WhatsApp */}
+              {loginMode === 'phone_otp' && (
+                <div className="space-y-4">
+                  {!otpSent ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-on-surface-variant leading-relaxed">
+                        {t('login.phoneOtpDesc')}
+                      </p>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-on-surface">
+                          Numéro de téléphone
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          placeholder="+216 99 999 999"
+                          className="form-input"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={loading || !phone || phone.length < 8}
+                        onClick={handleSendPhoneOtp}
+                        className="btn-primary w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+                      >
+                        {loading ? t('common.loading') : t('login.sendOtp')}
+                      </button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleVerifyPhoneOtpLogin} className="space-y-4">
+                      <p className="text-xs text-on-surface-variant">
+                        Entrez le code reçu sur WhatsApp ({phone})
+                      </p>
+                      <input
+                        type="text"
+                        maxLength={6}
+                        autoFocus
+                        required
+                        value={phoneOtpCode}
+                        onChange={(e) => setPhoneOtpCode(e.target.value.replace(/\D/g, ''))}
+                        placeholder="••••••"
+                        className="form-input text-center text-2xl tracking-[0.5em] font-mono py-2.5 font-bold"
+                      />
+                      <button
+                        type="submit"
+                        disabled={loading || phoneOtpCode.length < 6}
+                        className="btn-primary w-full py-3 rounded-xl font-semibold text-sm"
+                      >
+                        {loading ? t('otp.verifying') : t('otp.verifyBtn')}
+                      </button>
+                      <div className="flex items-center justify-center gap-3 text-xs">
+                        <button
+                          type="button"
+                          disabled={otpCountdown > 0 || loading}
+                          onClick={handleSendPhoneOtp}
+                          className={otpCountdown > 0 ? 'text-outline-variant' : 'text-secondary hover:underline'}
+                        >
+                          {otpCountdown > 0 ? t('common.retryIn', { seconds: otpCountdown }) : t('common.resend')}
+                        </button>
+                        <span>•</span>
+                        <button
+                          type="button"
+                          onClick={() => setOtpSent(false)}
+                          className="text-on-surface-variant hover:underline"
+                        >
+                          Changer de numéro
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
 
             </div>
 
-            {/* Lien inscription */}
-            <p className="text-center text-body-sm text-on-surface-variant mt-5">
-              Pas encore de compte ?{' '}
+            <p className="text-center text-xs text-on-surface-variant mt-5">
+              {t('login.noAccount')}{' '}
               <Link to="/register" className="text-secondary font-semibold hover:underline">
-                Créer un compte
+                {t('login.createAccountLink')}
               </Link>
             </p>
           </div>
         </main>
 
-        {/* Footer */}
-        <footer className="relative z-10 text-center py-2 px-6">
-          <p className="text-[10px] text-outline-variant">
-            © {new Date().getFullYear()} DeskyWork · Tous droits réservés
-          </p>
+        <footer className="relative z-10 text-center py-4 px-6 text-xs text-on-surface-variant/70 border-t border-outline-variant/10">
+          © {new Date().getFullYear()} {t('common.appName')} · {t('common.rightsReserved')}
         </footer>
       </div>
     </div>

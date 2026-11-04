@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+// pages/Register.jsx — Inscription Étape 1 : Formulaire minimal, OTP Email obligatoire & Téléphone
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
+import { useLanguage, LanguageSwitcher } from '../context/LanguageContext';
+import { authUnifiedApi } from '../services/api/authUnified';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-/* ─── SVG Icons ─── */
+/* ─── Icône SVG Google ─── */
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
     <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
@@ -15,182 +16,169 @@ const GoogleIcon = () => (
   </svg>
 );
 
-const LinkedInIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-    <rect width="48" height="48" rx="8" fill="#0077B5" />
-    <path fill="white" d="M13 18h5v17h-5V18zm2.5-7a2.9 2.9 0 1 1 0 5.8A2.9 2.9 0 0 1 15.5 11zM21 18h4.8v2.3h.1c.7-1.3 2.3-2.7 4.7-2.7C35.7 17.6 37 20 37 24.3V35h-5v-9.7c0-2.3-.8-3.9-2.7-3.9-1.5 0-2.4 1-2.8 2-.1.4-.2.9-.2 1.4V35h-5V18z" />
-  </svg>
-);
-
-/* ─── Field composant réutilisable ─── */
-function Field({ id, label, icon, type = 'text', value, onChange, placeholder, required = false, rightAddon }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor={id}>
-        {label}
-      </label>
-      <div className="relative">
-        <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
-        </span>
-        <input
-          id={id}
-          type={type}
-          required={required}
-          value={value}
-          onChange={onChange}
-          className="form-input"
-          style={rightAddon ? { paddingRight: 44 } : {}}
-          placeholder={placeholder}
-        />
-        {rightAddon}
-      </div>
-    </div>
-  );
-}
-
 export default function Register() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Étape de flux : 'form' | 'email_otp' | 'phone_otp'
+  const [currentStep, setCurrentStep] = useState('form');
+
+  // Champs formulaire minimal
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
-  const [telephone, setTelephone] = useState('');
-  const [typeMembre, setTypeMembre] = useState('individuel');
-  const [role, setRole] = useState('member');
-  const [specialite, setSpecialite] = useState('');
-  const [biographie, setBiographie] = useState('');
-  const [coworkingName, setCoworkingName] = useState('');
+  const [email, setEmail] = useState('');
+  const [telephone, setTelephone] = useState('+216 ');
+  const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+
+  // OTP
+  const [emailOtpCode, setEmailOtpCode] = useState('');
+  const [phoneOtpCode, setPhoneOtpCode] = useState('');
+  const [otpCountdown, setOtpCountdown] = useState(60);
+  const [userId, setUserId] = useState(null);
+
+  // États de chargement et erreurs
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [step, setStep] = useState('form'); // 'form' | 'done'
 
-  const navigate = useNavigate();
+  // Compte à rebours pour le renvoi d'OTP
+  useEffect(() => {
+    if (otpCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setOtpCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [otpCountdown]);
 
-  // ── Création du compte (Approbation Super Admin UNIQUEMENT pour admin coworking) ──────
-  const handleRegister = async (e) => {
+  // Récupérer le token d'invitation éventuel dans l'URL
+  const inviteToken = searchParams.get('invite_token');
+
+  // ── 1. Soumission Formulaire Minimal ─────────────────────────────────────────
+  const handleSubmitForm = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
-    const cleanEmail = email.trim().toLowerCase();
-    setEmail(cleanEmail);
-
-    const isCoworkingAdmin = role === 'admin';
-    const initialStatus = isCoworkingAdmin ? 'en_attente' : 'actif';
+    setSuccessMsg('');
 
     try {
-      // 1. Préparer les données utilisateur avec le statut adapté
-      const userData = {
+      const res = await authUnifiedApi.registerStep1({
         nom: nom.trim(),
         prenom: prenom.trim(),
+        email: email.trim().toLowerCase(),
         telephone: telephone.trim(),
-        role,
-        statut_compte: initialStatus,
-        type_membre: ['formateur', 'admin'].includes(role) ? null : typeMembre,
-      };
-      if (role === 'formateur') {
-        userData.specialite = specialite;
-        userData.biographie = biographie;
-      }
-      if (role === 'admin') {
-        userData.coworking_name = coworkingName;
-      }
-
-      // 2. Créer le compte Supabase Auth
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: cleanEmail,
         password,
-        options: { data: userData },
       });
 
-      if (signUpError) {
-        if (
-          signUpError.message?.toLowerCase().includes('already registered') ||
-          signUpError.message?.toLowerCase().includes('already been registered') ||
-          signUpError.message?.toLowerCase().includes('user already exists')
-        ) {
-          throw new Error('Cette adresse email est déjà utilisée. Veuillez vous connecter ou utiliser une autre adresse.');
-        }
-        throw signUpError;
-      }
-
-      if (signUpData?.user && signUpData.user.identities?.length === 0) {
-        throw new Error('Cette adresse email est déjà associée à un compte. Veuillez vous connecter.');
-      }
-
-      // 3. Mettre à jour le profil et confirmer côté backend
-      if (signUpData?.user?.id) {
-        await supabase
-          .from('profiles')
-          .update({ statut_compte: initialStatus })
-          .eq('id', signUpData.user.id);
-
-        try {
-          await fetch(`${API_URL}/api/otp/auto-confirm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: signUpData.user.id, email: cleanEmail, role }),
-          });
-        } catch (apiErr) {
-          console.warn('⚠️ Enregistrement backend:', apiErr.message);
-        }
-      }
-
-      // 4. Distinction selon le rôle :
-      if (isCoworkingAdmin) {
-        // Seule la création d'espace de coworking attend l'approbation du Super Admin
-        await supabase.auth.signOut().catch(() => {});
-        setStep('done_coworking');
-      } else {
-        // Tous les autres comptes (membres, formateurs) sont actifs immédiatement
-        setStep('done_normal');
-      }
+      setUserId(res.userId);
+      setCurrentStep('email_otp');
+      setOtpCountdown(60);
+      setSuccessMsg(t('otp.codeSent'));
     } catch (err) {
-      setErrorMsg(err.message || 'Erreur lors de la création du compte.');
+      setErrorMsg(err.message || t('common.error'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSocialLogin = async (provider) => {
+  // ── 2. Vérification OTP Email ──────────────────────────────────────────────
+  const handleVerifyEmailOtp = async (e) => {
+    e.preventDefault();
+    if (!emailOtpCode || emailOtpCode.length < 6) {
+      setErrorMsg(t('otp.invalidCode'));
+      return;
+    }
+
+    setLoading(true);
     setErrorMsg('');
+
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+      await authUnifiedApi.verifyEmailOtp({
+        email: email.trim().toLowerCase(),
+        code: emailOtpCode.trim(),
+        userId,
       });
-      if (error) throw error;
+
+      // Connexion de la session locale avec Supabase
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      if (signInErr) {
+        console.warn('Auto sign-in notice:', signInErr.message);
+      }
+
+      // Si l'utilisateur est arrivé via une invitation, redirection vers l'invitation
+      if (inviteToken) {
+        navigate(`/invite/${inviteToken}`, { replace: true });
+        return;
+      }
+
+      // Sinon, passage à l'étape 2 "Vous êtes… ?"
+      navigate('/onboarding/choose-profile', {
+        state: { userId: userId || signInData?.user?.id, email, telephone },
+        replace: true,
+      });
     } catch (err) {
-      setErrorMsg(err.message || 'Erreur lors de la connexion sociale.');
+      setErrorMsg(err.message || t('otp.invalidCode'));
+    } finally {
+      setLoading(false);
     }
   };
 
-  const memberTypes = [
-    { value: 'individuel', label: 'Individuel', icon: 'person', desc: 'Freelance, consultant, indépendant' },
-    { value: 'entreprise', label: 'Entreprise', icon: 'business', desc: 'Équipe ou société' },
-    { value: 'etudiant', label: 'Étudiant', icon: 'school', desc: 'Tarif réduit étudiant' },
-  ];
+  // Renvoyer le code OTP email
+  const handleResendEmailOtp = async () => {
+    if (otpCountdown > 0) return;
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      await authUnifiedApi.registerStep1({
+        nom,
+        prenom,
+        email: email.trim().toLowerCase(),
+        telephone,
+        password,
+      });
+      setOtpCountdown(60);
+      setSuccessMsg(t('otp.codeSent'));
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const roleTypes = [
-    { value: 'member', label: 'Membre', icon: 'person', desc: 'Accéder aux espaces de coworking' },
-    { value: 'formateur', label: 'Formateur', icon: 'school', desc: 'Créer et animer des formations' },
-    { value: 'admin', label: 'Admin Coworking', icon: 'domain', desc: 'Gérer mon espace de coworking' }
-  ];
+  // ── 3. Connexion Sociale Google ────────────────────────────────────────────
+  const handleGoogleSignUp = async () => {
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur Google OAuth.');
+    }
+  };
 
   return (
-    <div className="min-h-screen min-w-0 flex font-inter text-on-surface">
+    <div className="min-h-screen min-w-0 flex font-inter text-on-surface bg-[#f8fafc]">
 
       {/* ══════════════════════════════════════════
-          PANNEAU GAUCHE — Illustratif (desktop only)
+          PANNEAU GAUCHE — Illustratif (Desktop)
           ══════════════════════════════════════════ */}
       <div
-        className="hidden lg:flex flex-col justify-center shrink-0"
+        className="hidden lg:flex flex-col justify-between shrink-0"
         aria-hidden="true"
         style={{
-          width: '46%',
-          minWidth: 340,
-          padding: '32px 40px',
+          width: '45%',
+          minWidth: 380,
+          padding: '40px 48px',
           background: 'linear-gradient(145deg, #100f0d 0%, #1c1b18 50%, #291a0c 100%)',
           position: 'relative',
           overflow: 'hidden',
@@ -198,498 +186,338 @@ export default function Register() {
       >
         {/* Blobs décoratifs */}
         <div style={{
-          position: 'absolute', top: -80, right: -60,
-          width: 350, height: 350, borderRadius: '50%', opacity: 0.25,
+          position: 'absolute', top: -100, right: -80,
+          width: 420, height: 420, borderRadius: '50%', opacity: 0.22,
           background: 'radial-gradient(circle, #f95d00, transparent)',
           pointerEvents: 'none',
         }} />
         <div style={{
-          position: 'absolute', bottom: -60, left: -40,
-          width: 280, height: 280, borderRadius: '50%', opacity: 0.15,
+          position: 'absolute', bottom: -80, left: -60,
+          width: 320, height: 320, borderRadius: '50%', opacity: 0.15,
           background: 'radial-gradient(circle, #ffedd8, transparent)',
           pointerEvents: 'none',
         }} />
 
-        {/* Logo haut */}
-        <div style={{ position: 'relative', zIndex: 10, marginBottom: '40px' }}>
-          <BrandLogo to="/" light height={56} />
+        {/* Logo haut gauche */}
+        <div style={{ position: 'relative', zIndex: 10 }}>
+          <BrandLogo to="/" light height={54} />
         </div>
 
         {/* Contenu central */}
-        <div style={{ position: 'relative', zIndex: 10, width: '100%' }} className="animate-fade-up">
-          {/* Badge */}
+        <div style={{ position: 'relative', zIndex: 10 }} className="animate-fade-up">
           <span
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '4px 12px', borderRadius: 99,
-              fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-              background: 'rgba(249,93,0,0.12)', color: '#f95d00',
-              border: '1px solid rgba(249,93,0,0.25)',
-              marginBottom: 12,
+              padding: '6px 16px', borderRadius: 99,
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+              background: 'rgba(249,93,0,0.14)', color: '#f95d00',
+              border: '1px solid rgba(249,93,0,0.3)',
+              marginBottom: 20,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>star</span>
-            Rejoindre la communauté
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', animation: 'pulse 2s infinite' }} />
+            {t('register.badge')}
           </span>
 
-          {/* Titre */}
           <h2
             className="font-sora"
-            style={{ color: '#fbffff', fontWeight: 700, fontSize: 'clamp(24px, 3vw, 36px)', lineHeight: 1.18, marginBottom: 12 }}
+            style={{ color: '#fbffff', fontWeight: 700, fontSize: 'clamp(28px, 3.2vw, 42px)', lineHeight: 1.18, marginBottom: 16 }}
           >
-            Rejoignez<br />
-            <span style={{ color: '#f95d00' }}>l&apos;élite</span><br />
-            des workspace.
+            {t('register.heroTitle1')}<br />
+            <span style={{ color: '#f95d00' }}>{t('register.heroTitleHighlight')}</span><br />
+            {t('register.heroTitle2')}
           </h2>
 
-          {/* Description */}
-          <p
-            style={{
-              color: 'rgba(251,255,255,0.75)',
-              fontSize: 14, lineHeight: 1.6,
-              marginBottom: 16,
-              width: '100%',
-              overflowWrap: 'break-word',
-            }}
-          >
-            Créez votre profil membre et accédez à l&apos;ensemble de l&apos;écosystème DeskyWork.
+          <p style={{ color: 'rgba(251,255,255,0.75)', fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
+            {t('register.heroDesc')}
           </p>
 
-          {/* Avantages */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
-              { icon: 'bolt', text: 'Réservation en 3 clics' },
-              { icon: 'qr_code_2', text: 'QR Code d\'accès instantané' },
-              { icon: 'notifications', text: 'Alertes temps réel' },
-              { icon: 'receipt_long', text: 'Factures et historique complets' },
+              { icon: 'account_circle', text: 'Un compte unique : particulier, gérant ou formateur' },
+              { icon: 'domain', text: 'Multi-organisations & sélecteur d\'espace instantané' },
+              { icon: 'verified_user', text: 'Sécurité renforcée par OTP et permissions isolées' },
             ].map(({ icon, text }) => (
-              <div key={icon} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div key={icon} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                    background: 'rgba(249,93,0,0.15)', color: '#f95d00',
+                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                    background: 'rgba(249,93,0,0.18)', color: '#f95d00',
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{icon}</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{icon}</span>
                 </span>
-                <span style={{ color: 'rgba(251,255,255,0.85)', fontSize: 13 }}>{text}</span>
+                <span style={{ color: 'rgba(251,255,255,0.85)', fontSize: 14 }}>{text}</span>
               </div>
             ))}
           </div>
         </div>
 
+        {/* Footer panneau */}
+        <div style={{ position: 'relative', zIndex: 10, display: 'flex', gap: 24 }}>
+          <div>
+            <div className="font-sora text-white text-xl font-bold">100%</div>
+            <div className="text-xs text-white/60">Multi-tenant sécurisé</div>
+          </div>
+          <div>
+            <div className="font-sora text-white text-xl font-bold">0 €</div>
+            <div className="text-xs text-white/60">Inscription gratuite</div>
+          </div>
+        </div>
       </div>
 
       {/* ══════════════════════════════════════════
-          PANNEAU DROIT — Formulaire / OTP / Succès
+          PANNEAU DROIT — Formulaire & Vérification
           ══════════════════════════════════════════ */}
       <div className="w-full min-w-0 flex-1 page-gradient flex flex-col relative overflow-hidden">
-        {/* Blobs */}
-        <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(249,93,0,0.07), transparent)' }} />
-        <div className="absolute -bottom-24 -left-24 w-80 h-80 rounded-full pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(16,15,13,0.05), transparent)' }} />
-
-        {/* Header mobile */}
-        <header className="auth-mobile-header lg:hidden flex items-center justify-between px-6 py-4 relative z-10">
-          <BrandLogo to="/" />
-          <Link to="/login" className="text-secondary font-semibold text-sm hover:underline">
-            Se connecter
-          </Link>
+        {/* Header avec sélecteur de langue */}
+        <header className="flex items-center justify-between px-6 py-4 relative z-10 border-b border-outline-variant/15">
+          <div className="lg:hidden">
+            <BrandLogo to="/" height={38} />
+          </div>
+          <div className="hidden lg:block" />
+          <div className="flex items-center gap-4">
+            <LanguageSwitcher />
+            <Link to="/login" className="text-sm font-semibold text-secondary hover:underline">
+              {t('common.login')}
+            </Link>
+          </div>
         </header>
 
-        <main className="w-full flex-1 flex items-center justify-center px-6 py-2 relative z-10">
-          <div className="w-full max-w-[520px] animate-fade-up">
+        {/* Contenu principal */}
+        <main className="w-full flex-1 flex items-center justify-center px-4 sm:px-6 py-8 relative z-10">
+          <div className="w-full max-w-[480px] animate-fade-up">
 
-            {/* ── VUE SUCCÈS : EN ATTENTE D'APPROBATION SUPER ADMIN (ADMIN COWORKING UNIQUEMENT) ── */}
-            {step === 'done_coworking' && (
-              <div className="glass-card rounded-3xl shadow-elevated p-8 text-center animate-fade-in">
-                <div style={{
-                  width: 80, height: 80, borderRadius: '50%', margin: '0 auto 20px',
-                  background: 'linear-gradient(135deg, #fffbeb, #fef3c7)',
-                  border: '2px solid rgba(245,158,11,0.25)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#d97706' }}>
-                    domain
-                  </span>
-                </div>
-
-                <h1 className="font-sora text-2xl font-bold text-primary mb-2">
-                  Demande d'espace coworking enregistrée !
-                </h1>
-                
-                <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-                  Merci <strong>{prenom} {nom}</strong>. Votre demande pour l'espace <strong>{coworkingName || 'de coworking'}</strong> a bien été enregistrée.<br />
-                  Elle est actuellement <strong>en attente d'approbation par le Super Administrateur</strong>.
-                </p>
-
-                <div style={{
-                  background: '#fffbeb', border: '1px solid rgba(245,158,11,0.35)',
-                  borderRadius: 16, padding: '18px 20px', marginBottom: 28,
-                  display: 'flex', gap: 12, alignItems: 'flex-start',
-                }}>
-                  <span className="material-symbols-outlined" style={{ color: '#d97706', fontSize: 22, flexShrink: 0, marginTop: 2 }}>
-                    verified_user
-                  </span>
-                  <div style={{ textAlign: 'left' }}>
-                    <p style={{ margin: '0 0 4px', color: '#92400e', fontSize: 14, fontWeight: 700 }}>
-                      Validation manuelle requise
-                    </p>
-                    <p style={{ margin: 0, color: '#b45309', fontSize: 13, lineHeight: 1.55 }}>
-                      Seule la création d'un espace de coworking requiert la validation du Super Administrateur. Dès son approbation, vous pourrez vous connecter pour configurer vos espaces et vos offres.
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => navigate('/login')}
-                  className="btn-primary w-full flex items-center justify-center gap-2"
-                  style={{ padding: '12px 24px', borderRadius: 12 }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span>
-                  Retour à la page de connexion
-                </button>
+            {/* ── ALERTE MESSAGE ── */}
+            {errorMsg && (
+              <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in bg-red-50 text-red-700 border border-red-200">
+                <span className="material-symbols-outlined text-[18px] shrink-0">error</span>
+                <span>{errorMsg}</span>
+              </div>
+            )}
+            {successMsg && (
+              <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in bg-emerald-50 text-emerald-800 border border-emerald-200">
+                <span className="material-symbols-outlined text-[18px] shrink-0">check_circle</span>
+                <span>{successMsg}</span>
               </div>
             )}
 
-            {/* ── VUE SUCCÈS : COMPTE NORMAL (MEMBRE OU FORMATEUR) CRÉÉ IMMÉDIATEMENT ── */}
-            {step === 'done_normal' && (
-              <div className="glass-card rounded-3xl shadow-elevated p-8 text-center animate-fade-in">
-                <div style={{
-                  width: 80, height: 80, borderRadius: '50%', margin: '0 auto 20px',
-                  background: 'linear-gradient(135deg, #ecfdf5, #d1fae5)',
-                  border: '2px solid rgba(16,185,129,0.25)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#059669' }}>
-                    check_circle
-                  </span>
-                </div>
-
-                <h1 className="font-sora text-2xl font-bold text-primary mb-2">
-                  Compte créé avec succès !
-                </h1>
-                
-                <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-                  Bienvenue <strong>{prenom} {nom}</strong> ! Votre compte a été activé immédiatement.<br />
-                  Vous pouvez dès à présent vous connecter et profiter de l'écosystème DeskyWork.
-                </p>
-
-                <div style={{
-                  background: '#f0fdf4', border: '1px solid rgba(34,197,94,0.3)',
-                  borderRadius: 16, padding: '18px 20px', marginBottom: 28,
-                  display: 'flex', gap: 12, alignItems: 'flex-start',
-                }}>
-                  <span className="material-symbols-outlined" style={{ color: '#16a34a', fontSize: 22, flexShrink: 0, marginTop: 2 }}>
-                    verified
-                  </span>
-                  <div style={{ textAlign: 'left' }}>
-                    <p style={{ margin: '0 0 4px', color: '#15803d', fontSize: 14, fontWeight: 700 }}>
-                      Compte actif immédiatement
-                    </p>
-                    <p style={{ margin: 0, color: '#166534', fontSize: 13, lineHeight: 1.55 }}>
-                      Aucune approbation n'est requise pour votre compte. Connectez-vous avec vos identifiants pour accéder directement à votre espace.
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => navigate('/login')}
-                  className="btn-primary w-full flex items-center justify-center gap-2"
-                  style={{ padding: '12px 24px', borderRadius: 12 }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>login</span>
-                  Se connecter maintenant
-                </button>
-              </div>
-            )}
-
-            {/* ── VUE FORMULAIRE ─────────────────────────────────────────── */}
-            {step === 'form' && (
-              <>
-                <div className="text-center mb-2">
-                  <h1 className="font-sora text-2xl font-bold text-[#100f0d]">
-                    Créer votre compte
+            {/* ── ÉTAPE 1 : FORMULAIRE MINIMAL ── */}
+            {currentStep === 'form' && (
+              <div className="glass-card rounded-3xl shadow-elevated p-6 sm:p-8 space-y-6">
+                <div className="text-center">
+                  <h1 className="font-sora text-2xl sm:text-3xl font-bold text-[#100f0d] mb-1">
+                    {t('register.title')}
                   </h1>
+                  <p className="text-xs sm:text-sm text-on-surface-variant">
+                    {t('register.subtitle')}
+                  </p>
                 </div>
 
-                {/* Messages */}
-                {errorMsg && (
-                  <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in"
-                    style={{ background: '#ffdad6', color: '#93000a', border: '1px solid rgba(186,26,26,0.15)' }}>
-                    <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
-                    <span>{errorMsg}</span>
-                  </div>
-                )}
-                {successMsg && (
-                  <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in"
-                    style={{ background: '#dae2ff', color: '#001847', border: '1px solid rgba(0,84,203,0.2)' }}>
-                    <span className="material-symbols-outlined text-[18px] shrink-0">check_circle</span>
-                    <span>{successMsg}</span>
-                  </div>
-                )}
+                {/* Bouton Google */}
+                <button
+                  type="button"
+                  onClick={handleGoogleSignUp}
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-slate-50 transition-all shadow-sm active:scale-[0.98]"
+                >
+                  <GoogleIcon /> {t('common.orContinueWith')} {t('login.withGoogle')}
+                </button>
 
-                {/* Card */}
-                <div className="glass-card rounded-3xl shadow-elevated p-4 space-y-3">
-
-                  {/* Inscription sociale — uniquement pour les membres */}
-                  {role === 'member' ? (
-                    <>
-                      <div className="flex items-center gap-4">
-                        <div className="flex-1 h-px bg-outline-variant/30" />
-                        <span className="text-[10px] text-on-surface-variant font-medium whitespace-nowrap">OU CONTINUER AVEC</span>
-                        <div className="flex-1 h-px bg-outline-variant/30" />
-                      </div>
-
-                      <div className="auth-social-grid grid grid-cols-2 gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleSocialLogin('google')}
-                          className="flex items-center justify-center gap-2 px-4 py-1.5 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-surface-container-low hover:-translate-y-px transition-all active:scale-[0.97] shadow-sm"
-                        >
-                          <GoogleIcon /> Google
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleSocialLogin('linkedin_oidc')}
-                          className="flex items-center justify-center gap-2 px-4 py-1.5 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-surface-container-low hover:-translate-y-px transition-all active:scale-[0.97] shadow-sm"
-                        >
-                          <LinkedInIcon /> LinkedIn
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        padding: '10px 14px', borderRadius: 12,
-                        background: '#f1f5f9', border: '1px solid #e2e8f0',
-                      }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#64748b', flexShrink: 0 }}>
-                        info
-                      </span>
-                      <p style={{ margin: 0, color: '#475569', fontSize: 12, lineHeight: 1.5 }}>
-                        La connexion Google / LinkedIn est réservée aux membres.
-                        <br />
-                        <strong>Formateurs et admins</strong> utilisent email + mot de passe.
-                      </p>
-                    </div>
-                  )}
-
-                  <form onSubmit={handleRegister} className="space-y-3">
-
-                    {/* Nom / Prénom */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <Field
-                        id="reg-prenom" label="Prénom" icon="badge"
-                        value={prenom} onChange={(e) => setPrenom(e.target.value)}
-                        placeholder="Jean" required
-                      />
-                      <Field
-                        id="reg-nom" label="Nom" icon="person"
-                        value={nom} onChange={(e) => setNom(e.target.value)}
-                        placeholder="Dupont" required
-                      />
-                    </div>
-
-                    {/* Email */}
-                    <Field
-                      id="reg-email" label="Adresse email" icon="mail"
-                      type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                      placeholder="jean.dupont@entreprise.com" required
-                    />
-
-                    {/* Téléphone */}
-                    <Field
-                      id="reg-tel" label="Téléphone" icon="phone"
-                      type="tel" value={telephone} onChange={(e) => setTelephone(e.target.value)}
-                      placeholder="+216 99 999 999" required
-                    />
-
-                    {/* Type de compte */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor="reg-role">
-                        Type de compte
-                      </label>
-                      <div className="relative">
-                        <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_circle</span>
-                        </span>
-                        <select
-                          id="reg-role"
-                          value={role}
-                          onChange={(e) => setRole(e.target.value)}
-                          className="form-input appearance-none"
-                        >
-                          {roleTypes.map(({ value, label }) => (
-                            <option key={value} value={value}>{label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      {role === 'admin' ? (
-                        <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200/80 rounded-xl px-3 py-2 flex items-center gap-2 mt-1">
-                          <span className="material-symbols-outlined text-[16px] text-amber-600 shrink-0">info</span>
-                          <span>La création d'un espace de coworking requiert l'approbation du Super Administrateur avant son ouverture.</span>
-                        </p>
-                      ) : (
-                        <p className="text-[12px] text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-xl px-3 py-2 flex items-center gap-2 mt-1">
-                          <span className="material-symbols-outlined text-[16px] text-emerald-600 shrink-0">check_circle</span>
-                          <span>Votre compte sera actif immédiatement dès l'inscription (accès sans attente).</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Type de membre (uniquement pour les membres) */}
-                    {role === 'member' && (
-                      <div className="flex flex-col gap-1">
-                        <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor="reg-type">
-                          Type de membre
-                        </label>
-                        <div className="relative">
-                          <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>card_membership</span>
-                          </span>
-                          <select
-                            id="reg-type"
-                            value={typeMembre}
-                            onChange={(e) => setTypeMembre(e.target.value)}
-                            className="form-input appearance-none"
-                          >
-                            {memberTypes.map(({ value, label }) => (
-                              <option key={value} value={value}>{label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Nom du Coworking (uniquement pour les admins) */}
-                    {role === 'admin' && (
-                      <Field
-                        id="reg-coworking" label="Nom de l'Espace Coworking" icon="domain"
-                        value={coworkingName} onChange={(e) => setCoworkingName(e.target.value)}
-                        placeholder="Ex: Encre & Cobalt Tunis" required
-                      />
-                    )}
-
-                    {/* Champs spécifiques aux formateurs */}
-                    {role === 'formateur' && (
-                      <>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor="reg-specialite">
-                            Spécialité / Domaine
-                          </label>
-                          <div className="relative">
-                            <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>star</span>
-                            </span>
-                            <input
-                              id="reg-specialite"
-                              type="text"
-                              value={specialite}
-                              onChange={(e) => setSpecialite(e.target.value)}
-                              className="form-input"
-                              placeholder="Ex: UX Design, React, Marketing..."
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col gap-1">
-                          <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor="reg-biographie">
-                            Biographie courte
-                          </label>
-                          <div className="relative">
-                            <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none" style={{ top: 12 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>description</span>
-                            </span>
-                            <textarea
-                              id="reg-biographie"
-                              value={biographie}
-                              onChange={(e) => setBiographie(e.target.value)}
-                              className="form-input"
-                              rows={3}
-                              placeholder="Parcours, compétences clés, expérience..."
-                              required
-                              style={{ paddingLeft: 44 }}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {/* Mot de passe */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-label-sm font-semibold text-on-surface-variant" htmlFor="reg-password">
-                        Mot de passe
-                      </label>
-                      <div className="relative">
-                        <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>lock</span>
-                        </span>
-                        <input
-                          id="reg-password"
-                          type={showPwd ? 'text' : 'password'}
-                          required
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          className="form-input"
-                          style={{ paddingRight: 44 }}
-                          placeholder="Minimum 8 caractères"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPwd((v) => !v)}
-                          className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-outline hover:text-secondary transition-colors"
-                          tabIndex={-1}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                            {showPwd ? 'visibility_off' : 'visibility'}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* CTA */}
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="btn-primary w-full mt-2 flex items-center justify-center gap-2"
-                      style={{ padding: '10px 24px', borderRadius: 12 }}
-                    >
-                      {loading
-                        ? <><span className="animate-spin material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span> Création du compte…</>
-                        : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>person_add</span> Créer mon compte</>
-                      }
-                    </button>
-                  </form>
-
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 h-px bg-outline-variant/25" />
+                  <span className="text-[11px] text-on-surface-variant font-medium uppercase tracking-wider">
+                    {t('common.or')}
+                  </span>
+                  <div className="flex-1 h-px bg-outline-variant/25" />
                 </div>
 
-                <p className="text-center text-xs text-on-surface-variant mt-3">
-                  Déjà inscrit?{' '}
+                <form onSubmit={handleSubmitForm} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-on-surface" htmlFor="reg-prenom">
+                        {t('register.prenomLabel')}
+                      </label>
+                      <input
+                        id="reg-prenom"
+                        type="text"
+                        required
+                        value={prenom}
+                        onChange={(e) => setPrenom(e.target.value)}
+                        placeholder={t('register.prenomPlaceholder')}
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-on-surface" htmlFor="reg-nom">
+                        {t('register.nomLabel')}
+                      </label>
+                      <input
+                        id="reg-nom"
+                        type="text"
+                        required
+                        value={nom}
+                        onChange={(e) => setNom(e.target.value)}
+                        placeholder={t('register.nomPlaceholder')}
+                        className="form-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-on-surface" htmlFor="reg-email">
+                      {t('register.emailLabel')}
+                    </label>
+                    <input
+                      id="reg-email"
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder={t('register.emailPlaceholder')}
+                      className="form-input"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-on-surface" htmlFor="reg-tel">
+                      {t('register.phoneLabel')}
+                    </label>
+                    <input
+                      id="reg-tel"
+                      type="tel"
+                      required
+                      value={telephone}
+                      onChange={(e) => setTelephone(e.target.value)}
+                      placeholder={t('register.phonePlaceholder')}
+                      className="form-input"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-on-surface" htmlFor="reg-password">
+                      {t('register.passwordLabel')}
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="reg-password"
+                        type={showPwd ? 'text' : 'password'}
+                        required
+                        autoComplete="new-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder={t('register.passwordPlaceholder')}
+                        className="form-input pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPwd(!showPwd)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline hover:text-on-surface"
+                      >
+                        <span className="material-symbols-outlined text-[19px]">
+                          {showPwd ? 'visibility_off' : 'visibility'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="btn-primary w-full mt-2 py-3 rounded-xl flex items-center justify-center gap-2 font-semibold text-sm shadow-md"
+                  >
+                    {loading ? (
+                      <><span className="animate-spin material-symbols-outlined text-[18px]">refresh</span> {t('register.submitting')}</>
+                    ) : (
+                      <><span className="material-symbols-outlined text-[18px]">arrow_forward</span> {t('register.submitBtn')}</>
+                    )}
+                  </button>
+                </form>
+
+                <p className="text-center text-xs text-on-surface-variant pt-2">
+                  {t('register.alreadyAccount')}{' '}
                   <Link to="/login" className="text-secondary font-semibold hover:underline">
-                    Se connecter
+                    {t('register.loginLink')}
                   </Link>
                 </p>
-              </>
+              </div>
+            )}
+
+            {/* ── ÉTAPE 2 : VÉRIFICATION OTP EMAIL (OBLIGATOIRE) ── */}
+            {currentStep === 'email_otp' && (
+              <div className="glass-card rounded-3xl shadow-elevated p-6 sm:p-8 space-y-6 text-center animate-fade-in">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-100 flex items-center justify-center text-amber-700">
+                  <span className="material-symbols-outlined text-[30px]">mail</span>
+                </div>
+
+                <div>
+                  <h2 className="font-sora text-2xl font-bold text-[#100f0d] mb-1">
+                    {t('otp.emailTitle')}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-on-surface-variant">
+                    {t('otp.emailDesc')} <strong>{email}</strong>
+                  </p>
+                </div>
+
+                <form onSubmit={handleVerifyEmailOtp} className="space-y-5">
+                  <div>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      autoFocus
+                      required
+                      value={emailOtpCode}
+                      onChange={(e) => setEmailOtpCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••••"
+                      className="form-input text-center text-2xl tracking-[0.5em] font-mono py-3 font-bold"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading || emailOtpCode.length < 6}
+                    className="btn-primary w-full py-3 rounded-xl flex items-center justify-center gap-2 font-semibold text-sm shadow-md"
+                  >
+                    {loading ? (
+                      <><span className="animate-spin material-symbols-outlined text-[18px]">refresh</span> {t('otp.verifying')}</>
+                    ) : (
+                      <><span className="material-symbols-outlined text-[18px]">check</span> {t('otp.verifyBtn')}</>
+                    )}
+                  </button>
+                </form>
+
+                <div className="pt-2 flex flex-col items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResendEmailOtp}
+                    disabled={otpCountdown > 0 || loading}
+                    className={`text-xs font-semibold ${
+                      otpCountdown > 0 ? 'text-outline-variant cursor-not-allowed' : 'text-secondary hover:underline'
+                    }`}
+                  >
+                    {otpCountdown > 0
+                      ? t('common.retryIn', { seconds: otpCountdown })
+                      : t('common.resend')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentStep('form')}
+                    className="text-xs text-on-surface-variant hover:underline"
+                  >
+                    Modifier mes informations
+                  </button>
+                </div>
+              </div>
             )}
 
           </div>
         </main>
 
-        <footer className="relative z-10 text-center py-2 px-6">
-          <p className="text-[10px] text-outline-variant">
-            © {new Date().getFullYear()} DeskyWork · Tous droits réservés
-          </p>
+        <footer className="relative z-10 text-center py-4 px-6 text-xs text-on-surface-variant/70 border-t border-outline-variant/10">
+          © {new Date().getFullYear()} {t('common.appName')} · {t('common.rightsReserved')}
         </footer>
       </div>
     </div>
   );
 }
-
-
-

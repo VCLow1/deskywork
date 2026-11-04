@@ -44,25 +44,32 @@ export function getHomePath(role) {
 }
 
 export async function getPostLoginPath(supabase, userId, role) {
-  if (role !== 'admin') return getHomePath(role);
+  if (role === 'super_admin') return '/super-admin/dashboard';
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('tenant_id')
-    .eq('id', userId)
-    .single();
+  try {
+    const { data: memberships } = await supabase
+      .from('memberships')
+      .select('id, organization_id, role, organizations(id, nom, settings)')
+      .eq('user_id', userId)
+      .eq('statut', 'actif');
 
-  if (!profile?.tenant_id) return getHomePath(role);
+    if (memberships && memberships.length > 1) {
+      return '/select-space';
+    }
 
-  const { data: tenant } = await supabase
-    .from('tenants')
-    .select('settings')
-    .eq('id', profile.tenant_id)
-    .single();
-
-  if (tenant?.settings?.onboarding_completed !== true) {
-    return '/admin/onboarding';
-  }
+    if (memberships && memberships.length === 1) {
+      const m = memberships[0];
+      if (m.organization_id) {
+        localStorage.setItem('active_org_id', m.organization_id);
+      }
+      if (['proprietaire', 'admin', 'staff'].includes(m.role)) {
+        return '/admin/dashboard';
+      }
+      if (m.role === 'formateur') {
+        return '/trainer-dashboard';
+      }
+    }
+  } catch (_) {}
 
   return getHomePath(role);
 }
@@ -244,6 +251,7 @@ export const SUPER_ADMIN_NAV = [
   {
     group: 'Gestion',
     items: [
+      { id: 'sa_validations', label: 'Validations & Approbations', icon: 'verified', to: '/super-admin/validations' },
       { id: 'sa_users', label: 'Utilisateurs', icon: 'groups', to: '/super-admin/users' },
       { id: 'sa_tenants', label: 'Gestion Coworkings', icon: 'domain', to: '/super-admin/tenants' },
     ],

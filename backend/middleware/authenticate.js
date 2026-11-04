@@ -1,4 +1,6 @@
-// middleware/authenticate.js — Authentification JWT + chargement profil
+// middleware/authenticate.js — Authentification JWT + chargement profil et organisation active
+'use strict';
+
 const { supabaseAdmin, getUserClient } = require('../config/supabase');
 
 async function authenticate(req, res, next) {
@@ -24,21 +26,46 @@ async function authenticate(req, res, next) {
     return res.status(403).json({ error: 'Profil membre introuvable.' });
   }
 
-  if (profile.statut_compte && profile.statut_compte !== 'actif') {
-    if (profile.statut_compte === 'en_attente') {
-      return res.status(403).json({
-        error: "Compte en attente d'approbation. L'administrateur doit valider votre inscription.",
-        code: 'PENDING_APPROVAL',
-      });
-    }
-    return res.status(403).json({ error: "Compte suspendu ou expiré. Contactez l'administrateur." });
+  // Vérifier statut personne
+  if (profile.statut_compte && profile.statut_compte === 'suspendu') {
+    return res.status(403).json({ error: "Votre compte personnel est suspendu. Contactez l'administrateur." });
   }
 
   req.user = data.user;
   req.profile = profile;
   req.token = token;
   req.db = getUserClient(token);
-  req.tenantId = profile.tenant_id || null;
+
+  // Détermination de l'organisation active (header x-organization-id > query > profile.tenant_id)
+  const requestedOrgId = req.headers['x-organization-id'] ||
+                         req.query.organization_id ||
+                         req.query.tenant_id ||
+                         profile.tenant_id ||
+                         null;
+
+  req.tenantId = requestedOrgId;
+  req.orgId = requestedOrgId;
+  req.membership = null;
+
+  // Si une organisation est demandée, vérifier l'appartenance via memberships
+  if (requestedOrgId && profile.role !== 'super_admin' && !profile.is_super_admin) {
+    try {
+      const { data: membership } = await supabaseAdmin
+        .from('memberships')
+        .select('*')
+        .eq('user_id', data.user.id)
+        .eq('organization_id', requestedOrgId)
+        .eq('statut', 'actif')
+        .maybeSingle();
+
+      if (membership) {
+        req.membership = membership;
+      }
+    } catch (_) {
+      // Ignorer silencieusement si la table n'a pas encore été migrée dans l'environnement local
+    }
+  }
+
   next();
 }
 

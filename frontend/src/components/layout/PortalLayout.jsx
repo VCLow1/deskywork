@@ -752,6 +752,24 @@ export default function PortalLayout({ children, profile, onLogout }) {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <Link
+                    to="/select-space"
+                    onClick={() => setDropdownOpen(false)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '10px 12px', borderRadius: 12,
+                      fontSize: 13, fontWeight: 600,
+                      textDecoration: 'none',
+                      color: dark ? '#fbffff' : '#100f0d',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>swap_horiz</span>
+                    <span>Changer d'espace</span>
+                  </Link>
+
+                  <Link
                     to={profilePath}
                     onClick={() => setDropdownOpen(false)}
                     style={{
