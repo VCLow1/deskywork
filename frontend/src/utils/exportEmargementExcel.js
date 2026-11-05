@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs';
+import { loadExcelJS } from './excelHelper';
 
 function formatExportDate() {
   return new Date().toLocaleDateString('fr-FR', {
@@ -18,7 +18,8 @@ function downloadBlob(blob, filename) {
 }
 
 export async function exportEmargementToExcel(formation, emargementData) {
-  const wb = new ExcelJS.Workbook();
+    const ExcelJS = await loadExcelJS();
+    const wb = new ExcelJS.Workbook();
   wb.creator = 'DeskyWork';
   wb.created = new Date();
 

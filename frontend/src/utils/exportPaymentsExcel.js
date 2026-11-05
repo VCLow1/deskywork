@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs';
+import { loadExcelJS } from './excelHelper';
 
 const MODE_LABELS = {
   cash: 'Espèces',
@@ -63,6 +63,7 @@ export async function exportPaymentsToExcel(payments = [], stats = null) {
     recoveryRate: stats?.recoveryRate ?? (payments.length ? Math.round((payments.filter(p => p.statut === 'paid').length / payments.length) * 100) : 0),
   };
 
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'DeskyWork';
   workbook.created = new Date();

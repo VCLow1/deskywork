@@ -6,15 +6,18 @@ export default defineConfig({
   server: {
     host: true,
   },
+  oxc: {
+    drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
+  },
   plugins: [
     react(),
-    // Gzip — compatible avec tous les serveurs/CDN
+    // Gzip
     compression({
       algorithm: 'gzip',
       exclude: [/\.(png|jpe?g|gif|webp|svg|ico|woff2?)$/i],
-      threshold: 1024, // compresser uniquement les fichiers > 1 KB
+      threshold: 1024,
     }),
-    // Brotli — meilleure compression pour les navigateurs modernes
+    // Brotli
     compression({
       algorithm: 'brotliCompress',
       exclude: [/\.(png|jpe?g|gif|webp|svg|ico|woff2?)$/i],
@@ -22,20 +25,21 @@ export default defineConfig({
     }),
   ],
   build: {
+    target: 'esnext',
     sourcemap: false,
-    // Réduire la taille du CSS inline (Tailwind v4 génère beaucoup de classes)
     cssMinify: true,
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('recharts')) return 'charts';
-            if (id.includes('exceljs')) return 'excel';
-            if (id.includes('qrcode.react')) return 'qr';
-            if (id.includes('socket.io-client')) return 'socket';
-            if (id.includes('@supabase')) return 'supabase';
-            if (id.includes('react-router-dom') || id.includes('react-router')) return 'router';
-            if (id.includes('react-dom') || id.includes('react')) return 'react';
+            if (id.includes('exceljs')) return 'vendor-excel';
+            if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+            if (id.includes('qrcode.react') || id.includes('html5-qrcode')) return 'vendor-qr';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('@supabase')) return 'vendor-supabase';
+            if (id.includes('react-router')) return 'vendor-router';
+            if (id.includes('react-dom') || id.includes('react')) return 'vendor-react';
           }
         },
       },
