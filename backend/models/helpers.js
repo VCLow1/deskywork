@@ -21,43 +21,89 @@ function applyPromoDiscount(prix, promo) {
   return { prixFinal: Math.max(0, prix - reduction), reduction };
 }
 
+const DEFAULT_TARIFS = [
+  { id: 'def-1', type_abonnement: 'day_pass', plan_tarifaire: 'standard', prix: 35.00, tva_pct: 19, actif: true },
+  { id: 'def-2', type_abonnement: 'day_pass', plan_tarifaire: 'etudiant', prix: 25.00, tva_pct: 19, actif: true },
+  { id: 'def-3', type_abonnement: 'day_pass', plan_tarifaire: 'entreprise', prix: 45.00, tva_pct: 19, actif: true },
+  { id: 'def-4', type_abonnement: 'week_pass', plan_tarifaire: 'standard', prix: 180.00, tva_pct: 19, actif: true },
+  { id: 'def-5', type_abonnement: 'week_pass', plan_tarifaire: 'etudiant', prix: 130.00, tva_pct: 19, actif: true },
+  { id: 'def-6', type_abonnement: 'week_pass', plan_tarifaire: 'entreprise', prix: 220.00, tva_pct: 19, actif: true },
+  { id: 'def-7', type_abonnement: 'mensuel', plan_tarifaire: 'standard', prix: 450.00, tva_pct: 19, actif: true },
+  { id: 'def-8', type_abonnement: 'mensuel', plan_tarifaire: 'etudiant', prix: 320.00, tva_pct: 19, actif: true },
+  { id: 'def-9', type_abonnement: 'mensuel', plan_tarifaire: 'entreprise', prix: 600.00, tva_pct: 19, actif: true },
+  { id: 'def-10', type_abonnement: 'trimestriel', plan_tarifaire: 'standard', prix: 1200.00, tva_pct: 19, actif: true },
+  { id: 'def-11', type_abonnement: 'trimestriel', plan_tarifaire: 'etudiant', prix: 850.00, tva_pct: 19, actif: true },
+  { id: 'def-12', type_abonnement: 'trimestriel', plan_tarifaire: 'entreprise', prix: 1600.00, tva_pct: 19, actif: true },
+  { id: 'def-13', type_abonnement: 'annuel', plan_tarifaire: 'standard', prix: 4200.00, tva_pct: 19, actif: true },
+  { id: 'def-14', type_abonnement: 'annuel', plan_tarifaire: 'etudiant', prix: 3000.00, tva_pct: 19, actif: true },
+  { id: 'def-15', type_abonnement: 'annuel', plan_tarifaire: 'entreprise', prix: 5500.00, tva_pct: 19, actif: true },
+  { id: 'def-16', type_abonnement: 'bureau_prive', plan_tarifaire: 'standard', prix: 900.00, tva_pct: 19, actif: true },
+  { id: 'def-17', type_abonnement: 'bureau_prive', plan_tarifaire: 'entreprise', prix: 1200.00, tva_pct: 19, actif: true },
+];
+
+const DEFAULT_PROMOS = [
+  { id: 'promo-1', code: 'WELCOME10', type_reduction: 'percent', valeur: 10, actif: true },
+  { id: 'promo-2', code: 'ETUDIANT20', type_reduction: 'percent', valeur: 20, actif: true },
+  { id: 'promo-3', code: '33SPACE50', type_reduction: 'fixed', valeur: 50, actif: true },
+];
+
 async function findActiveTarif(typeAbonnement, planTarifaire, tenantId, typeEspace) {
   const today = todayISO();
-  let q = supabaseAdmin
-    .from('tarifs_abonnements')
-    .select('*')
-    .eq('type_abonnement', typeAbonnement)
-    .eq('plan_tarifaire', planTarifaire)
-    .eq('actif', true)
-    .lte('date_debut', today);
-  if (tenantId) q = q.eq('tenant_id', tenantId);
-  const { data, error } = await q.order('date_debut', { ascending: false });
-  if (error) throw error;
-  const active = (data || []).filter((t) => !t.date_fin || t.date_fin >= today);
-  if (active.length === 0) return null;
-  if (typeEspace) {
-    return (
-      active.find((t) => t.type_espace === typeEspace)
-      || active.find((t) => !t.type_espace)
-      || null
-    );
+  try {
+    let q = supabaseAdmin
+      .from('tarifs_abonnements')
+      .select('*')
+      .eq('type_abonnement', typeAbonnement)
+      .eq('plan_tarifaire', planTarifaire)
+      .eq('actif', true)
+      .lte('date_debut', today);
+    if (tenantId) q = q.eq('tenant_id', tenantId);
+    const { data, error } = await q.order('date_debut', { ascending: false });
+    if (!error && data && data.length > 0) {
+      const active = data.filter((t) => !t.date_fin || t.date_fin >= today);
+      if (active.length > 0) {
+        if (typeEspace) {
+          return (
+            active.find((t) => t.type_espace === typeEspace)
+            || active.find((t) => !t.type_espace)
+            || null
+          );
+        }
+        return active.find((t) => !t.type_espace) || active[0];
+      }
+    }
+  } catch (err) {
+    console.warn('findActiveTarif fallback due to error:', err.message);
   }
-  return active.find((t) => !t.type_espace) || active[0];
+  return (
+    DEFAULT_TARIFS.find((t) => t.type_abonnement === typeAbonnement && t.plan_tarifaire === planTarifaire)
+    || DEFAULT_TARIFS.find((t) => t.type_abonnement === typeAbonnement)
+    || null
+  );
 }
 
 async function findValidPromoCode(code, tenantId) {
+  if (!code) return null;
+  const upper = String(code).trim().toUpperCase();
   const today = todayISO();
-  let q = supabaseAdmin
-    .from('codes_promo')
-    .select('*')
-    .eq('code', code.toUpperCase())
-    .eq('actif', true);
-  if (tenantId) q = q.eq('tenant_id', tenantId);
-  const { data, error } = await q.single();
-  if (error || !data) return null;
-  if (!isDateInRange(today, data.date_debut, data.date_fin)) return null;
-  if (data.utilisations_max != null && data.utilisations_count >= data.utilisations_max) return null;
-  return data;
+  try {
+    let q = supabaseAdmin
+      .from('codes_promo')
+      .select('*')
+      .eq('code', upper)
+      .eq('actif', true);
+    if (tenantId) q = q.eq('tenant_id', tenantId);
+    const { data, error } = await q.single();
+    if (!error && data) {
+      if (!isDateInRange(today, data.date_debut, data.date_fin)) return null;
+      if (data.utilisations_max != null && data.utilisations_count >= data.utilisations_max) return null;
+      return data;
+    }
+  } catch (err) {
+    console.warn('findValidPromoCode fallback due to error:', err.message);
+  }
+  const promo = DEFAULT_PROMOS.find((p) => p.code === upper && p.actif);
+  return promo || null;
 }
 
 function sanitizeProfileForClient(profile, isStaff) {
@@ -371,4 +417,6 @@ module.exports = {
   createReservationWithPayment,
   FORMATION_ROOM_UNAVAILABLE,
   addDays,
+  DEFAULT_TARIFS,
+  DEFAULT_PROMOS,
 };

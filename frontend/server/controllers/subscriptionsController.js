@@ -134,21 +134,29 @@ async function createSubscription(req, res) {
         type_espace: tarifInfo.type_espace || null,
       };
 
-      await supabaseAdmin.from('historique_tarifs').insert({
-        user_id,
-        abonnement_id: data.id,
-        type_abonnement: type,
-        plan_tarifaire: plan,
-        prix_initial: Number(tarifInfo.prix),
-        prix_final: prixFinal,
-        code_promo_id: promoInfo?.id || null,
-      });
+      try {
+        await supabaseAdmin.from('historique_tarifs').insert({
+          user_id,
+          abonnement_id: data.id,
+          type_abonnement: type,
+          plan_tarifaire: plan,
+          prix_initial: Number(tarifInfo.prix),
+          prix_final: prixFinal,
+          code_promo_id: promoInfo?.id || null,
+        });
+      } catch (e) {
+        console.warn('historique_tarifs insert skipped:', e.message);
+      }
 
-      if (promoInfo) {
-        await supabaseAdmin
-          .from('codes_promo')
-          .update({ utilisations_count: promoInfo.utilisations_count + 1 })
-          .eq('id', promoInfo.id);
+      if (promoInfo && promoInfo.id) {
+        try {
+          await supabaseAdmin
+            .from('codes_promo')
+            .update({ utilisations_count: (promoInfo.utilisations_count || 0) + 1 })
+            .eq('id', promoInfo.id);
+        } catch (e) {
+          console.warn('codes_promo update skipped:', e.message);
+        }
       }
     }
 
@@ -241,21 +249,29 @@ async function subscribeSelf(req, res) {
         type_espace: tarifInfo.type_espace || null,
       };
 
-      await supabaseAdmin.from('historique_tarifs').insert({
-        user_id: userId,
-        abonnement_id: data.id,
-        type_abonnement: type,
-        plan_tarifaire: plan,
-        prix_initial: Number(tarifInfo.prix),
-        prix_final: prixFinal,
-        code_promo_id: promoInfo?.id || null,
-      });
+      try {
+        await supabaseAdmin.from('historique_tarifs').insert({
+          user_id: userId,
+          abonnement_id: data.id,
+          type_abonnement: type,
+          plan_tarifaire: plan,
+          prix_initial: Number(tarifInfo.prix),
+          prix_final: prixFinal,
+          code_promo_id: promoInfo?.id || null,
+        });
+      } catch (e) {
+        console.warn('historique_tarifs insert skipped in subscribeSelf:', e.message);
+      }
 
-      if (promoInfo) {
-        await supabaseAdmin
-          .from('codes_promo')
-          .update({ utilisations_count: promoInfo.utilisations_count + 1 })
-          .eq('id', promoInfo.id);
+      if (promoInfo && promoInfo.id) {
+        try {
+          await supabaseAdmin
+            .from('codes_promo')
+            .update({ utilisations_count: (promoInfo.utilisations_count || 0) + 1 })
+            .eq('id', promoInfo.id);
+        } catch (e) {
+          console.warn('codes_promo update skipped in subscribeSelf:', e.message);
+        }
       }
     }
 

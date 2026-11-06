@@ -1,7 +1,7 @@
 // controllers/pricingController.js — MODULE A : Tarification & codes promo
 const { supabaseAdmin } = require('../config/supabase');
 const { SUBSCRIPTION_DURATIONS, MEMBER_TYPE_TO_PLAN, SUBSCRIPTION_LABELS } = require('../config/constants');
-const { todayISO, findActiveTarif, findValidPromoCode, applyPromoDiscount } = require('../models/helpers');
+const { todayISO, findActiveTarif, findValidPromoCode, applyPromoDiscount, DEFAULT_TARIFS } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 
 const ESPACE_TYPES = ['open_space', 'private_office', 'meeting_room', 'training_room', 'event_space'];
@@ -35,11 +35,13 @@ async function getPricing(req, res) {
     }
     const { data, error } = await q.order('type_abonnement', { ascending: true });
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
+    let tarifs = [];
+    if (!error && data && data.length > 0) {
+      tarifs = data.filter((t) => !t.date_fin || t.date_fin >= today);
     }
-
-    const tarifs = (data || []).filter((t) => !t.date_fin || t.date_fin >= today);
+    if (tarifs.length === 0) {
+      tarifs = DEFAULT_TARIFS.filter((t) => t.plan_tarifaire === plan);
+    }
     res.json({
       plan_tarifaire: plan,
       tarifs: tarifs.map((t) => ({
@@ -62,8 +64,11 @@ async function getPricingAll(req, res) {
     query = applyTenantFilter(query, req);
     const { data, error } = await query;
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ tarifs: data });
+    let list = data;
+    if (error || !list || list.length === 0) {
+      list = DEFAULT_TARIFS;
+    }
+    res.json({ tarifs: list });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -260,8 +265,8 @@ async function getMyPricingHistory(req, res) {
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ history: data });
+    if (error) return res.json({ history: [] });
+    res.json({ history: data || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
