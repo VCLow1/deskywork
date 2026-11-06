@@ -284,14 +284,33 @@ async function updateSettings(req, res) {
 
 // ── GET /api/members/me/formations ───────────────────────────────────────
 async function myFormations(req, res) {
-  const { data, error } = await supabaseAdmin
-    .from('inscriptions_formations')
-    .select('*, formations (id, titre, date_debut, date_fin, statut, prix_inscription, profiles!formateur_id (nom, prenom)), paiements (id, mode, statut, montant)')
-    .eq('user_id', req.user.id)
-    .order('created_at', { ascending: false });
+  try {
+    let { data, error } = await supabaseAdmin
+      .from('inscriptions_formations')
+      .select('*, formations (id, titre, date_debut, date_fin, statut, prix), paiements (id, mode, statut, montant)')
+      .eq('membre_id', req.user.id)
+      .order('created_at', { ascending: false });
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ inscriptions: data });
+    if (error && (error.code === 'PGRST200' || /relationship|column/i.test(error.message))) {
+      const fb = await supabaseAdmin
+        .from('inscriptions_formations')
+        .select('*')
+        .or(`membre_id.eq.${req.user.id},user_id.eq.${req.user.id}`)
+        .order('created_at', { ascending: false });
+      data = fb.data || [];
+      error = fb.error;
+    }
+
+    if (error) {
+      console.warn('⚠️ myFormations warning:', error.message);
+      return res.json({ inscriptions: [] });
+    }
+
+    res.json({ inscriptions: data || [] });
+  } catch (err) {
+    console.error('❌ myFormations error:', err);
+    res.json({ inscriptions: [] });
+  }
 }
 
 module.exports = {

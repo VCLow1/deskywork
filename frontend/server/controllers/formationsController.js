@@ -27,7 +27,38 @@ async function listFormations(req, res) {
     if (to) query = query.lte('date_debut', to);
     query = applyTenantFilter(query, req);
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+    if (error && (error.code === 'PGRST200' || /relationship/i.test(error.message))) {
+      let fb = supabaseAdmin.from('formations').select('*').order('date_debut', { ascending: true });
+      if (statut) fb = fb.eq('statut', statut);
+      if (formateur_id) fb = fb.eq('formateur_id', formateur_id);
+      if (from) fb = fb.gte('date_debut', from);
+      if (to) fb = fb.lte('date_debut', to);
+      fb = applyTenantFilter(fb, req);
+      const fbRes = await fb;
+      data = fbRes.data || [];
+      error = fbRes.error;
+
+      if (data && data.length > 0) {
+        const formateurIds = [...new Set(data.map(f => f.formateur_id).filter(Boolean))];
+        const espaceIds = [...new Set(data.map(f => f.espace_id).filter(Boolean))];
+        let profMap = {};
+        if (formateurIds.length > 0) {
+          const { data: profs } = await supabaseAdmin.from('profiles').select('id, nom, prenom, specialite').in('id', formateurIds);
+          (profs || []).forEach(p => { profMap[p.id] = p; });
+        }
+        let espMap = {};
+        if (espaceIds.length > 0) {
+          const { data: esps } = await supabaseAdmin.from('espaces').select('id, nom, type').in('id', espaceIds);
+          (esps || []).forEach(e => { espMap[e.id] = e; });
+        }
+        data = data.map(f => ({
+          ...f,
+          profiles: profMap[f.formateur_id] || null,
+          espaces: espMap[f.espace_id] || null,
+        }));
+      }
+    }
     if (error) return res.status(500).json({ error: error.message });
 
     const formatted = await Promise.all((data || []).map(async (f) => {
