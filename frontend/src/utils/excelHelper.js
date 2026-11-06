@@ -7,3 +7,4 @@ export async function loadExcelJS() {
   }
   return excelPromise;
 }
+

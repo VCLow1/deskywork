@@ -199,7 +199,12 @@ async function verifyEmailOtp(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (otpErr || !otpData) {
+    if (otpErr) {
+      console.error('❌ Erreur query email_otp:', otpErr);
+      return res.status(500).json({ error: 'Erreur technique lors de la vérification. Veuillez réessayer.' });
+    }
+
+    if (!otpData) {
       return res.status(400).json({ error: 'Code de vérification invalide ou expiré.' });
     }
 

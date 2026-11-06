@@ -144,6 +144,18 @@ CREATE TABLE IF NOT EXISTS public.phone_otps (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 8b. TABLE EMAIL_OTP
+CREATE TABLE IF NOT EXISTS public.email_otp (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT NOT NULL,
+    code TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes'),
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_email_otp_email ON public.email_otp(email);
+ALTER TABLE public.email_otp ENABLE ROW LEVEL SECURITY;
+
 -- 9. TABLE ESPACES (Salles et postes de travail)
 CREATE TABLE IF NOT EXISTS public.espaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
