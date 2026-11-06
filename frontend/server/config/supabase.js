@@ -34,11 +34,22 @@ async function ensureStorageBucket() {
   }
 }
 
+// Crée un client user authentifié à partir du token JWT (respecte le RLS)
+function getUserClient(token) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+}
+
 // Client anonyme (respecte le RLS)
 const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey);
 
 module.exports = {
   supabaseAdmin,
   supabaseAnon,
+  getUserClient,
   ensureStorageBucket,
+  supabaseUrl,
+  supabaseAnonKey,
+  supabaseServiceKey,
 };
