@@ -11,8 +11,11 @@ const ITEMS_PER_PAGE = 10;
 const STATUS_CONFIG = {
   confirmed: { label: 'Confirmée', color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 ring-emerald-600/20', dot: 'bg-emerald-500' },
   pending: { label: 'En attente', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 ring-amber-600/20', dot: 'bg-amber-500' },
+  refused: { label: 'Refusée', color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 ring-rose-600/20', dot: 'bg-rose-500' },
   cancelled: { label: 'Annulée', color: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 ring-red-600/20', dot: 'bg-red-500' },
   completed: { label: 'Terminée', color: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 ring-slate-500/20', dot: 'bg-slate-400' },
+  no_show: { label: 'Absent (no-show)', color: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 ring-orange-600/20', dot: 'bg-orange-500' },
+  waitlisted: { label: "En liste d'attente", color: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 ring-violet-600/20', dot: 'bg-violet-500' },
 };
 
 const SPACE_TYPES_FR = {
@@ -21,6 +24,8 @@ const SPACE_TYPES_FR = {
   meeting_room: 'Salle de Réunion',
   training_room: 'Salle de Formation',
   event_space: 'Espace Événement',
+  hot_desk: 'Poste nomade (Hot Desk)',
+  dedicated_desk: 'Poste fixe (Dedicated Desk)',
   bureau: 'Bureau Privé',
   salle_reunion: 'Salle de Réunion',
   espace_commun: 'Open Space',
@@ -30,7 +35,10 @@ const FILTERS = [
   { key: '', label: 'Toutes' },
   { key: 'confirmed', label: 'Confirmées' },
   { key: 'pending', label: 'En attente' },
+  { key: 'waitlisted', label: "Liste d'attente" },
   { key: 'completed', label: 'Terminées' },
+  { key: 'refused', label: 'Refusées' },
+  { key: 'no_show', label: 'Absent (no-show)' },
   { key: 'cancelled', label: 'Annulées' },
 ];
 
@@ -45,7 +53,7 @@ function formatTime(d) {
 }
 
 function formatCurrency(v) {
-  return `${parseFloat(v || 0).toFixed(2)} DT`;
+  return `${parseFloat(v || 0).toFixed(3)} DT`;
 }
 
 function formatSpaceType(type) {
@@ -113,33 +121,6 @@ export default function MemberBookings({ session }) {
       // silencieux
     }
     setCancelling(null);
-  };
-
-  const handlePayOnline = async (b) => {
-    setPayingId(b.id);
-    try {
-      let paymentId = b.paiements?.[0]?.id;
-      if (!paymentId) {
-        const payRes = await paymentApi.createSelf({
-          reservation_id: b.id,
-          montant: b.montant_total,
-          mode: 'online',
-          statut: 'pending',
-        });
-        paymentId = payRes.payment?.id;
-      }
-      if (!paymentId) throw new Error('Impossible d\'initier la session de paiement.');
-      const stripeRes = await paymentApi.payWithStripe(paymentId);
-      if (stripeRes.link) {
-        window.location.href = stripeRes.link;
-      } else {
-        throw new Error('Lien Stripe non reçu.');
-      }
-    } catch (err) {
-      alert(err.message || 'Erreur lors du paiement en ligne.');
-    } finally {
-      setPayingId(null);
-    }
   };
 
   const filtered = bookings.filter(b => {
@@ -276,7 +257,7 @@ export default function MemberBookings({ session }) {
                             {st.label}
                           </span>
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                            {(b.mode === 'sur_place' || b.mode === 'on_site') ? '💵 Sur place' : '💳 En ligne'}
+                            Sur place
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -289,19 +270,9 @@ export default function MemberBookings({ session }) {
                             ⏳ Demande en attente d'approbation par l'administrateur.
                           </p>
                         )}
-                        {b.statut === 'confirmed' && (b.mode === 'sur_place' || b.mode === 'on_site') && (
+                        {b.statut === 'confirmed' && (
                           <p className="text-[11px] text-emerald-600 font-medium mt-1">
-                            ✅ Réservation acceptée &middot; Paiement à régler sur place le jour de votre réservation.
-                          </p>
-                        )}
-                        {b.statut === 'confirmed' && b.mode === 'online' && b.paiements?.[0]?.statut === 'paid' && (
-                          <p className="text-[11px] text-emerald-600 font-bold mt-1">
-                            ✅ Réservation acceptée &middot; Paiement en ligne validé.
-                          </p>
-                        )}
-                        {b.statut === 'confirmed' && b.mode === 'online' && b.paiements?.[0]?.statut !== 'paid' && (
-                          <p className="text-[11px] text-secondary font-semibold mt-1">
-                            ✨ Réservation acceptée par l'administrateur ! Vous pouvez maintenant payer en ligne.
+                            Confirmée · Règlement à effectuer sur place (espèces, chèque ou virement).
                           </p>
                         )}
                       </div>
@@ -316,18 +287,6 @@ export default function MemberBookings({ session }) {
                         </span>
                       </div>
 
-                      {/* Bouton Payer en ligne (uniquement si confirmed + online + non payé) */}
-                      {b.statut === 'confirmed' && b.mode === 'online' && b.paiements?.[0]?.statut !== 'paid' && (
-                        <button
-                          onClick={() => handlePayOnline(b)}
-                          disabled={payingId === b.id}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>credit_card</span>
-                          <span>{payingId === b.id ? 'Connexion Stripe...' : 'Payer en ligne'}</span>
-                        </button>
-                      )}
-                      
                       {canCancel && (
                         <button
                           onClick={() => openCancelModal(b)}

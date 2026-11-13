@@ -163,7 +163,7 @@ async function getAdminKpis(req, res) {
       // réservations période
       tq(supabaseAdmin.from('reservations').select('espace_id, date_debut, date_fin, statut').in('statut', ['confirmed', 'pending']).gte('date_debut', win.from).lte('date_debut', win.to), tid),
       // sessions actives
-      tq(supabaseAdmin.from('sessions').select('id, check_in, temps_restant, statut, reservations(date_debut, date_fin, espaces(nom, type), profiles(nom, prenom))').eq('statut', 'active'), tid),
+      tq(supabaseAdmin.from('sessions').select('id, reservation_id, check_in, check_out, temps_restant, statut, reservations(date_debut, date_fin, espaces(nom, type, tarif_horaire), profiles!user_id(nom, prenom))').in('statut', ['active', 'overtime']).is('check_out', null), tid),
       // paiements en attente période
       tq(supabaseAdmin.from('paiements').select('montant, created_at').eq('statut', 'pending').gte('created_at', win.from).lte('created_at', win.to), tid),
       // abonnements expirant J+7
@@ -177,17 +177,17 @@ async function getAdminKpis(req, res) {
       // top paiements membres
       tq(supabaseAdmin.from('paiements').select('user_id, montant, profiles(nom, prenom, email)').eq('statut', 'paid').gte('date_paiement', win.from).lte('date_paiement', win.to), tid),
       // calendrier du jour
-      tq(supabaseAdmin.from('reservations').select('id, date_debut, date_fin, statut, espaces(nom, type), profiles(nom, prenom)').in('statut', ['confirmed', 'pending']).gte('date_debut', debutJourStr).lte('date_debut', finJourStr).order('date_debut', { ascending: true }), tid),
+      tq(supabaseAdmin.from('reservations').select('id, date_debut, date_fin, statut, espaces(nom, type), profiles!user_id(nom, prenom)').in('statut', ['confirmed', 'pending']).gte('date_debut', debutJourStr).lte('date_debut', finJourStr).order('date_debut', { ascending: true }), tid),
       // prochaines réservations J+7
-      tq(supabaseAdmin.from('reservations').select('id, date_debut, date_fin, statut, espaces(nom), profiles(nom, prenom)').in('statut', ['confirmed', 'pending']).gte('date_debut', new Date().toISOString()).lte('date_debut', dans7JoursFin.toISOString()).order('date_debut', { ascending: true }).limit(6), tid),
+      tq(supabaseAdmin.from('reservations').select('id, date_debut, date_fin, statut, espaces(nom), profiles!user_id(nom, prenom)').in('statut', ['confirmed', 'pending']).gte('date_debut', new Date().toISOString()).lte('date_debut', dans7JoursFin.toISOString()).order('date_debut', { ascending: true }).limit(6), tid),
       // formations du jour (liste)
-      tq(supabaseAdmin.from('formations').select('id, titre, date_debut, date_fin, nb_inscrits, capacite_max, statut, prix_inscription, espaces(nom), profiles(nom, prenom, specialite)').in('statut', ['planifiee', 'en_cours']).gte('date_debut', debutJourStr).lte('date_debut', finJourStr).order('date_debut', { ascending: true }), tid),
+      tq(supabaseAdmin.from('formations').select('id, titre, date_debut, date_fin, capacite_max, statut, prix_inscription, espaces(nom), profiles!fk_formations_formateur_profiles(nom, prenom, specialite)').in('statut', ['planifiee', 'en_cours']).gte('date_debut', debutJourStr).lte('date_debut', finJourStr).order('date_debut', { ascending: true }), tid),
       // activité : réservations récentes
-      tq(supabaseAdmin.from('reservations').select('id, created_at, statut, espaces(nom), profiles(nom, prenom)').in('statut', ['confirmed', 'pending']).order('created_at', { ascending: false }).limit(6), tid),
+      tq(supabaseAdmin.from('reservations').select('id, created_at, statut, espaces(nom), profiles!user_id(nom, prenom)').in('statut', ['confirmed', 'pending']).order('created_at', { ascending: false }).limit(6), tid),
       // activité : paiements récents
       tq(supabaseAdmin.from('paiements').select('id, created_at, montant, profiles(nom, prenom)').eq('statut', 'paid').order('created_at', { ascending: false }).limit(6), tid),
       // activité : sessions récentes
-      tq(supabaseAdmin.from('sessions').select('id, check_in, reservations(espaces(nom), profiles(nom, prenom))').not('check_in', 'is', null).order('check_in', { ascending: false }).limit(6), tid),
+      tq(supabaseAdmin.from('sessions').select('id, check_in, reservations(espaces(nom), profiles!user_id(nom, prenom))').not('check_in', 'is', null).order('check_in', { ascending: false }).limit(6), tid),
     ]);
 
     // ── Calculs ──────────────────────────────────────────────────────────
@@ -209,14 +209,26 @@ async function getAdminKpis(req, res) {
       ? Math.round(tauxOccupation.reduce((s, e) => s + (e.taux || 0), 0) / (espaces || []).length)
       : 0;
 
-    const sessionsEnCours = (sessionsActives || []).map(s => ({
-      id: s.id,
-      membre: s.reservations?.profiles ? `${s.reservations.profiles.prenom} ${s.reservations.profiles.nom}` : 'Inconnu',
-      espace: s.reservations?.espaces?.nom || 'Inconnu',
-      check_in: s.check_in,
-      tempsRestant: computeRemainingMinutes(s.reservations?.date_fin),
-      dateFin: s.reservations?.date_fin,
-    }));
+    const sessionsEnCours = (sessionsActives || []).map(s => {
+      const fin = s.reservations?.date_fin;
+      const diffMin = fin ? Math.floor((new Date(fin).getTime() - Date.now()) / 60000) : 0;
+      const overtimeMin = diffMin < 0 ? Math.abs(diffMin) : 0;
+      const rate = Number(s.reservations?.espaces?.tarif_horaire || 0);
+      return {
+        id: s.id,
+        reservation_id: s.reservation_id,
+        membre: s.reservations?.profiles ? `${s.reservations.profiles.prenom} ${s.reservations.profiles.nom}` : 'Inconnu',
+        espace: s.reservations?.espaces?.nom || 'Inconnu',
+        tarif_horaire: rate,
+        check_in: s.check_in,
+        tempsRestant: Math.max(0, diffMin),
+        overtimeMinutes: overtimeMin,
+        overtimeAmount: overtimeMin > 0 && rate > 0 ? Number(((overtimeMin / 60) * rate).toFixed(3)) : 0,
+        dateDebut: s.reservations?.date_debut,
+        dateFin: fin,
+        statut: diffMin < 0 ? 'en_depassement' : (diffMin <= 15 ? 'bientot_terminee' : 'en_cours'),
+      };
+    });
 
     const topMembresMap = {};
     (topPaiements || []).forEach(p => {
@@ -234,7 +246,7 @@ async function getAdminKpis(req, res) {
     });
     (actPaie || []).forEach(p => {
       const who = p.profiles ? `${p.profiles.prenom} ${p.profiles.nom}` : 'Un membre';
-      feed.push({ id: `p-${p.id}`, type: 'paiement', text: `Paiement de ${parseFloat(p.montant || 0).toFixed(2)} DT reçu — ${who}`, time: p.created_at });
+      feed.push({ id: `p-${p.id}`, type: 'paiement', text: `Paiement de ${parseFloat(p.montant || 0).toFixed(3)} DT reçu — ${who}`, time: p.created_at });
     });
     (actSess || []).forEach(s => {
       const who = s.reservations?.profiles ? `${s.reservations.profiles.prenom} ${s.reservations.profiles.nom}` : 'Un membre';
@@ -309,7 +321,7 @@ async function getRevenueChart(req, res) {
       tq(supabaseAdmin.from('paiements').select('montant, date_paiement, reservations(espaces(nom))').eq('statut', 'paid').gte('date_paiement', W_FROM).lte('date_paiement', W_TO), tid),
       tq(supabaseAdmin.from('reservations').select('espace_id, date_debut, date_fin, statut, espaces(nom)').in('statut', ['confirmed', 'pending']).gte('date_debut', W_FROM).lte('date_debut', W_TO), tid),
       tq(supabaseAdmin.from('espaces').select('id, nom'), tid),
-      tq(supabaseAdmin.from('formations').select('id, titre, date_debut, date_fin, nb_inscrits, capacite_max, statut, prix_inscription, espaces(nom), profiles(nom, prenom, specialite)').in('statut', ['planifiee', 'en_cours']).gte('date_debut', W_FROM).lte('date_debut', W_TO).order('date_debut', { ascending: true }), tid),
+      tq(supabaseAdmin.from('formations').select('id, titre, date_debut, date_fin, capacite_max, statut, prix_inscription, espaces(nom), profiles!fk_formations_formateur_profiles(nom, prenom, specialite)').in('statut', ['planifiee', 'en_cours']).gte('date_debut', W_FROM).lte('date_debut', W_TO).order('date_debut', { ascending: true }), tid),
     ]);
 
     const revenueChart = buckets.map(b => {

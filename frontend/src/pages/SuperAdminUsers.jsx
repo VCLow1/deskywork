@@ -136,7 +136,13 @@ export default function SuperAdminUsers({ session }) {
   const [toastErr, setToastErr] = useState('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 3500); };
-  const showError = (msg) => { setToastErr(msg); setTimeout(() => setToastErr(''), 4000); };
+  const showError = (msg) => {
+    const clean = typeof msg === 'string' && msg.trim() && msg.trim() !== '{}'
+      ? msg
+      : (msg?.message && msg.message !== '{}' ? msg.message : 'Une erreur est survenue lors de l\'opération.');
+    setToastErr(clean);
+    setTimeout(() => setToastErr(''), 5000);
+  };
 
   useEffect(() => {
     if (!userId) { navigate('/login'); return; }
@@ -189,6 +195,8 @@ export default function SuperAdminUsers({ session }) {
     setActionLoading(true);
     try {
       await superAdminApi.deleteUser(user.id);
+      setUsers(prev => prev.filter(item => item.id !== user.id));
+      setTotal(prev => Math.max(0, prev - 1));
       showToast(`Utilisateur "${user.prenom} ${user.nom}" supprimé.`);
       loadData();
     } catch (e) { showError(e.message); }

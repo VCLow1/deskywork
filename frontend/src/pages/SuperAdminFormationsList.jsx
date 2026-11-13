@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { superAdminApi } from '../services/superAdminApi';
@@ -52,6 +52,8 @@ export default function SuperAdminFormationsList({ session }) {
   const [notice, setNotice] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  const tenantsLoadedRef = useRef(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -62,13 +64,14 @@ export default function SuperAdminFormationsList({ session }) {
 
       const [formData, tenantsData] = await Promise.all([
         superAdminApi.getAllFormations(params),
-        tenants.length === 0 ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
+        !tenantsLoadedRef.current ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
       ]);
 
       setFormations(formData?.formations || []);
       setTotal(formData?.pagination?.total || 0);
 
       if (tenantsData?.tenants) {
+        tenantsLoadedRef.current = true;
         setTenants(tenantsData.tenants);
       }
     } catch (e) {
@@ -77,7 +80,7 @@ export default function SuperAdminFormationsList({ session }) {
     } finally {
       setLoading(false);
     }
-  }, [page, filterStatut, filterTenant, search, tenants.length]);
+  }, [page, filterStatut, filterTenant, search]);
 
   useEffect(() => {
     if (!userId) { navigate('/login'); return; }

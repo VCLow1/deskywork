@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { paymentApi } from '../services/api';
+import { paymentApi, memberApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import { exportPaymentsToExcel } from '../utils/exportPaymentsExcel';
+import { formatDT } from '../utils/format';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -33,7 +34,7 @@ const MODE_LABELS = {
   cash: 'Espèces',
   bank_transfer: 'Virement',
   check: 'Chèque',
-  online: 'En ligne',
+  online: 'Sur place (legacy)',
 };
 
 function computePaymentStats(payments) {
@@ -61,6 +62,16 @@ export default function AdminPayments({ session }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [montantDuData, setMontantDuData] = useState({ items: [], total_du: 0, count: 0 });
+  const [collectTarget, setCollectTarget] = useState(null);
+  const [collectMode, setCollectMode] = useState('cash');
+  const [collectAmount, setCollectAmount] = useState('');
+  const [collecting, setCollecting] = useState(false);
+  const [collectFeedback, setCollectFeedback] = useState('');
+  const [showAddDuModal, setShowAddDuModal] = useState(false);
+  const [duMembers, setDuMembers] = useState([]);
+  const [newDuForm, setNewDuForm] = useState({ user_id: '', categorie: 'penalite', motif: '', montant: '' });
+  const [creatingDu, setCreatingDu] = useState(false);
 
   const filteredPayments = useMemo(() => {
     let result = [...payments];
@@ -97,14 +108,17 @@ export default function AdminPayments({ session }) {
 
   const fetchProfileAndPayments = async () => {
     try {
+      setErrorMsg('');
       if (!payments.length) setLoading(true);
-      const [profRes, data] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', session.user.id).single().catch(() => null),
+      const [profRes, data, mdRes] = await Promise.all([
+        Promise.resolve(supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()).catch(() => null),
         paymentApi.getAll().catch(() => ({ payments: [] })),
+        paymentApi.getMontantDu().catch(() => ({ items: [], total_du: 0, count: 0 })),
       ]);
 
       if (profRes?.data) setProfile(profRes.data);
       if (data?.payments) setPayments(data.payments);
+      if (mdRes?.items) setMontantDuData(mdRes);
     } catch (err) {
       setErrorMsg(err.message || "Erreur de chargement");
     } finally {
@@ -121,7 +135,35 @@ export default function AdminPayments({ session }) {
     try {
       await paymentApi.downloadReceipt(id);
     } catch (err) {
-      alert("Erreur lors du téléchargement du PDF");
+      alert("Erreur lors du téléchargement du reçu PDF");
+    }
+  };
+
+  const openCollectModal = (item) => {
+    setCollectTarget(item);
+    setCollectMode('cash');
+    setCollectAmount(String(Number(item.montant_du || item.montant || 0).toFixed(3)));
+  };
+
+  const handleConfirmCollect = async (e) => {
+    e.preventDefault();
+    if (!collectTarget) return;
+    setCollecting(true);
+    try {
+      const res = await paymentApi.collect(collectTarget.id, {
+        mode: collectMode,
+        montant_encaisse: parseFloat(collectAmount),
+      });
+      setCollectFeedback(res.message || 'Encaissement enregistré.');
+      setCollectTarget(null);
+      await fetchProfileAndPayments();
+      if (res.paid_payment?.id) {
+        try { await paymentApi.downloadReceipt(res.paid_payment.id); } catch (_) {}
+      }
+    } catch (err) {
+      alert(err.message || "Erreur lors de l'encaissement.");
+    } finally {
+      setCollecting(false);
     }
   };
 
@@ -177,7 +219,7 @@ export default function AdminPayments({ session }) {
           </div>
           <div>
             <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Recettes Encaissées</p>
-            <p className="text-lg sm:text-2xl font-bold text-primary">{stats.totalRevenue.toLocaleString()} DT</p>
+            <p className="text-lg sm:text-2xl font-bold text-primary">{formatDT(stats.totalRevenue)}</p>
           </div>
         </div>
 
@@ -186,8 +228,8 @@ export default function AdminPayments({ session }) {
             <span className="material-symbols-outlined filled text-[22px] sm:text-[24px]">pending_actions</span>
           </div>
           <div>
-            <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Paiements en Attente</p>
-            <p className="text-lg sm:text-2xl font-bold text-primary">{stats.pendingAmount.toLocaleString()} DT</p>
+            <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Montants dus sur place</p>
+            <p className="text-lg sm:text-2xl font-bold text-primary">{formatDT(stats.pendingAmount)}</p>
           </div>
         </div>
 
@@ -210,6 +252,88 @@ export default function AdminPayments({ session }) {
           {errorMsg}
         </div>
       )}
+
+      {collectFeedback && (
+        <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 flex items-center justify-between">
+          <span>{collectFeedback}</span>
+          <button type="button" onClick={() => setCollectFeedback('')} className="ml-3 text-xs underline">Fermer</button>
+        </div>
+      )}
+
+      {/* Entité unifiée « Montant dû » à encaisser sur place (CDC v3.0 Chantier 4.2) */}
+      <div className="mb-6 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 className="font-sora text-base font-bold text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>payments</span>
+              Montants dus à encaisser sur place
+            </h2>
+            <p className="text-xs text-on-surface-variant">
+              Réservations, dépassements auto, prolongations, pénalités, inscriptions aux formations et abonnements
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                setShowAddDuModal(true);
+                if (duMembers.length === 0) {
+                  try {
+                    const r = await memberApi.getAll();
+                    setDuMembers(r.members || []);
+                  } catch (_) {}
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl border border-outline-variant/25 bg-surface-container-low text-primary text-xs font-bold hover:bg-surface-container flex items-center gap-1"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+              Pénalité / Frais
+            </button>
+            <span className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-1.5 text-sm font-extrabold text-amber-900">
+              Total dû : {formatDT(montantDuData.total_du)}
+            </span>
+          </div>
+        </div>
+
+        {montantDuData.items.length === 0 ? (
+          <p className="text-xs text-on-surface-variant py-2">Aucun montant dû en attente d'encaissement.</p>
+        ) : (
+          <div className="divide-y divide-outline-variant/15">
+            {montantDuData.items.map((item) => {
+              const cliName = item.profiles ? `${item.profiles.prenom || ''} ${item.profiles.nom || ''}`.trim() || item.profiles.email : 'Client';
+              return (
+                <div key={item.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm text-primary">{cliName}</span>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                        item.categorie === 'penalite'
+                          ? 'bg-red-100 text-red-700'
+                          : item.categorie === 'depassement'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-700'
+                      }`}>
+                        {item.categorie}
+                      </span>
+                    </div>
+                    <p className="text-xs text-on-surface-variant">{item.libelle}</p>
+                  </div>
+                  <div className="flex items-center gap-3 ml-auto">
+                    <span className="font-sora text-sm font-extrabold text-[#f95d00]">{formatDT(item.montant_du)}</span>
+                    <button
+                      type="button"
+                      onClick={() => openCollectModal(item)}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] shadow-xs transition"
+                    >
+                      Encaisser sur place
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Barre de recherche et filtres de statut */}
       <div className="bg-surface-container-lowest rounded-2xl p-4 md:p-5 border border-outline-variant/30 shadow-sm mb-6 space-y-4">
@@ -307,7 +431,7 @@ export default function AdminPayments({ session }) {
                       <div className="text-[11px]">{dateP.toLocaleDateString()}</div>
                     </td>
                     <td className="px-4 py-3 font-bold text-secondary">
-                      {p.montant} DT
+                      {formatDT(p.montant)}
                     </td>
                     <td className="px-4 py-3">
                       <span className="bg-surface-container-high px-2 py-1 rounded-md text-xs font-medium">
@@ -355,6 +479,164 @@ export default function AdminPayments({ session }) {
         />
       </div>
 
+      {/* Modale d'encaissement sur place (complet ou partiel) + Reçu PDF */}
+      {collectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form onSubmit={handleConfirmCollect} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Encaissement sur place</h3>
+              <button type="button" onClick={() => setCollectTarget(null)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-3.5 text-xs space-y-1">
+              <p className="font-bold text-slate-900">{collectTarget.libelle}</p>
+              <p className="text-slate-600">
+                Client : {collectTarget.profiles ? `${collectTarget.profiles.prenom || ''} ${collectTarget.profiles.nom || ''}`.trim() : 'Client'}
+              </p>
+              <p className="text-slate-700 font-semibold">Solde dû : {formatDT(collectTarget.montant_du)}</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Mode de règlement sur place *</label>
+              <select
+                value={collectMode}
+                onChange={(e) => setCollectMode(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                <option value="cash">Espèces</option>
+                <option value="bank_transfer">Virement bancaire</option>
+                <option value="check">Chèque</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Montant encaissé (DT — modifier pour encaissement partiel) *
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                min="0.001"
+                max={collectTarget.montant_du}
+                required
+                value={collectAmount}
+                onChange={(e) => setCollectAmount(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold"
+              />
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Un Reçu de paiement PDF numéroté (Hors Facture) sera généré et transmis automatiquement par e-mail au client.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCollectTarget(null)}
+                className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={collecting}
+                className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white hover:bg-[#e55500] disabled:opacity-50"
+              >
+                {collecting ? 'Encaissement…' : 'Valider & Générer le Reçu'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showAddDuModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setCreatingDu(true);
+              setErrorMsg('');
+              try {
+                const res = await paymentApi.createMontantDu(newDuForm);
+                setCollectFeedback(res.message || 'Montant dû ajouté.');
+                setShowAddDuModal(false);
+                setNewDuForm({ user_id: '', categorie: 'penalite', motif: '', montant: '' });
+                const mRes = await paymentApi.getMontantDu();
+                setMontantDuData(mRes || { items: [], total_du: 0, count: 0 });
+              } catch (err) {
+                setErrorMsg(err.message);
+              } finally {
+                setCreatingDu(false);
+              }
+            }}
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Nouveau montant dû (Pénalité / Frais)</h3>
+              <button type="button" onClick={() => setShowAddDuModal(false)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Membre *</label>
+              <select
+                required
+                value={newDuForm.user_id}
+                onChange={(e) => setNewDuForm((p) => ({ ...p, user_id: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                <option value="">— Choisir un membre —</option>
+                {duMembers.map((m) => (
+                  <option key={m.id} value={m.id}>{m.prenom} {m.nom} ({m.email})</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Catégorie</label>
+                <select
+                  value={newDuForm.categorie}
+                  onChange={(e) => setNewDuForm((p) => ({ ...p, categorie: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+                >
+                  <option value="penalite">Pénalité</option>
+                  <option value="depassement">Dépassement</option>
+                  <option value="prolongation">Prolongation</option>
+                  <option value="autre">Autre frais</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Montant (DT) *</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0.1"
+                  required
+                  value={newDuForm.montant}
+                  onChange={(e) => setNewDuForm((p) => ({ ...p, montant: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Motif *</label>
+              <input
+                type="text"
+                required
+                placeholder="Ex: Retard annulation, casse matériel, heure supp..."
+                value={newDuForm.motif}
+                onChange={(e) => setNewDuForm((p) => ({ ...p, motif: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setShowAddDuModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700">
+                Annuler
+              </button>
+              <button type="submit" disabled={creatingDu} className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white disabled:opacity-50">
+                {creatingDu ? 'Ajout…' : 'Ajouter aux montants dus'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </PortalLayout>
   );
 }

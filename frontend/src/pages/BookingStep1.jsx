@@ -225,6 +225,8 @@ export default function BookingStep1({ session }) {
             { id: 'meeting_room', label: 'Salle de Réunion' },
             { id: 'training_room', label: 'Salle de Formation' },
             { id: 'event_space', label: 'Événement' },
+            { id: 'hot_desk', label: 'Hot Desk' },
+            { id: 'dedicated_desk', label: 'Dedicated Desk' },
           ].map(({ id, label }) => (
             <button
               key={id}
@@ -279,7 +281,7 @@ export default function BookingStep1({ session }) {
                       {space.type ? space.type.replace('_', ' ') : 'Espace'}
                     </span>
                     <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '20px', fontWeight: 800, color: '#f95d00' }}>
-                      {parseFloat(space.tarif_horaire).toFixed(2)} DT <span style={{ fontSize: '12px', fontWeight: 400, color: '#6b7280' }}>/ h</span>
+                      {parseFloat(space.tarif_horaire).toFixed(3)} DT <span style={{ fontSize: '12px', fontWeight: 400, color: '#6b7280' }}>/ h</span>
                     </span>
                   </div>
 

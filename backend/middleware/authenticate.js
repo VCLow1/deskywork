@@ -16,11 +16,38 @@ async function authenticate(req, res, next) {
     return res.status(401).json({ error: 'Token JWT invalide ou expiré.' });
   }
 
-  const { data: profile, error: profileError } = await supabaseAdmin
+  let { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
     .select('*')
     .eq('id', data.user.id)
-    .single();
+    .maybeSingle();
+
+  // Auto-récupération si un utilisateur OAuth Google vient d'être créé avant que le trigger profiles ne soit visible
+  const reqUrl = String(req.originalUrl || req.url || '');
+  if ((!profile || profileError) && (reqUrl.includes('/auth/oauth-status') || reqUrl.includes('/auth/complete-oauth-registration'))) {
+    const meta = data.user.user_metadata || {};
+    const fullName = String(meta.full_name || meta.name || '').trim();
+    const parts = fullName.split(/\s+/).filter(Boolean);
+    const { data: createdProfile, error: upsertErr } = await supabaseAdmin
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        email: String(data.user.email || '').trim().toLowerCase(),
+        prenom: meta.prenom || meta.first_name || parts[0] || '',
+        nom: meta.nom || meta.last_name || parts.slice(1).join(' ') || '',
+        telephone: meta.telephone || meta.phone || null,
+        role: meta.role || 'member',
+        statut_compte: 'actif',
+        email_verifie: Boolean(data.user.email_confirmed_at),
+        photo_url: meta.avatar_url || meta.picture || null,
+      }, { onConflict: 'id' })
+      .select('*')
+      .maybeSingle();
+    if (!upsertErr && createdProfile) {
+      profile = createdProfile;
+      profileError = null;
+    }
+  }
 
   if (profileError || !profile) {
     return res.status(403).json({ error: 'Profil membre introuvable.' });

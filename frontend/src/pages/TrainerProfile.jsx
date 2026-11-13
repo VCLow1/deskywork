@@ -42,6 +42,7 @@ export default function TrainerProfile({ session }) {
   const [saving,   setSaving]   = useState(false);
   const [testingNotification, setTestingNotification] = useState(false);
   const [photoUpl, setPhotoUpl] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const [success,  setSuccess]  = useState('');
   const [error,    setError]    = useState('');
   const photoRef = useRef(null);
@@ -92,12 +93,25 @@ export default function TrainerProfile({ session }) {
     finally     { setSaving(false); }
   };
 
-  /* ── Upload photo de profil ─────────────────────────────────────────── */
+  /* ── Upload photo de profil (CDC v3.0) ───────────────────────────────── */
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError('Format invalide. Veuillez sélectionner une image (JPEG, PNG, WebP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('L\'image dépasse 5 MB. Veuillez choisir un fichier plus léger.');
+      return;
+    }
+
+    const localPreview = URL.createObjectURL(file);
+    setPhotoPreview(localPreview);
     setPhotoUpl(true);
     setError('');
+
     try {
       let publicUrl = null;
       // 1. Essayer l'upload sécurisé via le Backend (service role, contourne RLS)
@@ -147,10 +161,19 @@ export default function TrainerProfile({ session }) {
         .update({ photo_url: publicUrl, updated_at: new Date().toISOString() })
         .eq('id', session.user.id);
       if (updErr) throw updErr;
+
       setProfile((p) => ({ ...p, photo_url: publicUrl }));
+      setPhotoPreview(null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('profile-updated', { detail: { photo_url: publicUrl } }));
+      }
       setSuccess('Photo mise à jour.');
-    } catch (e) { setError("Erreur upload : " + e.message); }
-    finally     { setPhotoUpl(false); }
+    } catch (e) {
+      setPhotoPreview(null);
+      setError("Erreur upload : " + e.message);
+    } finally {
+      setPhotoUpl(false);
+    }
   };
 
   /* ── Test de notification ────────────────────────────────────────── */
@@ -173,7 +196,7 @@ export default function TrainerProfile({ session }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erreur lors du test de notification');
-      setSuccess(`Notification de test envoyée avec succès via ${targetCanal === 'both' ? 'Email & WhatsApp' : targetCanal.toUpperCase()} !`);
+      setSuccess('Notification de test envoyée avec succès par E-mail & In-App !');
     } catch (err) {
       setError(err.message || 'Impossible d\'envoyer le test de notification.');
     } finally {
@@ -239,9 +262,9 @@ export default function TrainerProfile({ session }) {
           <div className="flex items-center gap-5">
             {/* Avatar */}
             <div className="relative shrink-0">
-              {profile?.photo_url ? (
+              {(photoPreview || profile?.photo_url) ? (
                 <img
-                  src={profile.photo_url}
+                  src={photoPreview || profile.photo_url}
                   alt="Photo de profil"
                   className="w-20 h-20 rounded-2xl object-cover border-2 border-outline-variant/20 shadow"
                 />
@@ -271,8 +294,11 @@ export default function TrainerProfile({ session }) {
               <p className="font-sora font-bold text-primary text-lg leading-tight">
                 {form.prenom} {form.nom}
               </p>
-              <p className="text-sm text-secondary font-semibold mt-0.5">Formateur</p>
-              <p className="text-xs text-on-surface-variant mt-1 truncate">{email}</p>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-secondary/10 text-secondary mt-1">
+                <span className="material-symbols-outlined text-[13px]">lock</span>
+                Rôle &amp; Profil (figé) : Formateur
+              </div>
+              <p className="text-xs text-on-surface-variant mt-1.5 truncate">{email}</p>
               {form.specialite && (
                 <span className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-secondary/10 text-secondary">
                   <span className="material-symbols-outlined" style={{ fontSize: 11 }}>school</span>
@@ -321,7 +347,7 @@ export default function TrainerProfile({ session }) {
           </div>
         </div>
 
-        {/* ── Préférences de Notifications (Email & WhatsApp) ── */}
+        {/* ── Préférences de Notifications (CDC v3.0 — D2 : E-mail & In-App uniquement) ── */}
         <div className="bg-surface-container-low rounded-3xl border border-outline-variant/20 p-6 mb-4 shadow-sm">
           <div className="flex items-center justify-between gap-2 mb-5">
             <div className="flex items-center gap-2">
@@ -329,13 +355,12 @@ export default function TrainerProfile({ session }) {
                 <span className="material-symbols-outlined text-secondary" style={{ fontSize: 17 }}>notifications_active</span>
               </span>
               <div>
-                <h2 className="font-sora font-bold text-primary text-base">Canal de Notifications</h2>
-                <p className="text-xs text-on-surface-variant">Choisissez comment recevoir vos alertes, réservations et rappels</p>
+                <h2 className="font-sora font-bold text-primary text-base">Canaux de Notifications</h2>
+                <p className="text-xs text-on-surface-variant">Vos alertes de sessions de formation et paiements sont envoyées par e-mail et dans l'application</p>
               </div>
             </div>
-            
             <button
-              onClick={() => handleTestNotification()}
+              onClick={() => handleTestNotification('email')}
               disabled={testingNotification}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-outline-variant/30 text-xs font-semibold text-primary hover:bg-surface-container transition-all disabled:opacity-50"
             >
@@ -346,75 +371,22 @@ export default function TrainerProfile({ session }) {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-            {/* EMAIL */}
-            <div
-              onClick={() => setForm((f) => ({ ...f, canal_notification: 'email' }))}
-              className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center text-center ${
-                form.canal_notification === 'email'
-                  ? 'border-secondary bg-secondary/5 text-primary ring-2 ring-secondary/20 shadow-sm'
-                  : 'border-outline-variant/30 bg-surface hover:border-outline-variant/60 text-on-surface-variant'
-              }`}
-            >
-              <span className="material-symbols-outlined text-secondary mb-1.5" style={{ fontSize: 26 }}>mail</span>
-              <p className="font-sora font-bold text-sm text-primary">Email uniquement</p>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">Alertes envoyées à votre boîte mail</p>
-              {form.canal_notification === 'email' && (
-                <span className="mt-2.5 inline-flex items-center gap-1 text-[10px] font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-full">
-                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>check</span> Actif
-                </span>
-              )}
-            </div>
-
-            {/* WHATSAPP */}
-            <div
-              onClick={() => setForm((f) => ({ ...f, canal_notification: 'whatsapp' }))}
-              className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center text-center ${
-                form.canal_notification === 'whatsapp'
-                  ? 'border-emerald-500 bg-emerald-500/5 text-primary ring-2 ring-emerald-500/20 shadow-sm'
-                  : 'border-outline-variant/30 bg-surface hover:border-outline-variant/60 text-on-surface-variant'
-              }`}
-            >
-              <span className="material-symbols-outlined text-emerald-600 mb-1.5" style={{ fontSize: 26 }}>chat</span>
-              <p className="font-sora font-bold text-sm text-primary">WhatsApp uniquement</p>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">Messages directs sur votre mobile</p>
-              {form.canal_notification === 'whatsapp' && (
-                <span className="mt-2.5 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>check</span> Actif
-                </span>
-              )}
-            </div>
-
-            {/* BOTH */}
-            <div
-              onClick={() => setForm((f) => ({ ...f, canal_notification: 'both' }))}
-              className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center text-center ${
-                form.canal_notification === 'both'
-                  ? 'border-blue-600 bg-blue-600/5 text-primary ring-2 ring-blue-600/20 shadow-sm'
-                  : 'border-outline-variant/30 bg-surface hover:border-outline-variant/60 text-on-surface-variant'
-              }`}
-            >
-              <div className="flex items-center gap-1 text-blue-600 mb-1.5">
-                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>mail</span>
-                <span className="text-xs font-bold">+</span>
-                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chat</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-4 rounded-2xl border-2 border-secondary bg-secondary/5 flex items-center gap-3">
+              <span className="material-symbols-outlined text-secondary" style={{ fontSize: 24 }}>mail</span>
+              <div>
+                <p className="font-sora font-bold text-sm text-primary">E-mail</p>
+                <p className="text-[11px] text-on-surface-variant">Boîte de réception configurée sur votre profil</p>
               </div>
-              <p className="font-sora font-bold text-sm text-primary">Les deux (Email + WhatsApp)</p>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">Ne manquez aucune alerte</p>
-              {form.canal_notification === 'both' && (
-                <span className="mt-2.5 inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>check</span> Actif
-                </span>
-              )}
+            </div>
+            <div className="p-4 rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 flex items-center gap-3">
+              <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 24 }}>notifications</span>
+              <div>
+                <p className="font-sora font-bold text-sm text-primary">In-App</p>
+                <p className="text-[11px] text-on-surface-variant">Alertes en direct dans votre espace formateur</p>
+              </div>
             </div>
           </div>
-
-          {(form.canal_notification === 'whatsapp' || form.canal_notification === 'both') && !form.telephone && (
-            <div className="flex items-center gap-2 p-3 bg-amber-50 rounded-xl text-amber-800 text-xs border border-amber-200">
-              <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 16 }}>warning</span>
-              <span>Pensez à renseigner votre numéro de téléphone au format international (ex: <strong>+216 XX XXX XXX</strong>) ci-dessus pour recevoir les WhatsApp.</span>
-            </div>
-          )}
         </div>
 
         {/* ── Sécurité ── */}

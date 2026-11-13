@@ -10,6 +10,8 @@ const ctrl = require('../controllers/superAdminValidationController');
 router.get('/super-admin/pending-validations', authenticate, requireSuperAdmin, ctrl.getPendingValidations);
 router.patch('/super-admin/organizations/:id/validation', authenticate, requireSuperAdmin, ctrl.validateOrganization);
 router.patch('/super-admin/trainers/:id/validation', authenticate, requireSuperAdmin, ctrl.validateTrainer);
+router.patch('/super-admin/tenants/:tenantId/pack-upgrades/:requestId', authenticate, requireSuperAdmin, ctrl.validatePackUpgrade);
+router.post('/super-admin/tenants/:tenantId/pack-upgrades/:requestId', authenticate, requireSuperAdmin, ctrl.validatePackUpgrade);
 
 module.exports = router;
 

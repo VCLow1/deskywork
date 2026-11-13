@@ -28,7 +28,6 @@ export default function TenantBilling({ session }) {
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ total: 0 });
   const [emailAlerts, setEmailAlerts] = useState(true);
-  const [smsAlerts, setSmsAlerts] = useState(false);
   const [notice, setNotice] = useState(null);
 
   const load = useCallback(async () => {
@@ -125,18 +124,6 @@ export default function TenantBilling({ session }) {
               </div>
               <button onClick={() => setEmailAlerts(!emailAlerts)} className={`relative w-11 h-6 rounded-full transition-colors ${emailAlerts ? 'bg-secondary' : 'bg-surface-variant'}`}>
                 <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${emailAlerts ? 'translate-x-5.5 left-0.5' : 'left-0.5'}`} />
-              </button>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-surface-container-low rounded-xl">
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>sms</span>
-                <div>
-                  <p className="text-sm font-semibold text-primary">Alertes SMS</p>
-                  <p className="text-xs text-on-surface-variant">Urgent: envoyé à J+15 uniquement</p>
-                </div>
-              </div>
-              <button onClick={() => setSmsAlerts(!smsAlerts)} className={`relative w-11 h-6 rounded-full transition-colors ${smsAlerts ? 'bg-secondary' : 'bg-surface-variant'}`}>
-                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${smsAlerts ? 'translate-x-5.5 left-0.5' : 'left-0.5'}`} />
               </button>
             </div>
           </div>

@@ -163,7 +163,11 @@ CREATE TABLE IF NOT EXISTS public.espaces (
     nom TEXT NOT NULL,
     type TEXT NOT NULL,
     capacite INTEGER NOT NULL DEFAULT 1,
-    tarif_horaire NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    tarif_horaire NUMERIC(12, 3) NOT NULL DEFAULT 0,
+    tarif_journalier NUMERIC(12, 3) DEFAULT 0,
+    tarif_mensuel NUMERIC(12, 3) DEFAULT 0,
+    horaires TEXT DEFAULT '08:00 - 20:00',
+    statut TEXT DEFAULT 'actif',
     photo_url TEXT,
     photos_urls JSONB DEFAULT '[]'::jsonb,
     images TEXT[] DEFAULT '{}'::text[],
@@ -640,3 +644,184 @@ DROP POLICY IF EXISTS "Super Admin full orgs" ON public.organizations;
 CREATE POLICY "Super Admin full orgs" ON public.organizations FOR ALL USING (
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND (role = 'super_admin' OR is_super_admin = TRUE))
 );
+
+-- ==============================================================================
+-- 20. COMPLÉMENTS CDC v3.0 (Tables & colonnes manquantes)
+-- Voir aussi database/MIGRATION_CDC_V3_COMPLETE.sql pour la migration incrémentale
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.sessions (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reservation_id UUID NOT NULL REFERENCES public.reservations(id) ON DELETE CASCADE UNIQUE,
+    tenant_id      UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    check_in       TIMESTAMPTZ,
+    check_out      TIMESTAMPTZ,
+    statut         TEXT NOT NULL DEFAULT 'scheduled' CHECK (statut IN ('scheduled', 'active', 'completed', 'overtime', 'no_show')),
+    temps_restant  INTEGER,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.paiements (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id            UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    guest_id           UUID REFERENCES public.guests(id) ON DELETE SET NULL,
+    reservation_id     UUID REFERENCES public.reservations(id) ON DELETE SET NULL,
+    abonnement_id      UUID REFERENCES public.abonnements(id) ON DELETE SET NULL,
+    montant            NUMERIC(12, 3) NOT NULL DEFAULT 0 CHECK (montant >= 0),
+    montant_paye       NUMERIC(12, 3) NOT NULL DEFAULT 0 CHECK (montant_paye >= 0),
+    montant_rembourse  NUMERIC(12, 3) NOT NULL DEFAULT 0 CHECK (montant_rembourse >= 0),
+    mode               TEXT NOT NULL DEFAULT 'cash' CHECK (mode IN ('cash', 'bank_transfer', 'check', 'online')),
+    statut             TEXT NOT NULL DEFAULT 'pending' CHECK (statut IN ('pending', 'partial', 'paid', 'failed', 'refunded')),
+    numero_recu        TEXT UNIQUE,
+    reference_externe  TEXT,
+    date_paiement      TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.recu_compteur (
+    annee          INTEGER PRIMARY KEY,
+    dernier_numero INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS public.remuneration_formateurs (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    formateur_id   UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    formation_id   UUID NOT NULL REFERENCES public.formations(id) ON DELETE CASCADE,
+    montant        NUMERIC(12, 3) NOT NULL CHECK (montant >= 0),
+    statut         TEXT NOT NULL DEFAULT 'en_attente' CHECK (statut IN ('en_attente', 'paye')),
+    date_versement TIMESTAMPTZ,
+    note           TEXT,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (formateur_id, formation_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.politique_annulation (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                   UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    delai_heures                INTEGER NOT NULL DEFAULT 24 CHECK (delai_heures >= 0),
+    penalite_pct                NUMERIC(5, 2) NOT NULL DEFAULT 0 CHECK (penalite_pct >= 0 AND penalite_pct <= 100),
+    annulation_membre_autorisee BOOLEAN NOT NULL DEFAULT TRUE,
+    remboursement_auto          BOOLEAN NOT NULL DEFAULT FALSE,
+    message_membre              TEXT DEFAULT 'Annulation gratuite jusqu''à 24 h avant le début du créneau.',
+    updated_at                  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.politique_annulation_espaces (
+    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                 UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    type_espace               TEXT NOT NULL CHECK (type_espace IN ('private_office', 'open_space', 'meeting_room', 'training_room', 'event_space', 'hot_desk', 'dedicated_desk')),
+    tranche_libre_heures      INTEGER NOT NULL DEFAULT 24,
+    tranche_tardive_heures    INTEGER NOT NULL DEFAULT 12,
+    penalite_tardive_pct      NUMERIC(5, 2) NOT NULL DEFAULT 50,
+    penalite_tres_tardive_pct NUMERIC(5, 2) NOT NULL DEFAULT 100,
+    penalite_noshow_pct       NUMERIC(5, 2) NOT NULL DEFAULT 100,
+    noshow_note_profil        BOOLEAN NOT NULL DEFAULT TRUE,
+    credit_portefeuille_auto  BOOLEAN NOT NULL DEFAULT FALSE,
+    credit_portefeuille_pct   NUMERIC(5, 2) NOT NULL DEFAULT 100,
+    created_at                TIMESTAMPTZ DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tenant_id, type_espace)
+);
+
+CREATE TABLE IF NOT EXISTS public.credits_membres (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id        UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    montant        NUMERIC(12, 3) NOT NULL CHECK (montant >= 0),
+    motif          TEXT,
+    reservation_id UUID REFERENCES public.reservations(id) ON DELETE SET NULL,
+    expire_at      TIMESTAMPTZ,
+    utilise        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.sites (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    nom        TEXT NOT NULL,
+    adresse    TEXT,
+    ville      TEXT,
+    telephone  TEXT,
+    email      TEXT,
+    actif      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.membres_sites (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    site_id    UUID NOT NULL REFERENCES public.sites(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, site_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.documents_membres (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id         UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    guest_id        UUID REFERENCES public.guests(id) ON DELETE CASCADE,
+    type_doc        TEXT NOT NULL CHECK (type_doc IN ('reglement_interieur','politique_confidentialite','contrat_abonnement','cin_passeport','justificatif_etudiant','convention_formateur','autre')),
+    nom             TEXT NOT NULL,
+    url             TEXT,
+    pdf_contenu     TEXT,
+    signe           BOOLEAN NOT NULL DEFAULT FALSE,
+    signe_at        TIMESTAMPTZ,
+    signature_ip    TEXT,
+    signature_token TEXT DEFAULT encode(gen_random_bytes(32), 'hex'),
+    accepte         BOOLEAN NOT NULL DEFAULT FALSE,
+    accepte_at      TIMESTAMPTZ,
+    uploade_par     TEXT DEFAULT 'membre',
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.contenu_documents (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    type_doc   TEXT NOT NULL CHECK (type_doc IN ('reglement_interieur','politique_confidentialite')),
+    contenu    TEXT NOT NULL,
+    version    TEXT NOT NULL DEFAULT '1.0',
+    actif      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tenant_id, type_doc, actif)
+);
+
+CREATE TABLE IF NOT EXISTS public.rgpd_demandes (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id      UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    type_demande TEXT NOT NULL CHECK (type_demande IN ('export','suppression','rectification','opposition_marketing','portabilite')),
+    statut       TEXT NOT NULL DEFAULT 'en_attente' CHECK (statut IN ('en_attente','en_cours','traite','refuse')),
+    details      TEXT,
+    traite_par   UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    traite_at    TIMESTAMPTZ,
+    export_url   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.conversation_members (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    last_read_at    TIMESTAMPTZ DEFAULT NOW(),
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (conversation_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.super_admin_audit_log (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    action      TEXT NOT NULL,
+    target_type TEXT,
+    target_id   UUID,
+    target_name TEXT,
+    details     JSONB DEFAULT '{}'::jsonb,
+    ip_address  TEXT,
+    status      TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'blocked', 'error')),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+NOTIFY pgrst, 'reload schema';

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { superAdminApi } from '../services/superAdminApi';
@@ -19,7 +19,7 @@ const STATUT_META = {
 };
 
 const MODE_META = {
-  online: 'En ligne (Stripe/Flouci)',
+  online: 'Sur place (legacy)',
   cash: 'Sur place (Espèces)',
   bank_transfer: 'Virement bancaire',
   check: 'Chèque',
@@ -62,6 +62,8 @@ export default function SuperAdminPayments({ session }) {
   const [filterStatut, setFilterStatut] = useState('');
   const [notice, setNotice] = useState(null);
 
+  const tenantsLoadedRef = useRef(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -72,13 +74,14 @@ export default function SuperAdminPayments({ session }) {
 
       const [payData, tenantsData] = await Promise.all([
         superAdminApi.getAllPayments(params),
-        tenants.length === 0 ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
+        !tenantsLoadedRef.current ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
       ]);
 
       setPayments(payData?.payments || []);
       setTotal(payData?.pagination?.total || 0);
 
       if (tenantsData?.tenants) {
+        tenantsLoadedRef.current = true;
         setTenants(tenantsData.tenants);
       }
     } catch (e) {
@@ -87,7 +90,7 @@ export default function SuperAdminPayments({ session }) {
     } finally {
       setLoading(false);
     }
-  }, [page, filterStatut, filterTenant, search, tenants.length]);
+  }, [page, filterStatut, filterTenant, search]);
 
   useEffect(() => {
     if (!userId) { navigate('/login'); return; }

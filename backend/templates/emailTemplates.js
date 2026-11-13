@@ -288,8 +288,8 @@ function templateConfirmationReservation(reservation, membre, config) {
   const dateStr = dateDebut.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const heureDebut = dateDebut.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const heureFin = dateFin.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  const isSurPlace = reservation.mode === 'sur_place' || reservation.mode === 'on_site' || reservation.mode === 'cash';
-  const modeLabel = isSurPlace ? '💵 Sur place (à l\'accueil)' : '💳 En ligne par carte bancaire';
+  // CDC v3.0 D1 : règlement 100 % sur place
+  const modeLabel = '💵 Sur place (espèces, chèque ou virement)';
 
   return `
 <!DOCTYPE html>
@@ -348,9 +348,7 @@ function templateConfirmationReservation(reservation, membre, config) {
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffaf5;border:1px solid #ffedd8;border-left:4px solid ${SECONDARY};border-radius:10px;padding:16px;margin-bottom:28px;">
               <tr><td>
                 <p style="margin:0;color:#9a3412;font-size:13px;line-height:1.6;">
-                  ${isSurPlace
-      ? '💡 <strong>Paiement sur place :</strong> Votre place est réservée. Vous pourrez procéder au règlement directement à l\'accueil le jour de votre arrivée (espèces, carte, TPE).'
-      : '💡 <strong>Paiement en ligne :</strong> Votre réservation a été approuvée ! Vous pouvez dès à présent régler par carte bancaire en toute sécurité depuis votre espace membre.'}
+                  💡 <strong>Règlement à effectuer sur place :</strong> Votre réservation est enregistrée. Vous pourrez régler directement à l'accueil lors de votre arrivée (espèces, chèque ou virement bancaire).
                 </p>
               </td></tr>
             </table>

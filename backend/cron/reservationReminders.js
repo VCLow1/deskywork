@@ -35,7 +35,7 @@ function startReservationRemindersCron(supabaseAdmin) {
         .from('reservations')
         .select(`
           *,
-          profiles(id, nom, prenom, email),
+          profiles!user_id(id, nom, prenom, email),
           espaces(nom, type)
         `)
         .eq('statut', 'confirmed')
@@ -101,7 +101,7 @@ function startReservationRemindersCron(supabaseAdmin) {
             user_id,
             date_fin,
             espaces(nom, type),
-            profiles(nom, prenom, email)
+            profiles!user_id(nom, prenom, email)
           )
         `)
         .eq('statut', 'active')
@@ -181,7 +181,7 @@ function startReservationRemindersCron(supabaseAdmin) {
             date_debut,
             date_fin,
             espaces(nom),
-            profiles(nom, prenom, email)
+            profiles!user_id(nom, prenom, email)
           )
         `)
         .eq('statut', 'active')
@@ -198,10 +198,12 @@ function startReservationRemindersCron(supabaseAdmin) {
 
       for (const session of sessions) {
         try {
-          // Mettre à jour le statut de la session
+          // CDC v3.0 D3 : ne JAMAIS libérer automatiquement ni passer en 'completed'.
+          // La session passe en dépassement ('overtime') sans check_out tant que le staff
+          // n'a pas cliqué sur « C'est bon, libérée ».
           const { error: updateErr } = await supabaseAdmin
             .from('sessions')
-            .update({ statut: 'completed' })
+            .update({ statut: 'overtime', temps_restant: 0 })
             .eq('id', session.id);
 
           if (updateErr) throw updateErr;
@@ -259,7 +261,7 @@ function startReservationRemindersCron(supabaseAdmin) {
             user_id,
             date_fin,
             espaces(nom),
-            profiles(nom, prenom, email)
+            profiles!user_id(nom, prenom, email)
           )
         `)
         .eq('statut', 'active')

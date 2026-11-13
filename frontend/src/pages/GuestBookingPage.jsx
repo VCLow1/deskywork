@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { guestApi } from '../services/api';
+import { SPACE_TYPE_LABELS } from '../constants/spaceTypes';
+import { formatDT, formatDateTunis, formatTimeTunis, tunisLocalToISO } from '../utils/format';
 
-const SPACE_LABELS = {
-  open_space: 'Open Space', private_office: 'Bureau privé',
-  meeting_room: 'Salle de réunion', training_room: 'Salle de formation',
-  event_space: 'Espace événementiel',
-};
+const SPACE_LABELS = SPACE_TYPE_LABELS; // 7 typologies officielles (CDC v3.0)
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop';
 
@@ -15,40 +13,66 @@ export default function GuestBookingPage() {
   const [searchParams] = useSearchParams();
   const tenantParam = searchParams.get('tenantId');
   const espaceParam = searchParams.get('espaceId');
+  const debutParam = searchParams.get('debut') || '';
+  const finParam = searchParams.get('fin') || '';
 
   const [step, setStep]         = useState(1); // 1=espace 2=infos 3=confirmation
   const [coworking, setCoworking] = useState(null); // coworking sélectionné (image + coordonnées)
   const [coworkings, setCoworkings] = useState([]); // liste dispo quand pas de tenantId
   const [espaces, setEspaces]   = useState([]);
   const [selected, setSelected] = useState(null);
+  const [clientType, setClientType] = useState('particulier'); // 'particulier' | 'entreprise'
   const [form, setForm]         = useState({ nom: '', prenom: '', email: '', telephone: '' });
-  const [dates, setDates]       = useState({ debut: '', fin: '' });
+  const [entrepriseInfo, setEntrepriseInfo] = useState({
+    raison_sociale: '',
+    contact_nom: '',
+    telephone_pro: '',
+    email_facturation: '',
+    besoin_description: '',
+  });
+  const [dates, setDates]       = useState({ debut: debutParam, fin: finParam });
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
+  const [listLoaded, setListLoaded] = useState(false);
   const [result, setResult]     = useState(null);
 
   useEffect(() => {
     (async () => {
+      let tenantLoaded = false;
+
+      // 1) Établissement ciblé (?tenantId=…) : on charge sa fiche + ses espaces.
+      //    `espaceId` est facultatif : sans lui, l'utilisateur choisit l'espace à l'étape 1.
       if (tenantParam) {
         try {
           const res = await guestApi.getCoworking(tenantParam);
-          if (res.coworking) {
-            setCoworking(res.coworking);
+          if (res?.coworking) {
             const spaces = res.coworking.espaces || [];
+            setCoworking(res.coworking);
             setEspaces(spaces);
+            tenantLoaded = true;
             if (espaceParam) {
-              const match = spaces.find(s => s.id === espaceParam);
+              const match = spaces.find((s) => s.id === espaceParam);
               if (match) setSelected(match);
             }
-          } else if (res.error) {
-            setError(res.error);
+          } else {
+            setError(res?.error || "Cet établissement n'est plus disponible. Choisissez-en un autre ci-dessous.");
           }
-        } catch (e) { setError(e.message); }
-      } else {
+        } catch (e) {
+          setError(e.message);
+        }
+      }
+
+      // 2) Pas d'établissement (ou introuvable) : liste de repli pour ne jamais bloquer le visiteur.
+      if (!tenantLoaded) {
         try {
           const res = await guestApi.getCoworkings();
-          setCoworkings(res.coworkings || []);
-        } catch (e) { setError(e.message); }
+          if (res?.error) throw new Error(res.error);
+          setCoworkings(res?.coworkings || []);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setListLoaded(true);
+        }
       }
     })();
   }, [tenantParam, espaceParam]);
@@ -69,8 +93,16 @@ export default function GuestBookingPage() {
   };
 
   const handleSubmit = async () => {
+    if (!selected?.id) { setError('Veuillez choisir un espace.'); setStep(1); return; }
     if (!form.nom || !form.prenom || !form.email || !form.telephone) {
       setError('Tous les champs sont obligatoires.'); return;
+    }
+    if (clientType === 'entreprise') {
+      const { raison_sociale, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
+      if (!raison_sociale.trim() || !contact_nom.trim() || !telephone_pro.trim() || !email_facturation.trim() || !besoin_description.trim()) {
+        setError('Pour une réservation Entreprise, veuillez remplir la raison sociale, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
+        return;
+      }
     }
     if (!dates.debut || !dates.fin) { setError('Veuillez choisir un créneau.'); return; }
     if (new Date(dates.debut) >= new Date(dates.fin)) {
@@ -80,8 +112,10 @@ export default function GuestBookingPage() {
     try {
       const res = await guestApi.booking({
         ...form, espace_id: selected.id,
-        date_debut: dates.debut, date_fin: dates.fin,
-        tenant_id: coworking?.id || null,
+        date_debut: tunisLocalToISO(dates.debut), date_fin: tunisLocalToISO(dates.fin),
+        tenant_id: coworking?.id || selected.tenant_id || null,
+        client_type: clientType,
+        ...(clientType === 'entreprise' ? { entreprise_info: entrepriseInfo } : {}),
       });
       if (res.error) { setError(res.error); return; }
       setResult(res);
@@ -94,37 +128,47 @@ export default function GuestBookingPage() {
   const coworkingPlace = (c) => [c?.adresse, c?.ville, c?.pays].filter(Boolean).join(', ');
 
   if (step === 3 && result) {
-    const start = new Date(dates.debut);
-    const end = new Date(dates.fin);
+    const isPending = result.statut !== 'confirmed';
 
     return (
       <div className="min-h-screen bg-[#f4f5f7] px-4 py-10 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl">
           <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_25px_60px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-200 bg-gradient-to-br from-[#f8fafc] to-[#eef2f7] px-6 py-8 text-center sm:px-8">
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full border-4 border-[#dff7ef] bg-[#ebfaf4] text-[#18a873] shadow-inner">
-                <span className="material-symbols-outlined" style={{ fontSize: 42 }}>check</span>
+              <div className={`mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full border-4 shadow-inner ${isPending ? 'border-[#fdf0d5] bg-[#fff8e8] text-[#d98a00]' : 'border-[#dff7ef] bg-[#ebfaf4] text-[#18a873]'}`}>
+                <span className="material-symbols-outlined" style={{ fontSize: 42 }}>{isPending ? 'hourglass_top' : 'check'}</span>
               </div>
 
               <h1 className="font-sora text-3xl font-bold tracking-[-0.04em] text-slate-900 sm:text-4xl">
-                Réservation confirmée
+                {isPending ? 'Réservation en attente' : 'Réservation confirmée'}
               </h1>
 
               <p className="mt-4 text-base leading-7 text-slate-600">
-                Un email de confirmation a été envoyé à{' '}
+                {isPending
+                  ? "Votre demande a été transmise à l'établissement, qui doit la valider."
+                  : 'Votre créneau est réservé.'}{' '}
+                Un e-mail de suivi sera envoyé à{' '}
                 <span className="font-semibold text-slate-800">{form.email}</span>.
               </p>
             </div>
 
             <div className="px-6 py-6 sm:px-8">
+              <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="note">
+                <span className="material-symbols-outlined shrink-0" style={{ fontSize: 22 }}>payments</span>
+                <p className="leading-6">
+                  <strong>Règlement à effectuer sur place</strong> (espèces, chèque ou virement) lors de votre arrivée.
+                  Un reçu numéroté vous sera remis après l'encaissement.
+                </p>
+              </div>
+
               <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#fff2e9] text-[#f97316]">
                     <span className="material-symbols-outlined" style={{ fontSize: 22 }}>location_on</span>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Coworking</p>
-                    <p className="text-lg font-bold text-slate-900">{coworking?.nom || 'Coworking'}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Établissement</p>
+                    <p className="text-lg font-bold text-slate-900">{coworking?.nom || 'Établissement'}</p>
                   </div>
                 </div>
 
@@ -133,19 +177,19 @@ export default function GuestBookingPage() {
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Espace</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">{selected?.nom || 'Espace sélectionné'}</p>
                   </div>
-
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Date</p>
+                    <p className="mt-1 text-base font-semibold text-slate-800">{formatDateTunis(tunisLocalToISO(dates.debut))}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Horaire (heure de Tunis)</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">
-                      {start.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                      {formatTimeTunis(tunisLocalToISO(dates.debut))} → {formatTimeTunis(tunisLocalToISO(dates.fin))}
                     </p>
                   </div>
-
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Horaire</p>
-                    <p className="mt-1 text-base font-semibold text-slate-800">
-                      {start.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} → {end.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Statut</p>
+                    <p className="mt-1 text-base font-semibold text-slate-800">{isPending ? 'En attente' : 'Confirmée'}</p>
                   </div>
                 </div>
               </div>
@@ -215,12 +259,14 @@ export default function GuestBookingPage() {
             <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.04)]">
               {!coworking && (
                 <>
-                  <h2 className="font-sora text-xl font-bold text-slate-900">Choisissez un coworking</h2>
-                  <p className="mt-2 text-sm text-slate-600">Sélectionnez un espace pour démarrer votre réservation.</p>
+                  <h2 className="font-sora text-xl font-bold text-slate-900">Choisissez un établissement</h2>
+                  <p className="mt-2 text-sm text-slate-600">Sélectionnez un établissement pour démarrer votre réservation.</p>
 
                   {coworkings.length === 0 ? (
                     <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-                      Aucun coworking disponible pour le moment.
+                      {listLoaded
+                        ? (error ? 'Impossible de charger la liste des établissements. Réessayez dans un instant.' : 'Aucun établissement disponible pour le moment.')
+                        : 'Chargement des établissements…'}
                     </div>
                   ) : (
                     <div className="mt-6 grid gap-4 sm:grid-cols-2">
@@ -238,7 +284,7 @@ export default function GuestBookingPage() {
                               {coworkingPlace(c) || c.pays || 'Tunisie'}
                             </p>
                             <p className="mt-2 text-[11px] font-medium text-slate-500">
-                              {c.space_count ?? 0} espace(s) disponible(s)
+                              {c.space_count ?? 0} espace(s)
                             </p>
                           </div>
                         </button>
@@ -288,9 +334,9 @@ export default function GuestBookingPage() {
                             }`}
                           >
                             <p className="font-bold text-slate-900">{esp.nom}</p>
-                            <p className="mt-1 text-xs text-slate-500">{SPACE_LABELS[esp.type] || esp.type}</p>
+                            <p className="mt-1 text-xs text-slate-500">{SPACE_LABELS[esp.type] || esp.type}{esp.capacite ? ` · ${esp.capacite} pers.` : ''}</p>
                             {esp.tarif_horaire && (
-                              <p className="mt-2 text-sm font-bold text-[#ff6a2b]">{esp.tarif_horaire} DT/h</p>
+                              <p className="mt-2 text-sm font-bold text-[#ff6a2b]">{formatDT(esp.tarif_horaire)} / h</p>
                             )}
                           </button>
                         ))}
@@ -302,7 +348,7 @@ export default function GuestBookingPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Date & heure début
+                          Début du créneau (heure de Tunis)
                         </label>
                         <input
                           type="datetime-local"
@@ -313,7 +359,7 @@ export default function GuestBookingPage() {
                       </div>
                       <div>
                         <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Date & heure fin
+                          Fin du créneau (heure de Tunis)
                         </label>
                         <input
                           type="datetime-local"
@@ -345,7 +391,7 @@ export default function GuestBookingPage() {
                     <span className="material-symbols-outlined" style={{ fontSize: 20 }}>hotel</span>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">{coworking?.nom || 'Sélectionnez un coworking'}</p>
+                    <p className="text-sm font-semibold text-slate-800">{coworking?.nom || 'Sélectionnez un établissement'}</p>
                     <p className="text-xs text-slate-500">{selected?.nom || 'Aucun espace sélectionné'}</p>
                   </div>
                 </div>
@@ -397,6 +443,31 @@ export default function GuestBookingPage() {
               </div>
             </div>
 
+            {/* Type de client : Particulier vs Entreprise (CDC v3.0 Chantier 3.2) */}
+            <div className="mb-5">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Type de réservation</p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { id: 'particulier', label: 'Particulier', icon: 'person' },
+                  { id: 'entreprise', label: 'Entreprise', icon: 'business_center' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setClientType(opt.id)}
+                    className={`flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                      clientType === opt.id
+                        ? 'border-[#ff6a2b] bg-[#fff4ef] text-[#ff6a2b]'
+                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{opt.icon}</span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid gap-5 sm:grid-cols-2">
               {[
                 { key: 'prenom', label: 'Prénom *' },
@@ -416,8 +487,68 @@ export default function GuestBookingPage() {
               ))}
             </div>
 
+            {clientType === 'entreprise' && (
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-700">
+                  Informations Entreprise obligatoires
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Raison sociale *</label>
+                    <input
+                      type="text"
+                      value={entrepriseInfo.raison_sociale}
+                      onChange={(e) => setEntrepriseInfo((p) => ({ ...p, raison_sociale: e.target.value }))}
+                      placeholder="Ex: TechStart SARL"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Personne de contact *</label>
+                    <input
+                      type="text"
+                      value={entrepriseInfo.contact_nom}
+                      onChange={(e) => setEntrepriseInfo((p) => ({ ...p, contact_nom: e.target.value }))}
+                      placeholder="Nom & Prénom du référent"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Téléphone professionnel *</label>
+                    <input
+                      type="tel"
+                      value={entrepriseInfo.telephone_pro}
+                      onChange={(e) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: e.target.value }))}
+                      placeholder="+216 71 000 000"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Email de facturation *</label>
+                    <input
+                      type="email"
+                      value={entrepriseInfo.email_facturation}
+                      onChange={(e) => setEntrepriseInfo((p) => ({ ...p, email_facturation: e.target.value }))}
+                      placeholder="compta@entreprise.tn"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Objet du besoin / Description de la demande *</label>
+                  <textarea
+                    rows={3}
+                    value={entrepriseInfo.besoin_description}
+                    onChange={(e) => setEntrepriseInfo((p) => ({ ...p, besoin_description: e.target.value }))}
+                    placeholder="Réunion client, séminaire d'équipe, besoins audiovisuels…"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
+                  />
+                </div>
+              </div>
+            )}
+
             <p className="mt-5 text-sm text-slate-500">
-              * La création de compte est optionnelle — vous recevrez votre confirmation par email.
+              * La création de compte est optionnelle. Aucun paiement en ligne : le règlement s'effectue sur place (espèces, chèque ou virement) à votre arrivée.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">

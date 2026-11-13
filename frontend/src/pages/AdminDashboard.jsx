@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { kpiApi, memberApi, tenantAdminApi, guestApi } from '../services/api';
+import { kpiApi, memberApi, tenantAdminApi, guestApi, sessionApi } from '../services/api';
+import { formatDT as formatDTMillimes } from '../utils/format';
 import PortalLayout from '../components/layout/PortalLayout';
 import { getRoleLabel } from '../utils/roles';
 import { exportDashboardToExcel } from '../utils/exportDashboardExcel';
@@ -19,14 +20,22 @@ import {
 
 
 // ─── Intervalles de rafraîchissement ────────────────────────────────────────
-const REFRESH_KPI_MS = 30_000;  // KPIs généraux  : 30s
-const REFRESH_SESSIONS_MS = 10_000; // Sessions live  : 10s
+const REFRESH_KPI_MS = 90_000;      // KPIs généraux  : 90s
+const REFRESH_SESSIONS_MS = 30_000; // Sessions live  : 30s
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function formatDT(val) {
   return typeof val === 'number'
-    ? val.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+    ? val.toLocaleString('fr-TN', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
     : '—';
+}
+
+function formatClockSeconds(totalSec) {
+  const sec = Math.max(0, Math.floor(totalSec || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function formatTime(minutes) {
@@ -150,7 +159,8 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                  innerRadius={48} outerRadius={70} paddingAngle={2} cornerRadius={4} stroke="none">
+                  innerRadius={48} outerRadius={70} paddingAngle={2} cornerRadius={4} stroke="none"
+                  isAnimationActive={false}>
                   {data.map((d, i) => <Cell key={d.name ?? i} fill={d.color} />)}
                 </Pie>
                 <Tooltip content={<CustomTooltip />} />
@@ -184,6 +194,100 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
   );
 }
 
+// ─── Ligne session live isolée (minuteur 1s local pour éviter de re-render tout le dashboard) ─
+function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
+  const isUpcoming = s.statut === 'upcoming' || s.etat === 'a_venir';
+  const [nowEpoch, setNowEpoch] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (isUpcoming) return undefined;
+    const tick = setInterval(() => setNowEpoch(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [isUpcoming]);
+
+  const finMs = s.reservations?.date_fin ? new Date(s.reservations.date_fin).getTime() : nowEpoch;
+  const diffSec = isUpcoming
+    ? Math.max(0, Math.floor((s.seconds_remaining || 0)))
+    : Math.floor((finMs - nowEpoch) / 1000);
+  const isOvertime = !isUpcoming && diffSec < 0;
+  const isSoon = !isUpcoming && diffSec >= 0 && diffSec <= 15 * 60;
+  const overtimeMin = isOvertime ? Math.ceil(Math.abs(diffSec) / 60) : 0;
+  const rate = Number(s.hourly_overtime_rate ?? s.reservations?.espaces?.tarif_horaire ?? 0);
+  const overtimeCost = overtimeMin > 0 && rate > 0
+    ? Number(((overtimeMin / 60) * rate).toFixed(3))
+    : Number(s.montant_depassement || 0);
+
+  const badgeCfg = isUpcoming
+    ? { txt: 'À venir', cls: 'bg-slate-100 text-slate-700 border-slate-200' }
+    : isOvertime
+      ? { txt: 'En dépassement', cls: 'bg-red-100 text-red-800 border-red-200' }
+      : isSoon
+        ? { txt: 'Bientôt terminée - 15 min', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
+        : { txt: 'En cours', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+
+  return (
+    <div className="py-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 ${
+          isOvertime ? 'bg-red-50 text-red-600' : isSoon ? 'bg-amber-50 text-amber-600' : isUpcoming ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-600'
+        }`}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+            {isOvertime ? 'warning' : 'timer'}
+          </span>
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-primary text-sm truncate">{s.membre}</p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeCfg.cls}`}>
+              {badgeCfg.txt}
+            </span>
+          </div>
+          <p className="text-xs text-on-surface-variant truncate">
+            {s.espace_nom || s.reservations?.espaces?.nom || 'Espace'} ·{' '}
+            {isUpcoming
+              ? `Prévu ${s.reservations?.date_debut ? new Date(s.reservations.date_debut).toLocaleTimeString('fr-TN', { hour: '2-digit', minute: '2-digit' }) : '—'}`
+              : `Check-in ${s.check_in ? new Date(s.check_in).toLocaleTimeString('fr-TN', { hour: '2-digit', minute: '2-digit' }) : '—'}`}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 ml-auto shrink-0">
+        <div className="text-right">
+          <p className={`font-mono text-sm font-bold ${isOvertime ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-emerald-700'}`}>
+            {isOvertime ? `+${formatClockSeconds(Math.abs(diffSec))}` : formatClockSeconds(diffSec)}
+          </p>
+          {isOvertime && (
+            <p className="text-[11px] font-bold text-red-700">
+              Surplus : {formatDTMillimes(overtimeCost)}
+            </p>
+          )}
+        </div>
+
+        {isUpcoming ? (
+          <button
+            type="button"
+            onClick={() => onStart(s.reservation_id)}
+            disabled={releasingId === s.reservation_id}
+            className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition disabled:opacity-50"
+          >
+            Démarrer
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onRelease(s.id)}
+            disabled={releasingId === s.id}
+            className="px-3 py-1.5 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] shadow-xs transition disabled:opacity-50"
+            title="Marquer la session de travail terminée et libérer la ressource"
+          >
+            {releasingId === s.id ? 'Libération…' : "C'est bon, libérée"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Composant principal ─────────────────────────────────────────────────────
 export default function AdminDashboard({ session }) {
   const navigate = useNavigate();
@@ -199,6 +303,10 @@ export default function AdminDashboard({ session }) {
   const [approvingId, setApprovingId] = useState(null);
   const [coworking, setCoworking] = useState(null);
   const [guests, setGuests] = useState([]);
+  const [liveSessions, setLiveSessions] = useState([]);
+  const [releasingId, setReleasingId] = useState(null);
+  const [sessionActionMsg, setSessionActionMsg] = useState('');
+  const hasLoadedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -207,6 +315,7 @@ export default function AdminDashboard({ session }) {
   const [report, setReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const periodRef = useRef(period);
   periodRef.current = period;
@@ -219,26 +328,29 @@ export default function AdminDashboard({ session }) {
 
   // ── Fetch KPIs (silent = pas de spinner) ──────────────────────────────────
   const fetchKpis = useCallback(async (silent = false) => {
-    if (!silent && !kpis) setLoading(true);
+    if (!silent && !hasLoadedRef.current) setLoading(true);
     setError('');
     try {
       const p = periodRef.current;
-      const [kpiRes, chartRes, pendingRes] = await Promise.all([
+      const [kpiRes, chartRes, pendingRes, liveRes] = await Promise.all([
         kpiApi.getAll({ period: p }),
         kpiApi.getRevenueChart({ period: p }),
         memberApi.getPendingAccounts().catch(() => ({ pending: [] })),
+        sessionApi.getLive().catch(() => ({ live_sessions: null })),
       ]);
+      if (Array.isArray(liveRes?.live_sessions)) setLiveSessions(liveRes.live_sessions);
       setKpis(kpiRes);
       setChart(chartRes);
       setPendingAccounts(pendingRes.pending || []);
       setLastRefresh(new Date());
+      hasLoadedRef.current = true;
       if (Array.isArray(chartRes?.formations)) setFormations(chartRes.formations);
     } catch (e) {
       if (!silent) setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [kpis]);
+  }, []);
 
   // ── Rapport IA (généré selon la période active) ──────────────────────────
   const loadReport = useCallback(async (silent = false) => {
@@ -260,66 +372,101 @@ export default function AdminDashboard({ session }) {
     if (next) loadReport(false);
   };
 
-  // ── Refresh sélectif (sessions uniquement, rapide) ───────────────────────
+  // ── Refresh sélectif (sessions uniquement, rapide — sans requêtes KPI lourdes) ──
   const fetchSessionsOnly = useCallback(async () => {
+    if (document.hidden) return;
     try {
-      const kpiData = await kpiApi.getAll({ period: periodRef.current });
-      setKpis((prev) => prev
-        ? { ...prev, sessionsEnCours: kpiData.sessionsEnCours, reservationsDuJour: kpiData.reservationsDuJour }
-        : kpiData
-      );
-      setLastRefresh(new Date());
+      const liveRes = await sessionApi.getLive().catch(() => null);
+      if (Array.isArray(liveRes?.live_sessions)) {
+        setLiveSessions(liveRes.live_sessions);
+        const activeCount = liveRes.live_sessions.filter(
+          (s) => s.statut === 'in_progress' || s.etat === 'en_cours'
+        ).length;
+        setKpis((prev) => (prev ? { ...prev, sessionsEnCours: activeCount } : prev));
+        setLastRefresh(new Date());
+      }
     } catch (_) { /* silencieux */ }
   }, []);
 
-  // ── Effet principal : chargement profil + auto-refresh ────────────────────
-  useEffect(() => {
-    if (!session?.user?.id) return;
 
-    // Profil Supabase DB en arrière-plan
-    supabase.from('profiles').select('*').eq('id', session.user.id).single()
-      .then(async ({ data, error: e }) => {
-        if (!e && data) {
-          setProfile(data);
-          if (data?.role === 'admin' && data?.tenant_id) {
-            const { data: tenant } = await supabase
-              .from('tenants')
-              .select('settings')
-              .eq('id', data.tenant_id)
-              .single();
-            if (tenant?.settings?.onboarding_completed !== true) {
-              navigate('/admin/onboarding', { replace: true });
-            }
-          }
-        }
+  // D3 : Libération manuelle explicite (« C'est bon, libérée ») + D4 dépassement
+  const handleReleaseSession = async (sessionId) => {
+    setReleasingId(sessionId);
+    setSessionActionMsg('');
+    try {
+      const res = await sessionApi.release(sessionId);
+      setSessionActionMsg(res.message || "C'est bon, la ressource a été libérée.");
+      await fetchSessionsOnly();
+    } catch (e) {
+      setError(e.message || 'Impossible de libérer la session de travail.');
+    } finally {
+      setReleasingId(null);
+    }
+  };
+
+  const handleStartUpcomingSession = async (reservationId) => {
+    setReleasingId(reservationId);
+    try {
+      await sessionApi.checkIn({ reservation_id: reservationId, force: true });
+      setSessionActionMsg('Session de travail démarrée.');
+      await fetchSessionsOnly();
+    } catch (e) {
+      setError(e.message || 'Impossible de démarrer la session de travail.');
+    } finally {
+      setReleasingId(null);
+    }
+  };
+
+  // ── Effet principal : chargement profil + auto-refresh (déclenché par userId uniquement) ──
+  useEffect(() => {
+    if (!userId) return undefined;
+    let cancelled = false;
+
+    // Profil Supabase DB en arrière-plan (sans requête duplicate sur tenants)
+    supabase.from('profiles').select('*').eq('id', userId).single()
+      .then(({ data, error: e }) => {
+        if (cancelled || e || !data) return;
+        setProfile(data);
       }).catch(() => {});
 
     fetchKpis(false);
 
-    // Données secondaires en parallèle (Mon Coworking + Invités)
+    // Données secondaires en parallèle (Mon Coworking + vérification onboarding + Invités)
     Promise.all([
       tenantAdminApi.getTenant().catch(() => ({})),
       guestApi.getAll().catch(() => ({})),
     ]).then(([tRes, gRes]) => {
+      if (cancelled) return;
       if (tRes?.tenant) setCoworking(tRes.tenant);
       if (gRes?.guests) setGuests(gRes.guests);
+      if (
+        tRes?.onboarding_completed === false &&
+        window.location.pathname === '/admin/dashboard'
+      ) {
+        navigate('/admin/onboarding', { replace: true });
+      }
     }).catch(() => {});
 
-    kpiTimerRef.current = setInterval(() => fetchKpis(true), REFRESH_KPI_MS);
-    sessionTimerRef.current = setInterval(fetchSessionsOnly, REFRESH_SESSIONS_MS);
+    kpiTimerRef.current = setInterval(() => {
+      if (!document.hidden) fetchKpis(true);
+    }, REFRESH_KPI_MS);
+    sessionTimerRef.current = setInterval(() => {
+      if (!document.hidden) fetchSessionsOnly();
+    }, REFRESH_SESSIONS_MS);
 
     return () => {
+      cancelled = true;
       clearInterval(kpiTimerRef.current);
       clearInterval(sessionTimerRef.current);
     };
-  }, [session, navigate, fetchKpis, fetchSessionsOnly]);
+  }, [userId, navigate, fetchKpis, fetchSessionsOnly]);
 
 
   // ── Changement de période : recharge silencieuse (pas de spinner) ─────────
   useEffect(() => {
-    if (!kpis) return;
+    if (!hasLoadedRef.current) return;
     fetchKpis(true);
-  }, [period]);
+  }, [period, fetchKpis]);
 
   // ── Rapport IA : rechargé si ouvert lors d'un changement de période ───────
   useEffect(() => {
@@ -336,6 +483,17 @@ export default function AdminDashboard({ session }) {
       alert('Erreur export Excel : ' + e.message);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    try {
+      await kpiApi.downloadPdfReport({ period });
+    } catch (e) {
+      alert('Erreur export PDF : ' + e.message);
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -418,7 +576,7 @@ export default function AdminDashboard({ session }) {
     <PortalLayout profile={profile} onLogout={handleLogout}>
 
       {/* ── En-tête + filtre global ─────────────────────────────────────── */}
-      <header className="mb-6 animate-fade-up">
+      <header className="mb-6">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1 truncate">
@@ -438,37 +596,30 @@ export default function AdminDashboard({ session }) {
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
             <PeriodFilter value={period} onChange={setPeriod} />
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <button
-                onClick={toggleReport}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-colors ${
-                  showReport
-                    ? 'text-white'
-                    : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
-                }`}
-                style={showReport ? { background: 'linear-gradient(135deg, #8b5cf6, #f95d00)', boxShadow: '0 4px 12px rgba(139,92,246,.3)' } : undefined}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>
-                  {reportLoading ? 'sync' : 'auto_awesome'}
-                </span>
-                Rapport IA
-                {report?.anomalies?.length > 0 && showReport && (
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#ba1a1a] text-[9px] font-bold text-white">
-                    {report.anomalies.length}
+            {profile?.role !== 'staff' && (
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={handleExportPdf}
+                  disabled={exportingPdf}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-low text-primary border border-outline-variant/20 hover:bg-surface-container transition-colors disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[17px] text-[#f95d00]">
+                    {exportingPdf ? 'sync' : 'picture_as_pdf'}
                   </span>
-                )}
-              </button>
-              <button
-                onClick={handleExport}
-                disabled={exporting || !kpis}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-[17px]">
-                  {exporting ? 'sync' : 'download'}
-                </span>
-                {exporting ? 'Export…' : 'Export Excel'}
-              </button>
-            </div>
+                  {exportingPdf ? 'PDF…' : 'Export PDF'}
+                </button>
+                <button
+                  onClick={handleExport}
+                  disabled={exporting || !kpis}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[17px]">
+                    {exporting ? 'sync' : 'download'}
+                  </span>
+                  {exporting ? 'Export…' : 'Export Excel'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -482,7 +633,7 @@ export default function AdminDashboard({ session }) {
 
       {/* ── Rapport intelligent (IA) ────────────────────────────────────── */}
       {showReport && (
-        <div className="mb-6 animate-fade-up">
+        <div className="mb-6">
           <AIReportPanel
             report={report}
             loading={reportLoading}
@@ -494,7 +645,7 @@ export default function AdminDashboard({ session }) {
       )}
 
       {/* ── Grille KPIs — Ligne 1 (filtre global appliqué) ─────────────── */}
-      <div key={`k1-${period}`} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4 animate-fade-up">
+      <div key={`k1-${period}`} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <StatCard
           label="CA — période"
           value={`${formatDT(ca.periode)} DT`}
@@ -533,11 +684,11 @@ export default function AdminDashboard({ session }) {
       </div>
 
       {/* ── Grille KPIs — Ligne 2 (Opérations) ─────────────────────────── */}
-      <div key={`k2-${period}`} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6 animate-fade-up">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
         <StatCard
-          label="Sessions en cours"
-          value={sessions.length}
-          sub="Sessions actives maintenant"
+          label="Sessions de travail actives"
+          value={liveSessions.filter((s) => s.statut !== 'upcoming' && s.etat !== 'a_venir').length || sessions.length}
+          sub="Libération manuelle requise"
           icon="timer"
           accent="#f59e0b"
           pulse={sessions.length > 0}
@@ -566,9 +717,197 @@ export default function AdminDashboard({ session }) {
         />
       </div>
 
+      {/* ══ CDC v3.0 — PILOTAGE OPÉRATIONNEL IMMÉDIAT (SOUS LES KPIs, AVANT MON COWORKING) ══ */}
+      {/* 1. Sessions de travail en cours + 2. Actions rapides */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+        <div
+          className="lg:col-span-8 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
+          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <h2 className="font-sora font-bold text-primary text-base">Sessions de travail en cours</h2>
+              {liveSessions.length > 0 && (
+                <span className="flex h-2.5 w-2.5 relative">
+                  <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-[#f95d00] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#f95d00]" />
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-on-surface-variant font-medium">
+              Minuteur temps réel · Libération manuelle obligatoire
+            </span>
+          </div>
+
+          {sessionActionMsg && (
+            <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 flex items-center justify-between">
+              <span>{sessionActionMsg}</span>
+              <button type="button" onClick={() => setSessionActionMsg('')} className="ml-2 text-emerald-700 hover:underline">Fermer</button>
+            </div>
+          )}
+
+          {liveSessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">timer_off</span>
+              <p className="text-sm text-on-surface-variant">Aucune session de travail active ou imminente en ce moment</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-outline-variant/10">
+              {liveSessions.map((s) => (
+                <LiveSessionClockRow
+                  key={s.id}
+                  s={s}
+                  releasingId={releasingId}
+                  onStart={handleStartUpcomingSession}
+                  onRelease={handleReleaseSession}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Actions rapides (4 boutons directs CDC v3.0) */}
+        <div
+          className="lg:col-span-4 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 flex flex-col justify-between"
+          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+        >
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-sora font-bold text-primary text-base">Actions rapides</h2>
+              <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 19 }}>bolt</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5">
+              <button
+                type="button"
+                onClick={() => navigate('/admin/reservations?new=1')}
+                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] transition-colors shadow-xs"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 19 }}>add_circle</span>
+                <span>Nouvelle réservation</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/agenda')}
+                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+              >
+                <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 19 }}>qr_code_scanner</span>
+                <span>Check-in</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/clients?new=1')}
+                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+              >
+                <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 19 }}>person_add</span>
+                <span>Nouveau membre</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/payments')}
+                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+              >
+                <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 19 }}>payments</span>
+                <span>Encaisser un paiement</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Agenda du jour (Réservations & Formations du jour) */}
+      <div
+        className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
+        style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2.5">
+            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>today</span>
+            <div>
+              <h2 className="font-sora font-bold text-primary text-base">Agenda du jour</h2>
+              <p className="text-xs text-on-surface-variant">
+                {calendrierDuJour.length} réservation(s) · {formationsDuJourList.length} formation(s) prévue(s) aujourd'hui
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/agenda')}
+            className="text-xs font-bold text-[#f95d00] hover:underline flex items-center gap-1"
+          >
+            Ouvrir l'agenda complet
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>arrow_forward</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Réservations du jour */}
+          <div className="rounded-2xl bg-surface-container-low/50 p-4 border border-outline-variant/10">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Réservations du jour</span>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#f95d00]/12 text-[#f95d00]">
+                {calendrierDuJour.length}
+              </span>
+            </div>
+            {calendrierDuJour.length === 0 ? (
+              <p className="text-xs text-on-surface-variant py-4 text-center">Aucune réservation prévue aujourd'hui</p>
+            ) : (
+              <div className="divide-y divide-outline-variant/10 max-h-60 overflow-y-auto">
+                {calendrierDuJour.map((r) => (
+                  <div key={r.id} className="py-2.5 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-primary text-sm truncate">
+                        {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : (r.guest_nom || 'Client')}
+                      </p>
+                      <p className="text-xs text-on-surface-variant truncate">
+                        {r.espaces?.nom || 'Espace'} · {formatTimeShort(r.date_debut)} – {formatTimeShort(r.date_fin)}
+                      </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
+                      r.statut === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {r.statut === 'confirmed' ? 'Confirmée' : 'En attente'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Formations du jour */}
+          <div className="rounded-2xl bg-surface-container-low/50 p-4 border border-outline-variant/10">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Formations du jour</span>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#8b5cf6]/12 text-[#8b5cf6]">
+                {formationsDuJourList.length}
+              </span>
+            </div>
+            {formationsDuJourList.length === 0 ? (
+              <p className="text-xs text-on-surface-variant py-4 text-center">Aucune session de formation aujourd'hui</p>
+            ) : (
+              <div className="divide-y divide-outline-variant/10 max-h-60 overflow-y-auto">
+                {formationsDuJourList.map((f) => (
+                  <div key={f.id} className="py-2.5 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-primary text-sm truncate">{f.titre}</p>
+                      <p className="text-xs text-on-surface-variant truncate">
+                        {f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : 'Formateur'} · {f.espaces?.nom || 'Salle'}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-bold text-primary">{formatTimeShort(f.date_debut)}</p>
+                      <p className="text-[10px] text-on-surface-variant">{f.nb_inscrits ?? 0}/{f.capacite_max ?? 0} inscrits</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── Mon Coworking (image + coordonnées) ────────────────────────── */}
       {coworking && (
-        <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/10 mb-6 animate-fade-up"
+        <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/10 mb-6"
           style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)', overflow: 'hidden' }}>
           <div className="flex items-center gap-5 p-5 flex-wrap">
             <img
@@ -610,17 +949,24 @@ export default function AdminDashboard({ session }) {
                 )}
               </div>
             </div>
-            <Link to="/admin/profile-coworking"
-              className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-full text-xs font-semibold hover:bg-secondary/90 transition-colors shrink-0">
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
-              Modifier le profil
-            </Link>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Link to={`/coworking/${coworking.id}`}
+                className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border border-secondary/30 bg-secondary/10 text-secondary hover:bg-secondary/20 transition-colors shrink-0">
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility</span>
+                Consulter mon espace
+              </Link>
+              <Link to="/admin/profile-coworking"
+                className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-full text-xs font-semibold hover:bg-secondary/90 transition-colors shrink-0">
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
+                Modifier le profil
+              </Link>
+            </div>
           </div>
         </div>
       )}
 
       {/* ── Graphiques : CA / espace + occupation / réservations ───────── */}
-      <div key={`ch1-${period}`} className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6 animate-fade-up">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
 
         {/* Évolution des revenus (buckets selon période) */}
         <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
@@ -649,8 +995,8 @@ export default function AdminDashboard({ session }) {
                 <YAxis yAxisId="tx" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} width={30} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="ca" dataKey="ca" name="CA (DT)" fill="url(#revBar)" radius={[5, 5, 0, 0]} />
-                <Line yAxisId="tx" type="monotone" dataKey="transactions" name="Transactions" stroke="#f95d00" strokeWidth={2.2} dot={{ r: 3, fill: '#f95d00' }} activeDot={{ r: 5 }} />
+                <Bar yAxisId="ca" dataKey="ca" name="CA (DT)" fill="url(#revBar)" radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                <Line yAxisId="tx" type="monotone" dataKey="transactions" name="Transactions" stroke="#f95d00" strokeWidth={2.2} dot={{ r: 3, fill: '#f95d00' }} activeDot={{ r: 5 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -671,7 +1017,7 @@ export default function AdminDashboard({ session }) {
         </div>
       </div>
 
-      <div key={`ch2-${period}`} className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 animate-fade-up">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {/* Évolution occupation */}
         <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
           style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
@@ -697,7 +1043,7 @@ export default function AdminDashboard({ session }) {
                 <XAxis dataKey="mois" tick={{ fontSize: 11, fill: '#64748b' }} />
                 <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} width={40} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="taux" name="Occupation (%)" stroke="#0ea5e9" strokeWidth={2.5} fill="url(#occFill)" />
+                <Area type="monotone" dataKey="taux" name="Occupation (%)" stroke="#0ea5e9" strokeWidth={2.5} fill="url(#occFill)" isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -728,8 +1074,8 @@ export default function AdminDashboard({ session }) {
                 <YAxis tick={{ fontSize: 11, fill: '#64748b' }} width={32} allowDecimals={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="confirmed" name="Confirmées" stackId="a" fill="#2fbe8f" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="pending" name="En attente" stackId="a" fill="#f59e0b" radius={[5, 5, 0, 0]} />
+                <Bar dataKey="confirmed" name="Confirmées" stackId="a" fill="#2fbe8f" radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="pending" name="En attente" stackId="a" fill="#f59e0b" radius={[5, 5, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -740,69 +1086,10 @@ export default function AdminDashboard({ session }) {
         </div>
       </div>
 
-      {/* ── Sessions live + Top membres ─────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6 animate-fade-up">
-
-        {/* Sessions en cours */}
-        <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <h2 className="font-sora font-bold text-primary text-base">Sessions en cours</h2>
-              {sessions.length > 0 && (
-                <span className="flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-[#f59e0b] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#f59e0b]" />
-                </span>
-              )}
-            </div>
-            <span className="text-xs text-on-surface-variant font-medium">
-              Rafraîchi toutes les 10s
-            </span>
-          </div>
-
-          {sessions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">timer_off</span>
-              <p className="text-sm text-on-surface-variant">Aucune session active en ce moment</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-outline-variant/10">
-              {sessions.map((s) => {
-                const restant = s.tempsRestant ?? 0;
-                const urgence = restant <= 15 && restant > 0;
-                const depasse = restant <= 0;
-                return (
-                  <div key={s.id} className="py-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={`flex items-center justify-center w-8 h-8 rounded-xl shrink-0 ${depasse ? 'bg-[rgba(186,26,26,0.1)] text-[#ba1a1a]'
-                          : urgence ? 'bg-[rgba(245,158,11,0.1)] text-[#f59e0b]'
-                            : 'bg-[rgba(47,190,143,0.1)] text-[#2fbe8f]'
-                        }`}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person</span>
-                      </span>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-primary text-sm truncate">{s.membre}</p>
-                        <p className="text-xs text-on-surface-variant truncate">{s.espace}</p>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className={`text-sm font-bold ${depasse ? 'text-[#ba1a1a]' : urgence ? 'text-[#f59e0b]' : 'text-[#2fbe8f]'}`}>
-                        {depasse ? '⚠ Dépassé' : formatTime(restant)}
-                      </p>
-                      <p className="text-[10px] text-on-surface-variant">
-                        {s.check_in ? new Date(s.check_in).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—'}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
+      {/* ── Top membres + Prochaines réservations + Activité récente ──── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
         {/* Top 5 membres (CA période) */}
-        <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
+        <div className="lg:col-span-6 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
           style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-sora font-bold text-primary text-base">Top membres</h2>
@@ -836,56 +1123,9 @@ export default function AdminDashboard({ session }) {
             </div>
           )}
         </div>
-      </div>
-
-      {/* ── Calendrier du jour + Prochaines réservations ───────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6 animate-fade-up">
-        {/* Calendrier du jour */}
-        <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Calendrier du jour</h2>
-              <p className="text-xs text-on-surface-variant">Réservations d'aujourd'hui</p>
-            </div>
-            <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shrink-0"
-              style={{ background: '#f95d00' }}>{calendrierDuJour.length}</span>
-          </div>
-          {calendrierDuJour.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">event_busy</span>
-              <p className="text-sm text-on-surface-variant">Aucune réservation aujourd'hui</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-outline-variant/10 max-h-[320px] overflow-y-auto">
-              {calendrierDuJour.map((r) => (
-                <div key={r.id} className="py-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 bg-[rgba(139,92,246,0.1)] text-[#8b5cf6]">
-                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>event</span>
-                    </span>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary text-sm truncate">
-                        {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : 'Membre'}
-                      </p>
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {r.espaces?.nom || 'Espace'} · {formatTimeShort(r.date_debut)} – {formatTimeShort(r.date_fin)}
-                      </p>
-                    </div>
-                  </div>
-                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                    r.statut === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                  }`}>
-                    {r.statut === 'confirmed' ? 'Confirmée' : 'En attente'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
         {/* Prochaines réservations (J+7) */}
-        <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
+        <div className="lg:col-span-6 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
           style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -927,54 +1167,9 @@ export default function AdminDashboard({ session }) {
         </div>
       </div>
 
-      {/* ── Formations du jour + Activité récente ───────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6 animate-fade-up">
-        {/* Formations prévues aujourd'hui */}
-        <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Formations prévues aujourd'hui</h2>
-              <p className="text-xs text-on-surface-variant">Détail des séances du jour</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(139,92,246,0.1)]">
-              <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 17 }}>school</span>
-            </span>
-          </div>
-          {formationsDuJourList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">school</span>
-              <p className="text-sm text-on-surface-variant">Aucune formation prévue aujourd'hui</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-outline-variant/10">
-              {formationsDuJourList.map((f) => (
-                <div key={f.id} className="py-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 bg-[rgba(139,92,246,0.1)] text-[#8b5cf6]">
-                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>co_present</span>
-                    </span>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary text-sm truncate">{f.titre}</p>
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : 'Formateur'} · {f.espaces?.nom || 'Espace'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs font-bold text-primary">{formatTimeShort(f.date_debut)}</p>
-                    <p className="text-[10px] font-semibold text-on-surface-variant">
-                      {f.nb_inscrits ?? 0}/{f.capacite_max ?? 0} inscrits
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Activité récente */}
-        <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
+      {/* ── Activité récente ──────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+        <div className="lg:col-span-12 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
           style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -1017,7 +1212,7 @@ export default function AdminDashboard({ session }) {
 
       {/* ── Section Demandes en attente ───────────────────────────────── */}
       {pendingAccounts.length > 0 && (
-        <div className="bg-surface-container-lowest rounded-3xl p-5 border border-amber-200/60 mb-6 animate-fade-up"
+        <div className="bg-surface-container-lowest rounded-3xl p-5 border border-amber-200/60 mb-6"
           style={{ boxShadow: '0 4px 16px rgba(245,158,11,0.08)' }}>
           <div className="flex items-center gap-2 mb-4">
             <div className="flex items-center gap-2">
@@ -1085,7 +1280,7 @@ export default function AdminDashboard({ session }) {
       )}
 
       {/* ── Formations (période) ──────────────────────────────────────── */}
-      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6 animate-fade-up"
+      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
         style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -1157,7 +1352,7 @@ export default function AdminDashboard({ session }) {
       </div>
 
       {/* ── Réservations invités (guests) ──────────────────────────────── */}
-      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6 animate-fade-up"
+      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
         style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">

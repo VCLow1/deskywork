@@ -18,7 +18,9 @@ function cacheControl(seconds) {
 router.get('/admin/kpis', authenticate, requireRoles('super_admin', 'admin', 'staff'), cacheControl(30), ctrl.getAdminKpis);
 router.get('/admin/kpis/revenue-chart', authenticate, requireRoles('super_admin', 'admin', 'staff'), cacheControl(30), ctrl.getRevenueChart);
 
-// Rapport intelligent (IA embarquée) — Admin Coworking
-router.get('/admin/report', authenticate, requireRoles('super_admin', 'admin', 'staff'), reportCtrl.getAdminReport);
+// Rapport intelligent (IA embarquée) & Rapports détaillés + Export PDF (CDC v3.0 — Admin uniquement pour rapports financiers)
+router.get('/admin/report', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.getAdminReport);
+router.get('/admin/reports/detailed', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.getDetailedReport);
+router.get('/admin/reports/pdf', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.downloadAdminReportPdf);
 
 module.exports = router;

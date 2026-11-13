@@ -58,7 +58,26 @@ async function updateAdminTenant(req, res) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
 
-    if (Object.keys(updates).length === 1) return res.status(400).json({ error: 'Aucune mise à jour fournie.' });
+    // CDC v3.0 : fusion sécurisée de settings (activite, tarif_depassement_heure, auto_confirmation, domiciliation)
+  if (req.body.settings !== undefined || req.body.activite !== undefined || req.body.tarif_depassement_heure !== undefined || req.body.auto_confirmation !== undefined || req.body.domiciliation !== undefined) {
+    const { data: curTenant } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+    const curSettings = (curTenant && curTenant.settings && typeof curTenant.settings === 'object') ? curTenant.settings : {};
+    const nextSettings = { ...curSettings, ...(req.body.settings && typeof req.body.settings === 'object' ? req.body.settings : {}) };
+    if (['coworking', 'centre_formation', 'mixte'].includes(req.body.activite)) nextSettings.activite = req.body.activite;
+    if (req.body.tarif_depassement_heure !== undefined) nextSettings.tarif_depassement_heure = Number(req.body.tarif_depassement_heure) || 0;
+    if (req.body.auto_confirmation !== undefined) nextSettings.auto_confirmation = Boolean(req.body.auto_confirmation);
+    if (req.body.domiciliation !== undefined) {
+      nextSettings.domiciliation = {
+        actif: Boolean(req.body.domiciliation?.actif),
+        tarif_mensuel: Number(req.body.domiciliation?.tarif_mensuel) || 0,
+        tarif_annuel: Number(req.body.domiciliation?.tarif_annuel) || 0,
+        description: String(req.body.domiciliation?.description || '').trim(),
+      };
+    }
+    updates.settings = nextSettings;
+  }
+
+  if (Object.keys(updates).length === 1) return res.status(400).json({ error: 'Aucune mise à jour fournie.' });
 
     const { data, error } = await supabaseAdmin
       .from('tenants')
@@ -83,7 +102,7 @@ async function createAdminEspace(req, res) {
       return res.status(400).json({ error: 'Nom, type et capacité sont requis.' });
     }
 
-    const validTypes = ['open_space', 'private_office', 'meeting_room', 'training_room', 'event_space'];
+    const validTypes = ['open_space', 'private_office', 'meeting_room', 'training_room', 'event_space', 'hot_desk', 'dedicated_desk'];
     if (!validTypes.includes(type)) {
       return res.status(400).json({ error: "Type d'espace invalide." });
     }
@@ -113,11 +132,22 @@ async function createAdminEspace(req, res) {
     if (photo_url !== undefined) insertData.photo_url = photo_url;
     if (photos_urls !== undefined) insertData.photos_urls = photos_urls;
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from('espaces')
       .insert(insertData)
       .select()
       .single();
+    if (error && /photo_url|photos_urls|column/i.test(error.message || '')) {
+      const fallbackData = {
+        nom,
+        type,
+        capacite: parseInt(capacite, 10),
+        tarif_horaire: parseFloat(tarif_horaire) || 0,
+        tenant_id: req.tenantId,
+      };
+      if (photo_url) fallbackData.images = [photo_url];
+      ({ data, error } = await supabaseAdmin.from('espaces').insert(fallbackData).select().single());
+    }
 
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ espace: data });

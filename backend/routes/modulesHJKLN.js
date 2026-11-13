@@ -7,7 +7,7 @@
  * MODULE N — Multi-sites
  */
 const express = require('express');
-const { getBookingAvailability } = require('../models/helpers');
+const { getBookingAvailability, insertWithColumnFallback } = require('../models/helpers');
 
 // ─── Factory : reçoit les dépendances au moment du require() ─────────────
 module.exports = function createRouter({ supabaseAdmin, authenticate, requireRoles, applyTenantFilter }) {
@@ -57,60 +57,111 @@ router.post('/guests', async (req, res) => {
 });
 
 // POST /api/guests/booking — Réservation guest sans compte
+// CDC v3.0 : aucun paiement en ligne — la réservation est enregistrée « pending » (validation manuelle)
+// ou « confirmed » (confirmation automatique), le règlement s'effectue sur place.
 router.post('/guests/booking', async (req, res) => {
-  const { nom, prenom, email, telephone, espace_id, date_debut, date_fin, tenant_id } = req.body;
+  const { nom, prenom, email, telephone, espace_id, date_debut, date_fin, client_type, entreprise_info } = req.body;
   if (!nom || !prenom || !email || !telephone || !espace_id || !date_debut || !date_fin) {
     return res.status(400).json({ error: 'Tous les champs sont requis.' });
+  }
+  let enterpriseNotes = null;
+  if (client_type === 'entreprise') {
+    const info = entreprise_info || {};
+    if (!String(info.raison_sociale || '').trim() || !String(info.contact_nom || '').trim() || !String(info.telephone_pro || '').trim() || !String(info.email_facturation || '').trim() || !String(info.besoin_description || '').trim()) {
+      return res.status(400).json({ error: 'Pour une réservation Entreprise, raison sociale, personne de contact, téléphone professionnel, e-mail de facturation et description du besoin sont obligatoires.' });
+    }
+    enterpriseNotes = JSON.stringify({
+      type_client: 'entreprise',
+      raison_sociale: info.raison_sociale.trim(),
+      contact_nom: info.contact_nom.trim(),
+      telephone_pro: info.telephone_pro.trim(),
+      email_facturation: info.email_facturation.trim(),
+      besoin_description: info.besoin_description.trim(),
+    });
   }
   if (new Date(date_debut) >= new Date(date_fin)) {
     return res.status(400).json({ error: 'date_fin doit être postérieure à date_debut.' });
   }
 
   try {
+    // Le tenant est TOUJOURS déduit de l'espace (le client ne peut pas forcer un autre établissement)
+    const { data: espace, error: espErr } = await supabaseAdmin
+      .from('espaces')
+      .select('id, nom, type, tenant_id, tarif_horaire')
+      .eq('id', espace_id)
+      .maybeSingle();
+    if (espErr || !espace) {
+      return res.status(404).json({ error: "Espace introuvable. Veuillez choisir un espace dans la liste de l'établissement." });
+    }
+    const tenantId = espace.tenant_id || req.body.tenant_id || null;
+    if (req.body.tenant_id && espace.tenant_id && req.body.tenant_id !== espace.tenant_id) {
+      return res.status(400).json({ error: "Cet espace n'appartient pas à l'établissement sélectionné." });
+    }
+
     const availability = await getBookingAvailability(espace_id, date_debut, date_fin);
     if (!availability.isAvailable) {
       return res.status(409).json({ error: availability.conflictMessage });
     }
 
-    // Créer ou récupérer le guest
-    let { data: guest } = await supabaseAdmin
-      .from('guests')
-      .select('*')
-      .eq('email', email.toLowerCase().trim())
-      .eq('tenant_id', tenant_id || null)
-      .maybeSingle();
+    // Statut : validation manuelle (par défaut, et toujours pour un Event Space) ou confirmation automatique
+    let autoConfirm = false;
+    if (tenantId && espace.type !== 'event_space') {
+      const { data: tenant } = await supabaseAdmin.from('tenants').select('settings').eq('id', tenantId).maybeSingle();
+      autoConfirm = tenant?.settings?.auto_confirmation === true;
+    }
+    const statut = autoConfirm ? 'confirmed' : 'pending';
 
+    // Créer ou récupérer le guest (tolérant au schéma : colonnes prenom / tenant_id facultatives)
+    const cleanEmail = email.toLowerCase().trim();
+    let guest = null;
+    {
+      let q = supabaseAdmin.from('guests').select('*').eq('email', cleanEmail);
+      if (tenantId) q = q.eq('tenant_id', tenantId);
+      const { data: found, error: findErr } = await q.limit(1).maybeSingle();
+      if (!findErr) guest = found;
+    }
     if (!guest) {
-      const { data: newGuest, error: gErr } = await supabaseAdmin
-        .from('guests')
-        .insert({ nom, prenom, email: email.toLowerCase().trim(), telephone, tenant_id: tenant_id || null })
-        .select().single();
+      const guestPayload = { nom, prenom, email: cleanEmail, telephone, tenant_id: tenantId };
+      let { data: created, error: gErr, dropped } = await insertWithColumnFallback(supabaseAdmin, 'guests', guestPayload);
       if (gErr) return res.status(400).json({ error: gErr.message });
-      guest = newGuest;
+      // Si la colonne « prenom » n'existe pas, on conserve l'information dans « nom »
+      if (dropped.includes('prenom') && created?.id) {
+        await supabaseAdmin.from('guests').update({ nom: `${prenom} ${nom}`.trim() }).eq('id', created.id);
+        created.nom = `${prenom} ${nom}`.trim();
+      }
+      guest = created;
     }
 
-    // Créer la réservation liée au guest (sans user_id)
-    const { data: reservation, error: rErr } = await supabaseAdmin
-      .from('reservations')
-      .insert({
+    // Créer la réservation liée au guest (sans compte) — user_id nul, remplacé par membre_id si le schéma l'impose
+    const { data: reservation, error: rErr } = await insertWithColumnFallback(
+      supabaseAdmin,
+      'reservations',
+      {
         user_id: null,
         guest_id: guest.id,
-        tenant_id: tenant_id || null,
+        tenant_id: tenantId,
         espace_id,
         date_debut,
         date_fin,
-        statut: 'pending',
-        mode: 'online'
-      })
-      .select('*, espaces(nom, type)').single();
-
+        statut,
+        mode: 'on_site',
+        mode_reservation: client_type === 'entreprise' ? 'entreprise' : 'guest',
+        ...(enterpriseNotes ? { notes: enterpriseNotes } : {}),
+        source: 'marketplace',
+      },
+      { aliases: { user_id: 'membre_id' } },
+    );
     if (rErr) return res.status(400).json({ error: rErr.message });
 
     res.status(201).json({
-      reservation,
+      reservation: { ...reservation, espaces: { nom: espace.nom, type: espace.type } },
       guest,
-      message: 'Réservation créée. Un email de confirmation sera envoyé à ' + email,
-      cancel_token: guest.token,
+      statut,
+      message: statut === 'confirmed'
+        ? 'Réservation confirmée. Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.'
+        : "Réservation enregistrée, en attente de validation par l'établissement. Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.",
+      payment_on_site: true,
+      cancel_token: guest.token || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -263,13 +314,23 @@ router.delete('/guests/booking/:token', async (req, res) => {
 // GET /api/public/coworkings — Liste des coworkings actifs (landing page)
 router.get('/public/coworkings', async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, created_at')
-      .eq('statut', 'actif')
+      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, settings, created_at')
+      .or('statut.eq.actif,statut.eq.valide,statut.eq.approuve,statut.is.null')
       .order('nom', { ascending: true });
 
     if (error) return res.status(500).json({ error: error.message });
+
+    if (!data || data.length === 0) {
+      const { data: allTenants } = await supabaseAdmin
+        .from('tenants')
+        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, settings, created_at')
+        .limit(10);
+      if (allTenants && allTenants.length > 0) {
+        data = allTenants;
+      }
+    }
 
     const today = new Date().toISOString().split('T')[0];
 
@@ -292,39 +353,152 @@ router.get('/public/coworkings', async (req, res) => {
       // Filtrer les promos non expirées
       const activePromos = (promos || []).filter(p => !p.date_fin || p.date_fin >= today);
 
+      const { settings, ...publicTenant } = t;
       return {
-        ...t,
+        ...publicTenant,
+        // Pack SaaS de l'établissement (stocké dans tenants.settings.saas_pack : essentiel | standard | premium)
+        is_featured: settings?.saas_pack === 'premium',
         space_count: spaceCount || 0,
         member_count: membersCount || 0,
         has_promo: activePromos.length > 0,
         promo_count: activePromos.length,
+        has_domiciliation: Boolean(settings?.domiciliation?.actif),
+        domiciliation: settings?.domiciliation && settings.domiciliation.actif ? settings.domiciliation : null,
       };
     }));
 
-    res.json({ coworkings: enriched || [] });
+    // Pack Premium : badge « Mis en avant » + priorité algorithmique TOURNANTE.
+    // Les établissements Premium passent en tête ; leur ordre tourne toutes les heures
+    // (rotation équitable), les autres restent triés par nom.
+    const featured = enriched.filter((t) => t.is_featured);
+    const regular = enriched.filter((t) => !t.is_featured);
+    if (featured.length > 1) {
+      const offset = Math.floor(Date.now() / 3600000) % featured.length;
+      featured.push(...featured.splice(0, offset));
+    }
+
+    res.json({ coworkings: [...featured, ...regular] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/public/coworkings/:id — Détail d'un coworking actif + ses espaces
+// GET /api/public/coworkings/:id — Détail d'un coworking actif (+ aperçu propriétaire / super admin)
 router.get('/public/coworkings/:id', async (req, res) => {
   try {
     const { data: tenant } = await supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, settings, created_at')
+      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at')
       .eq('id', req.params.id)
-      .eq('statut', 'actif')
       .single();
     if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
 
-    const { data: espaces } = await supabaseAdmin
+    if (tenant.statut !== 'actif') {
+      let authorizedOwner = false;
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+      if (token) {
+        try {
+          const { data: authData } = await supabaseAdmin.auth.getUser(token);
+          if (authData?.user?.id) {
+            const { data: prof } = await supabaseAdmin
+              .from('profiles')
+              .select('role, is_super_admin, tenant_id')
+              .eq('id', authData.user.id)
+              .single();
+            if (
+              prof &&
+              (prof.role === 'super_admin' ||
+                prof.is_super_admin === true ||
+                (['admin', 'staff'].includes(prof.role) && prof.tenant_id === tenant.id))
+            ) {
+              authorizedOwner = true;
+            }
+          }
+        } catch (_) {}
+      }
+      if (!authorizedOwner) {
+        return res.status(404).json({ error: 'Coworking introuvable.' });
+      }
+    }
+
+    // Colonnes enrichies (visuels, équipements) : on retombe sur la projection minimale si le schéma ne les a pas.
+    let { data: espaces, error: espErr } = await supabaseAdmin
       .from('espaces')
-      .select('id, nom, type, capacite, tarif_horaire, photo_url, photos_urls')
+      .select('id, nom, type, capacite, tarif_horaire, photo_url, photos_urls, equipements, description, tenant_id')
       .eq('tenant_id', tenant.id)
       .order('tarif_horaire', { ascending: true });
+    if (espErr) {
+      ({ data: espaces, error: espErr } = await supabaseAdmin
+        .from('espaces')
+        .select('id, nom, type, capacite, tarif_horaire, images, equipements, description, tenant_id')
+        .eq('tenant_id', tenant.id)
+        .order('tarif_horaire', { ascending: true }));
+    }
+    if (espErr) {
+      ({ data: espaces } = await supabaseAdmin
+        .from('espaces')
+        .select('id, nom, type, capacite, tarif_horaire')
+        .eq('tenant_id', tenant.id)
+        .order('tarif_horaire', { ascending: true }));
+    }
 
-    res.json({ coworking: { ...tenant, espaces: espaces || [] } });
+    const normalizedEspaces = (espaces || []).map((e) => ({
+      ...e,
+      photo_url: e.photo_url || (Array.isArray(e.images) ? e.images[0] : null) || null,
+    }));
+
+    // Incrémenter compteur de vues Marketplace si fiche active (sans bloquer la réponse)
+    if (tenant.statut === 'actif') {
+      const s = tenant.settings && typeof tenant.settings === 'object' ? tenant.settings : {};
+      const mp = s.marketplace_stats && typeof s.marketplace_stats === 'object' ? s.marketplace_stats : {};
+      const nextMp = { ...mp, vues: Number(mp.vues || 0) + 1, last_updated: new Date().toISOString() };
+      supabaseAdmin
+        .from('tenants')
+        .update({ settings: { ...s, marketplace_stats: nextMp } })
+        .eq('id', tenant.id)
+        .then(() => {})
+        .catch(() => {});
+    }
+
+    const { settings: _settings, statut: tenantStatut, ...publicTenant } = tenant;
+    res.json({
+      coworking: {
+        ...publicTenant,
+        is_preview: tenantStatut !== 'actif',
+        preview_statut: tenantStatut,
+        is_featured: tenant.settings?.saas_pack === 'premium',
+        gallery_photos: Array.isArray(tenant.settings?.gallery_photos) ? tenant.settings.gallery_photos : [],
+        equipements: Array.isArray(tenant.settings?.equipements) ? tenant.settings.equipements : [],
+        domiciliation: tenant.settings?.domiciliation && tenant.settings.domiciliation.actif ? tenant.settings.domiciliation : null,
+        espaces: normalizedEspaces,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/public/coworkings/:id/track — Suivi clics / interactions Marketplace (Pack Premium)
+router.post('/public/coworkings/:id/track', async (req, res) => {
+  try {
+    const action = req.body?.action === 'booking' ? 'booking' : 'click';
+    const { data: tenant } = await supabaseAdmin
+      .from('tenants')
+      .select('id, settings')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
+
+    const s = tenant.settings && typeof tenant.settings === 'object' ? tenant.settings : {};
+    const mp = s.marketplace_stats && typeof s.marketplace_stats === 'object' ? s.marketplace_stats : {};
+    const nextMp = {
+      ...mp,
+      clics: Number(mp.clics || 0) + (action === 'click' ? 1 : 0),
+      last_updated: new Date().toISOString(),
+    };
+    await supabaseAdmin.from('tenants').update({ settings: { ...s, marketplace_stats: nextMp } }).eq('id', tenant.id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -386,25 +560,297 @@ router.get('/public/coworkings/:id/promos', async (req, res) => {
 // GET /api/public/espaces — Espaces des coworkings actifs (public / guest)
 router.get('/public/espaces', async (req, res) => {
   try {
-    let query = supabaseAdmin
-      .from('espaces')
-      .select('id, nom, type, capacite, tarif_horaire, photo_url, photos_urls, tenant_id, tenants!tenant_id(nom, ville, adresse, pays, cover_url, logo_url, latitude, longitude)')
-      .order('tarif_horaire', { ascending: true });
+    const richCols = 'id, nom, type, capacite, tarif_horaire, photo_url, photos_urls, equipements, description, tenant_id, tenants!tenant_id(nom, ville, adresse, pays, cover_url, logo_url, latitude, longitude)';
+    const compatCols = 'id, nom, type, capacite, tarif_horaire, images, equipements, description, tenant_id, tenants!tenant_id(nom, ville, adresse, pays, cover_url, logo_url)';
+    const minCols = 'id, nom, type, capacite, tarif_horaire, tenant_id';
 
-    if (req.query.tenant_id) {
-      const { data: tenant } = await supabaseAdmin
-        .from('tenants').select('id').eq('id', req.query.tenant_id).eq('statut', 'actif').single();
-      if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
-      query = query.eq('tenant_id', req.query.tenant_id);
-    } else {
+    let activeTenantIds = null;
+    if (!req.query.tenant_id) {
       const { data: activeIds } = await supabaseAdmin
-        .from('tenants').select('id').eq('statut', 'actif');
-      query = query.in('tenant_id', (activeIds || []).map(t => t.id));
+        .from('tenants').select('id')
+        .or('statut.eq.actif,statut.eq.valide,statut.eq.approuve,statut.is.null');
+      activeTenantIds = (activeIds || []).map((t) => t.id);
+    } else {
+      const { data: tenant } = await supabaseAdmin
+        .from('tenants').select('id').eq('id', req.query.tenant_id)
+        .or('statut.eq.actif,statut.eq.valide,statut.eq.approuve,statut.is.null').maybeSingle();
+      if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
     }
 
-    const { data, error } = await query;
+    const runSelect = async (cols) => {
+      let q = supabaseAdmin.from('espaces').select(cols).order('tarif_horaire', { ascending: true });
+      if (req.query.tenant_id) q = q.eq('tenant_id', req.query.tenant_id);
+      else if (activeTenantIds) q = q.in('tenant_id', activeTenantIds);
+      return q;
+    };
+
+    let { data, error } = await runSelect(richCols);
+    if (error) ({ data, error } = await runSelect(compatCols));
+    if (error) ({ data, error } = await runSelect(minCols));
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ espaces: data || [] });
+
+    const normalized = (data || []).map((e) => ({
+      ...e,
+      photo_url: e.photo_url || (Array.isArray(e.images) ? e.images[0] : null) || null,
+    }));
+    res.json({ espaces: normalized });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/public/formations — Prochaines sessions de formation ouvertes au public (carrousel landing)
+router.get('/public/formations', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 12, 30);
+    const nowIso = new Date().toISOString();
+
+    const { data: tenants } = await supabaseAdmin.from('tenants').select('id, nom, ville').eq('statut', 'actif');
+    const tenantMap = Object.fromEntries((tenants || []).map((t) => [t.id, t]));
+
+    let q = supabaseAdmin
+      .from('formations')
+      .select('*')
+      .in('statut', ['planifiee', 'publiee'])
+      .gte('date_debut', nowIso)
+      .order('date_debut', { ascending: true })
+      .limit(limit * 3);
+    if (req.query.tenant_id) q = q.eq('tenant_id', req.query.tenant_id);
+    const { data, error } = await q;
+    if (error) return res.json({ formations: [] }); // module Formation non déployé : pas d'erreur côté visiteur
+
+    const formations = (data || [])
+      .filter((f) => !f.tenant_id || tenantMap[f.tenant_id])
+      .map((f) => {
+        const inscrits = Number(f.nb_inscrits || 0);
+        const capacite = Number(f.capacite_max ?? f.places_max ?? 0);
+        return {
+          id: f.id,
+          titre: f.titre,
+          description: f.description || null,
+          date_debut: f.date_debut,
+          date_fin: f.date_fin,
+          prix_inscription: Number(f.prix_inscription ?? f.prix ?? 0),
+          places_restantes: capacite > 0 ? Math.max(0, capacite - inscrits) : null,
+          liste_attente: capacite > 0 && inscrits >= capacite,
+          tenant_id: f.tenant_id || null,
+          etablissement: f.tenant_id ? tenantMap[f.tenant_id]?.nom : null,
+          ville: f.tenant_id ? tenantMap[f.tenant_id]?.ville : null,
+        };
+      })
+      .slice(0, limit);
+
+    res.json({ formations });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/public/trainer-application — Candidature "Devenir Formateur" (CDC v3.0)
+router.post('/public/trainer-application', async (req, res) => {
+  try {
+    const {
+      nom, prenom, email, telephone, password,
+      specialite, biographie, documents, tenant_id,
+    } = req.body;
+
+    if (!nom?.trim() || !prenom?.trim() || !email?.trim() || !specialite?.trim() || !biographie?.trim()) {
+      return res.status(400).json({ error: 'Nom, prénom, email, spécialité et biographie sont requis.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanNom = nom.trim();
+    const cleanPrenom = prenom.trim();
+    const cleanPhone = telephone ? telephone.trim() : '';
+
+    // 1. Unicité stricte : une adresse e-mail ne peut créer qu'un seul compte
+    const { data: existingProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .ilike('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingProfile?.id) {
+      return res.status(409).json({
+        error: 'Cette adresse e-mail est déjà associée à un compte existant. Veuillez vous connecter.',
+      });
+    }
+
+    const pwd = password && password.length >= 6 ? password : Math.random().toString(36).slice(-10) + 'A1!';
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email: cleanEmail,
+      password: pwd,
+      email_confirm: Boolean(password && password.length >= 6),
+      user_metadata: { nom: cleanNom, prenom: cleanPrenom, telephone: cleanPhone, role: 'formateur' },
+    });
+
+    if (createErr) {
+      if (/already|registered|exists/i.test(createErr.message || '')) {
+        return res.status(409).json({
+          error: 'Cette adresse e-mail est déjà associée à un compte existant. Veuillez vous connecter.',
+        });
+      }
+      return res.status(400).json({ error: createErr.message });
+    }
+    const userId = created.user.id;
+
+    // 2. Mettre à jour ou créer le profil + trainer_profiles en statut "en_validation" (Pending)
+    if (userId) {
+      await supabaseAdmin.from('profiles').upsert({
+        id: userId,
+        nom: cleanNom,
+        prenom: cleanPrenom,
+        email: cleanEmail,
+        telephone: cleanPhone || null,
+        role: 'formateur',
+        specialite: specialite.trim(),
+        biographie: biographie.trim(),
+        statut_compte: 'en_attente',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+      const domaines = specialite.split(',').map((d) => d.trim()).filter(Boolean);
+      const certs = Array.isArray(documents)
+        ? documents
+        : (documents ? [{ titre: String(documents).trim() }] : []);
+
+      const tpRes = await supabaseAdmin.from('trainer_profiles').upsert({
+        user_id: userId,
+        bio: biographie.trim(),
+        domaines,
+        certificats: certs,
+        telephone_pro: cleanPhone || null,
+        statut_validation: 'en_validation',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+      if (tpRes.error && /column/i.test(tpRes.error.message || '')) {
+        await supabaseAdmin.from('trainer_profiles').upsert({
+          user_id: userId,
+          bio: biographie.trim(),
+          domaines,
+          certificats: certs,
+          statut_validation: 'en_validation',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+      }
+    }
+
+    // 3. Enregistrer aussi dans contacts pour traçabilité & suivi
+    await supabaseAdmin.from('contacts').insert({
+      nom: `${cleanPrenom} ${cleanNom}`.trim(),
+      email: cleanEmail,
+      sujet: `Candidature Formateur — ${specialite.trim()}`,
+      message: `Spécialité: ${specialite}\nTéléphone: ${cleanPhone || 'Non précisé'}\nÉtablissement ciblé: ${tenant_id || 'Marketplace'}\nBiographie: ${biographie}\nDocuments: ${JSON.stringify(documents || [])}`,
+    });
+
+    // 4. Notifier les super admins / gestionnaires
+    try {
+      const { data: admins } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .in('role', ['super_admin', 'admin']);
+      if (admins) {
+        for (const a of admins) {
+          await supabaseAdmin.from('notifications').insert({
+            user_id: a.id,
+            type: 'nouveau_formateur_en_validation',
+            canal: 'Dashboard',
+            message: `Nouvelle candidature formateur : ${cleanPrenom} ${cleanNom} (${specialite.trim()}) en attente de validation.`,
+          });
+        }
+      }
+    } catch (_) {}
+
+    res.status(201).json({
+      success: true,
+      status: 'pending',
+      message: 'Votre candidature formateur a été enregistrée. Elle restera en attente jusqu’à validation par un établissement ou l’équipe DeskyWork.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/public/partner-request — Demande B2B "Espaces partenaires" (CDC v3.0)
+router.post('/public/partner-request', async (req, res) => {
+  try {
+    const {
+      nom_etablissement, ville, adresse, nb_espaces,
+      activite, pack_saas, nom_contact, email, telephone, notes,
+    } = req.body;
+
+    if (!nom_etablissement?.trim() || !ville?.trim() || !adresse?.trim() || !nom_contact?.trim() || !email?.trim() || !telephone?.trim()) {
+      return res.status(400).json({ error: 'Tous les champs obligatoires doivent être renseignés.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const act = ['coworking', 'centre_formation', 'mixte'].includes(activite) ? activite : 'coworking';
+    const actLabels = { coworking: 'Coworking uniquement', centre_formation: 'Centre de formation uniquement', mixte: 'Coworking & Centre de formation (Mixte)' };
+    const packLabels = { essentiel: 'Essentiel (90,000 DT HT/mois)', standard: 'Standard (150,000 DT HT/mois)', premium: 'Premium (220,000 DT HT/mois)' };
+
+    // 1. Créer une trace de qualification B2B dans contacts
+    const details = [
+      `Établissement : ${nom_etablissement.trim()}`,
+      `Ville : ${ville.trim()} | Adresse : ${adresse.trim()}`,
+      `Activités : ${actLabels[act]}`,
+      `Nombre d'espaces estimé : ${nb_espaces || 'Non précisé'}`,
+      `Pack souhaité : ${packLabels[pack_saas] || pack_saas || 'Standard'}`,
+      `Contact : ${nom_contact.trim()} | Tél : ${telephone.trim()}`,
+      notes ? `Notes : ${notes.trim()}` : '',
+    ].filter(Boolean).join('\n');
+
+    await supabaseAdmin.from('contacts').insert({
+      nom: `${nom_contact.trim()} (${nom_etablissement.trim()})`,
+      email: cleanEmail,
+      sujet: `Demande Partenaire B2B — ${nom_etablissement.trim()} [${actLabels[act]}]`,
+      message: details,
+    });
+
+    // 2. Créer une pré-fiche organization en attente de validation si possible
+    try {
+      const slug = `${nom_etablissement.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36)}`;
+      await supabaseAdmin.from('organizations').insert({
+        type: act === 'centre_formation' ? 'centre_formation' : 'coworking',
+        nom: nom_etablissement.trim(),
+        slug,
+        ville: ville.trim(),
+        adresse: adresse.trim(),
+        telephone: telephone.trim(),
+        email: cleanEmail,
+        statut: 'en_validation',
+        settings: {
+          activite: act,
+          nb_espaces: Number(nb_espaces) || 1,
+          saas_pack: pack_saas || 'standard',
+          contact_nom: nom_contact.trim(),
+          onboarding_completed: false,
+        },
+      });
+    } catch (_) {}
+
+    // 3. Notifier les super admins
+    try {
+      const { data: superAdmins } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .or('role.eq.super_admin,is_super_admin.eq.true');
+      if (superAdmins) {
+        for (const sa of superAdmins) {
+          await supabaseAdmin.from('notifications').insert({
+            user_id: sa.id,
+            type: 'nouvelle_demande_partenaire',
+            canal: 'Dashboard',
+            message: `Nouvelle demande partenaire B2B : ${nom_etablissement.trim()} (${ville.trim()}) — ${actLabels[act]}.`,
+          });
+        }
+      }
+    } catch (_) {}
+
+    res.status(201).json({
+      success: true,
+      message: 'Votre demande partenaire a bien été enregistrée ! Notre équipe vous contactera sous 24h pour activer votre espace de gestion.',
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

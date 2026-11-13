@@ -47,6 +47,7 @@ export default function TrainerDashboard({ session }) {
   const [inscriptions, setInscriptions] = useState({});   // Map formation_id → participants[]
   const [coworkings, setCoworkings] = useState([]);
   const [remunerations, setRemunerations] = useState([]);
+  const [trainerValidation, setTrainerValidation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -63,7 +64,7 @@ export default function TrainerDashboard({ session }) {
     prix_inscription: 0, date_debut: '', date_fin: '', programme: '', prerequis: '', materiel: ''
   });
   const [bookingForm, setBookingForm] = useState({
-    espace_id: '', date_debut: '', date_fin: '', mode: 'online',
+    espace_id: '', date_debut: '', date_fin: '', mode: 'sur_place',
   });
   const [selectedEspace, setSelectedEspace] = useState(null);
   const [formationSpaceCheck, setFormationSpaceCheck] = useState({ status: 'idle', message: '' });
@@ -130,8 +131,9 @@ export default function TrainerDashboard({ session }) {
   };
 
   const refreshData = async (trainerId) => {
+    const id = trainerId || profile?.id || userId;
     try {
-      const [fList, rList, eList, cwRes, remuRes] = await Promise.all([
+      const [fList, rList, eList, cwRes, remuRes, tpRes] = await Promise.all([
         formationApi.getAll({ formateur_id: id }).catch(() => ({ formations: [] })),
         bookingApi.getAll().catch(() => ({ reservations: [] })),
         supabase.from('espaces').select('*').order('nom'),
@@ -140,6 +142,10 @@ export default function TrainerDashboard({ session }) {
           .select('*, formations(titre)')
           .eq('formateur_id', id)
           .order('created_at', { ascending: false }),
+        supabase.from('trainer_profiles')
+          .select('statut_validation, motif_refus')
+          .eq('user_id', id)
+          .maybeSingle(),
       ]);
       const fData = fList.formations || [];
       setFormations(fData);
@@ -147,6 +153,7 @@ export default function TrainerDashboard({ session }) {
       setEspaces(eList?.data || []);
       setCoworkings(cwRes?.coworkings || []);
       setRemunerations(remuRes?.data || []);
+      setTrainerValidation(tpRes?.data?.statut_validation || null);
 
       // Charger les inscriptions pour toutes les formations du formateur
       if (fData.length > 0) {
@@ -204,10 +211,10 @@ export default function TrainerDashboard({ session }) {
         espace_id: bookingForm.espace_id,
         date_debut: new Date(bookingForm.date_debut).toISOString(),
         date_fin: new Date(bookingForm.date_fin).toISOString(),
-        mode: bookingForm.mode || 'online',
+        mode: 'sur_place',
       });
-      setSuccess('Demande envoyée. Une facture a été créée — l’admin doit confirmer, puis vous pourrez payer.');
-      setBookingForm({ espace_id: '', date_debut: '', date_fin: '', mode: 'online' });
+      setSuccess("Demande envoyée. En attente de confirmation par l'établissement — règlement à effectuer sur place (espèces, chèque ou virement).");
+      setBookingForm({ espace_id: '', date_debut: '', date_fin: '', mode: 'sur_place' });
       setSelectedEspace(null);
       setShowBookingModal(false);
       await refreshData();
@@ -219,7 +226,7 @@ export default function TrainerDashboard({ session }) {
     const start = new Date(bookingForm.date_debut);
     const end = new Date(bookingForm.date_fin);
     const hours = (end - start) / (1000 * 60 * 60);
-    return hours > 0 ? (hours * selectedEspace.tarif_horaire).toFixed(2) : 0;
+    return hours > 0 ? (hours * selectedEspace.tarif_horaire).toFixed(3) : 0;
   };
 
   /* KPIs */
@@ -329,6 +336,25 @@ export default function TrainerDashboard({ session }) {
           <PeriodFilter value={period} onChange={setPeriod} />
         </div>
 
+        {/* Bannière statut formateur en attente de validation / rattachement */}
+        {trainerValidation && trainerValidation !== 'valide' && (
+          <div className="mb-5 flex items-start gap-3 p-4 rounded-2xl bg-amber-50 text-amber-900 border border-amber-200 text-sm">
+            <span className="material-symbols-outlined text-amber-600 shrink-0 mt-0.5" style={{ fontSize: 20 }}>
+              hourglass_top
+            </span>
+            <div className="flex-1">
+              <p className="font-semibold">
+                {trainerValidation === 'refuse'
+                  ? 'Votre profil formateur nécessite une mise à jour avant validation.'
+                  : 'Profil en attente de validation / rattachement par un établissement'}
+              </p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Vous avez déjà accès à votre tableau de bord personnel. Vos formations seront publiables dès qu&apos;un établissement partenaire ou l&apos;équipe DeskyWork aura validé votre profil formateur.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Alertes */}
         {error && (
           <div className="mb-4 flex items-start gap-3 p-4 rounded-2xl bg-red-50 text-red-800 border border-red-200 text-sm">
@@ -349,10 +375,10 @@ export default function TrainerDashboard({ session }) {
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           {[
-            { label: 'Sessions du jour', value: todaySessions.length, icon: 'today', color: 'text-secondary bg-secondary/10' },
+            { label: 'Sessions de formation & travail', value: todaySessions.length, icon: 'today', color: 'text-secondary bg-secondary/10' },
             { label: 'Prochaines formations', value: upcomingFormations, icon: 'upcoming', color: 'text-emerald-600 bg-emerald-50' },
             { label: 'Total participants', value: totalInscrits, icon: 'group', color: 'text-violet-600 bg-violet-50', trend: inscritsTrend },
-            { label: 'Rémunération en attente', value: pendingPayouts > 0 ? `${pendingPayouts.toFixed(0)} DT` : 'Aucune', icon: 'payments', color: 'text-sky-600 bg-sky-50' },
+            { label: 'Rémunération en attente', value: pendingPayouts > 0 ? `${pendingPayouts.toFixed(3)} DT` : 'Aucune', icon: 'payments', color: 'text-sky-600 bg-sky-50' },
           ].map(({ label, value, icon, color, trend }) => (
             <div key={label} className="bg-surface-container-lowest rounded-3xl sm:rounded-3xl p-4 sm:p-5 border border-outline-variant/20 shadow-sm relative overflow-hidden">
               <span className="absolute inset-x-0 top-0 h-0.5" style={{ background: 'linear-gradient(90deg, #f95d00, transparent)' }} />
@@ -382,7 +408,7 @@ export default function TrainerDashboard({ session }) {
               <div>
                 <h2 className="font-sora font-bold text-primary text-base flex items-center gap-2">
                   <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>today</span>
-                  Sessions du jour
+                  Sessions de formation &amp; travail du jour
                 </h2>
                 <p className="text-xs text-on-surface-variant mt-0.5">Formations et réservations personnelles · {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
               </div>
@@ -930,32 +956,12 @@ export default function TrainerDashboard({ session }) {
                         </div>
                       </div>
 
-                      {/* Mode de paiement */}
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-semibold text-on-surface-variant">Mode de paiement</label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setBookingForm({ ...bookingForm, mode: 'online' })}
-                            className={`px-3 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
-                              bookingForm.mode === 'online'
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                                : 'border-outline-variant/20 text-on-surface-variant'
-                            }`}
-                          >
-                            💳 En ligne
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setBookingForm({ ...bookingForm, mode: 'sur_place' })}
-                            className={`px-3 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
-                              bookingForm.mode === 'sur_place'
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                                : 'border-outline-variant/20 text-on-surface-variant'
-                            }`}
-                          >
-                            💵 Sur place
-                          </button>
+                      {/* Mode de paiement (CDC v3.0 D1 : 100 % sur place) */}
+                      <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-center gap-2.5">
+                        <span className="material-symbols-outlined text-amber-700" style={{ fontSize: 20 }}>storefront</span>
+                        <div>
+                          <p className="text-xs font-bold text-amber-900">Règlement sur place</p>
+                          <p className="text-[11px] text-amber-800">Espèces, chèque ou virement à régler lors de votre arrivée.</p>
                         </div>
                       </div>
 
@@ -1003,7 +1009,7 @@ export default function TrainerDashboard({ session }) {
                 onClick={() => {
                   setShowBookingModal(false);
                   setSelectedEspace(null);
-                  setBookingForm({ espace_id: '', date_debut: '', date_fin: '', mode: 'online' });
+                  setBookingForm({ espace_id: '', date_debut: '', date_fin: '', mode: 'sur_place' });
                 }}
                 className="px-6 py-3 border border-outline-variant/40 text-on-surface-variant font-semibold rounded-xl text-sm hover:bg-surface-container transition-colors"
               >

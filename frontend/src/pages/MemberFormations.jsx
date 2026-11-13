@@ -26,6 +26,12 @@ export default function MemberFormations({ session }) {
   const [saving, setSaving] = useState(null); // formation id being acted on
   const [pageCatalogue, setPageCatalogue] = useState(1);
   const [pageInscriptions, setPageInscriptions] = useState(1);
+  const [filterSearch, setFilterSearch] = useState('');
+  const [filterCity, setFilterCity] = useState('all');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterDate, setFilterDate] = useState('');
+  const [filterDispo, setFilterDispo] = useState('all');
   const navigate = useNavigate();
 
   useEffect(() => { loadUserData(); }, []);
@@ -50,7 +56,7 @@ export default function MemberFormations({ session }) {
   const refreshData = async () => {
     try {
       const [fList, myList] = await Promise.all([
-        formationApi.getAll({ statut: 'planifiee' }),
+        formationApi.getAll({}),
         formationApi.getMesFormations(),
       ]);
       setFormations(fList.formations || []);
@@ -64,7 +70,7 @@ export default function MemberFormations({ session }) {
       setSelectedPaymentMode('sur_place');
       setPaymentModalFormation(formation);
     } else {
-      executeRegister(formation.id, 'online');
+      executeRegister(formation.id, 'sur_place');
     }
   };
 
@@ -76,23 +82,9 @@ export default function MemberFormations({ session }) {
       setPaymentModalFormation(null);
 
       if (res.liste_attente) {
-        setSuccess("Formation complète — vous avez été ajouté à la liste d'attente !");
+        setSuccess("Session de formation complète — vous avez été ajouté en liste d'attente !");
       } else if (f?.prix_inscription > 0) {
-        if (mode === 'online' && res.payment?.id) {
-          setSuccess('Inscription validée ! Redirection vers le paiement Stripe...');
-          try {
-            const payRes = await paymentApi.payWithStripe(res.payment.id);
-            if (payRes.link) {
-              window.location.href = payRes.link;
-              return;
-            }
-          } catch (stripeErr) {
-            console.warn('Stripe checkout:', stripeErr.message);
-            setSuccess('Inscription confirmée ! Vous pouvez régler en ligne via le bouton dans vos inscriptions.');
-          }
-        } else {
-          setSuccess('Inscription confirmée ! Le règlement s\'effectuera sur place à l\'accueil lors de votre arrivée.');
-        }
+        setSuccess("Inscription confirmée ! Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.");
       } else {
         setSuccess('Inscription confirmée avec succès !');
       }
@@ -115,31 +107,6 @@ export default function MemberFormations({ session }) {
     finally { setSaving(null); }
   };
 
-  const handlePayFormation = async (formationId, paiementId) => {
-    setError(''); setSaving(formationId);
-    try {
-      let paymentId = paiementId;
-      if (!paymentId) {
-        const res = await formationApi.createFormationPayment(formationId, { mode: 'online' });
-        paymentId = res.payment?.id;
-      }
-      if (!paymentId) {
-        throw new Error('Aucun paiement trouvé pour cette formation.');
-      }
-
-      const res = await paymentApi.payWithStripe(paymentId);
-      if (res.link) {
-        window.location.href = res.link;
-        return;
-      }
-      throw new Error('Lien de paiement non reçu.');
-    } catch (err) {
-      setError(err.message || 'Impossible de lancer le paiement Stripe.');
-    } finally {
-      setSaving(null);
-    }
-  };
-
   const isInscribed = (formationId) =>
     myInscriptions.some(m => m.formation_id === formationId && m.statut !== 'annulee');
 
@@ -151,7 +118,41 @@ export default function MemberFormations({ session }) {
 
   const activeInscriptions = myInscriptions.filter(m => m.statut !== 'annulee');
 
-  const pagedFormations = formations.slice((pageCatalogue - 1) * ITEMS_PER_PAGE, pageCatalogue * ITEMS_PER_PAGE);
+  const availableCities = Array.from(new Set(formations.map(f => f.ville || f.espaces?.ville || f.etablissement).filter(Boolean)));
+  const availableCategories = Array.from(new Set(formations.map(f => f.categorie || f.thematique || f.specialite || (f.espaces ? f.espaces.type : '')).filter(Boolean)));
+
+  const filteredFormations = formations.filter((f) => {
+    if (filterSearch.trim()) {
+      const q = filterSearch.toLowerCase();
+      const matchTitle = (f.titre || '').toLowerCase().includes(q);
+      const matchDesc = (f.description || '').toLowerCase().includes(q);
+      const matchTrainer = (f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : '').toLowerCase().includes(q);
+      const matchEspace = (f.espaces?.nom || '').toLowerCase().includes(q);
+      if (!matchTitle && !matchDesc && !matchTrainer && !matchEspace) return false;
+    }
+    if (filterCity !== 'all') {
+      const city = (f.ville || f.espaces?.ville || f.etablissement || '').toLowerCase();
+      if (!city.includes(filterCity.toLowerCase())) return false;
+    }
+    if (filterCategory !== 'all') {
+      const cat = (f.categorie || f.thematique || f.specialite || (f.espaces ? f.espaces.type : '')).toLowerCase();
+      if (!cat.includes(filterCategory.toLowerCase())) return false;
+    }
+    if (filterStatus !== 'all') {
+      if (f.statut !== filterStatus) return false;
+    }
+    if (filterDate) {
+      const fDate = new Date(f.date_debut).toISOString().slice(0, 10);
+      if (fDate !== filterDate) return false;
+    }
+    if (filterDispo === 'available_only') {
+      const rem = f.places_restantes ?? (f.capacite_max - (f.nb_inscrits || 0));
+      if (rem <= 0) return false;
+    }
+    return true;
+  });
+
+  const pagedFormations = filteredFormations.slice((pageCatalogue - 1) * ITEMS_PER_PAGE, pageCatalogue * ITEMS_PER_PAGE);
   const pagedInscriptions = activeInscriptions.slice((pageInscriptions - 1) * ITEMS_PER_PAGE, pageInscriptions * ITEMS_PER_PAGE);
 
   return (
@@ -189,7 +190,7 @@ export default function MemberFormations({ session }) {
               <span>{success}</span>
               {success.includes('paiement') && (
                 <button onClick={() => navigate('/member/payments')} className="ml-3 underline font-semibold text-emerald-900 text-xs">
-                  Voir mes factures →
+                  Voir mes reçus →
                 </button>
               )}
             </div>
@@ -199,20 +200,120 @@ export default function MemberFormations({ session }) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
           {/* ══ CATALOGUE ══ */}
-          <div className="lg:col-span-2">
-            <h2 className="font-sora font-semibold text-primary text-base mb-4 flex items-center gap-2">
-              <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>explore</span>
-              Workshops disponibles
-              <span className="text-xs font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-full ml-1">
-                {formations.length}
-              </span>
-            </h2>
+          <div className="lg:col-span-2 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <h2 className="font-sora font-semibold text-primary text-base flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>explore</span>
+                Workshops &amp; Formations
+                <span className="text-xs font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-full ml-1">
+                  {filteredFormations.length} / {formations.length}
+                </span>
+              </h2>
+            </div>
 
-            {formations.length === 0 ? (
+            {/* Barre de filtres complète CDC v3.0 */}
+            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/20 p-3.5 shadow-xs space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {/* Recherche mot-clé */}
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-2.5 text-on-surface-variant/50 text-[18px]">search</span>
+                  <input
+                    type="text"
+                    value={filterSearch}
+                    onChange={(e) => { setFilterSearch(e.target.value); setPageCatalogue(1); }}
+                    placeholder="Mot-clé, titre, formateur…"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary"
+                  />
+                </div>
+
+                {/* Ville / Lieu */}
+                <div>
+                  <select
+                    value={filterCity}
+                    onChange={(e) => { setFilterCity(e.target.value); setPageCatalogue(1); }}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Toutes les villes / Établissements</option>
+                    {availableCities.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+
+                {/* Catégorie / Thématique */}
+                <div>
+                  <select
+                    value={filterCategory}
+                    onChange={(e) => { setFilterCategory(e.target.value); setPageCatalogue(1); }}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Toutes catégories / Thématiques</option>
+                    {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+
+                {/* Statut */}
+                <div>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => { setFilterStatus(e.target.value); setPageCatalogue(1); }}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Tous les statuts</option>
+                    <option value="planifiee">Planifiée / Publiée</option>
+                    <option value="en_cours">En cours</option>
+                    <option value="terminee">Terminée</option>
+                    <option value="annulee">Annulée</option>
+                  </select>
+                </div>
+
+                {/* Date */}
+                <div>
+                  <input
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => { setFilterDate(e.target.value); setPageCatalogue(1); }}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary"
+                  />
+                </div>
+
+                {/* Disponibilité */}
+                <div>
+                  <select
+                    value={filterDispo}
+                    onChange={(e) => { setFilterDispo(e.target.value); setPageCatalogue(1); }}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-outline-variant/30 bg-surface-container-low text-primary focus:outline-none focus:border-secondary font-medium"
+                  >
+                    <option value="all">Toutes disponibilités</option>
+                    <option value="available_only">Places disponibles uniquement</option>
+                  </select>
+                </div>
+              </div>
+
+              {(filterSearch || filterCity !== 'all' || filterCategory !== 'all' || filterStatus !== 'all' || filterDate || filterDispo !== 'all') && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={() => {
+                      setFilterSearch('');
+                      setFilterCity('all');
+                      setFilterCategory('all');
+                      setFilterStatus('all');
+                      setFilterDate('');
+                      setFilterDispo('all');
+                      setPageCatalogue(1);
+                    }}
+                    className="text-[11px] text-secondary font-bold hover:underline flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">refresh</span>
+                    Réinitialiser les filtres
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {filteredFormations.length === 0 ? (
               <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-10 text-center shadow-sm">
-                <span className="material-symbols-outlined text-on-surface-variant/30 block mb-3" style={{ fontSize: 48 }}>calendar_today</span>
-                <p className="font-semibold text-primary mb-1">Aucune session planifiée</p>
-                <p className="text-sm text-on-surface-variant">Revenez bientôt pour découvrir nos prochains ateliers !</p>
+                <span className="material-symbols-outlined text-on-surface-variant/30 block mb-3" style={{ fontSize: 48 }}>search_off</span>
+                <p className="font-semibold text-primary mb-1">Aucune formation ne correspond à vos filtres</p>
+                <p className="text-sm text-on-surface-variant">Modifiez vos critères ou réinitialisez les filtres.</p>
               </div>
             ) : (
               <>
@@ -238,7 +339,7 @@ export default function MemberFormations({ session }) {
                               {f.espaces?.nom || 'Atelier'}
                             </span>
                             <span className={`text-xs font-bold shrink-0 ${f.prix_inscription > 0 ? 'text-primary' : 'text-emerald-600'}`}>
-                              {f.prix_inscription > 0 ? `${f.prix_inscription.toFixed(2)} DT` : 'Gratuit'}
+                              {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
                             </span>
                           </div>
 
@@ -288,12 +389,12 @@ export default function MemberFormations({ session }) {
                             ) : (
                               <button
                                 onClick={() => handleOpenRegister(f)}
-                                disabled={isSaving || isFull}
+                                disabled={isSaving}
                                 className="flex-1 py-2 bg-secondary text-white font-semibold rounded-xl text-xs hover:bg-secondary/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
                               >
                                 {isSaving
                                   ? <span className="animate-spin h-3 w-3 border border-white border-t-transparent rounded-full" />
-                                  : isFull ? 'Complet' : "S'inscrire"
+                                  : isFull ? "Liste d'attente" : "S'inscrire"
                                 }
                               </button>
                             )}
@@ -367,9 +468,8 @@ export default function MemberFormations({ session }) {
                         {item.prix_inscription > 0 ? (
                           <div className="flex items-center gap-1">
                             <span className="text-[10px] font-semibold text-on-surface-variant">Mode :</span>
-                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${isOnSite ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
-                              }`}>
-                              {isOnSite ? '💵 Sur place' : '💳 En ligne'}
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200">
+                              Sur place
                             </span>
                           </div>
                         ) : (
@@ -382,21 +482,11 @@ export default function MemberFormations({ session }) {
                             my.statut_paiement === 'gratuit' ? 'bg-gray-100 text-gray-600' :
                               'bg-amber-50 text-amber-700 border border-amber-200'
                           }`}>
-                          {my.statut_paiement === 'paye' ? 'Payé ✓' : my.statut_paiement === 'gratuit' ? 'Gratuit' : (isOnSite ? 'À régler sur place' : 'Paiement en attente')}
+                          {my.statut_paiement === 'paye' ? 'Payé' : my.statut_paiement === 'gratuit' ? 'Gratuit' : 'À régler sur place'}
                         </span>
                       </div>
 
                       <div className="flex gap-2 pt-2 border-t border-outline-variant/10">
-                        {my.statut_paiement === 'en_attente' && (
-                          <button
-                            onClick={() => handlePayFormation(item.id, my.paiement_id)}
-                            disabled={saving === item.id}
-                            className="flex-1 py-1.5 bg-secondary text-white font-semibold rounded-lg text-[10px] hover:bg-secondary/90 transition flex items-center justify-center gap-1 disabled:opacity-60"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>credit_card</span>
-                            {saving === item.id ? 'Chargement...' : 'Régler en ligne'}
-                          </button>
-                        )}
                         <button
                           onClick={() => handleUnregister(item.id)}
                           disabled={isSaving}
@@ -457,64 +547,13 @@ export default function MemberFormations({ session }) {
                   </p>
                 </div>
                 <span className="text-2xl font-sora font-bold text-secondary">
-                  {parseFloat(paymentModalFormation.prix_inscription || 0).toFixed(2)} DT
+                  {parseFloat(paymentModalFormation.prix_inscription || 0).toFixed(3)} DT
                 </span>
               </div>
 
-              {/* Sélection du Mode de Paiement */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-2.5">
-                  Choisissez votre mode de règlement
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Option Sur place */}
-                  <div
-                    onClick={() => setSelectedPaymentMode('sur_place')}
-                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 relative ${selectedPaymentMode === 'sur_place'
-                        ? 'border-secondary bg-secondary/[0.04] shadow-sm'
-                        : 'border-outline-variant/30 hover:border-outline-variant/60 bg-white'
-                      }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`material-symbols-outlined text-xl ${selectedPaymentMode === 'sur_place' ? 'text-secondary' : 'text-on-surface-variant'}`}>
-                        storefront
-                      </span>
-                      <span className="font-sora font-bold text-sm text-primary">Sur place</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                      Réglez à l'accueil du coworking lors de votre arrivée le jour de la formation.
-                    </p>
-                    {selectedPaymentMode === 'sur_place' && (
-                      <span className="absolute top-3 right-3 material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>
-                        check_circle
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Option En ligne */}
-                  <div
-                    onClick={() => setSelectedPaymentMode('online')}
-                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 relative ${selectedPaymentMode === 'online'
-                        ? 'border-secondary bg-secondary/[0.04] shadow-sm'
-                        : 'border-outline-variant/30 hover:border-outline-variant/60 bg-white'
-                      }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`material-symbols-outlined text-xl ${selectedPaymentMode === 'online' ? 'text-secondary' : 'text-on-surface-variant'}`}>
-                        credit_card
-                      </span>
-                      <span className="font-sora font-bold text-sm text-primary">En ligne</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                      Paiement sécurisé par carte bancaire via Stripe avec confirmation immédiate.
-                    </p>
-                    {selectedPaymentMode === 'online' && (
-                      <span className="absolute top-3 right-3 material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>
-                        check_circle
-                      </span>
-                    )}
-                  </div>
-                </div>
+              {/* Mode de règlement CDC v3.0 D1 : 100 % sur place */}
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 leading-relaxed">
+                <strong>Règlement à effectuer sur place</strong> (espèces, chèque ou virement) lors de votre arrivée à l'établissement. Un reçu PDF numéroté vous sera remis après encaissement.
               </div>
             </div>
 
@@ -527,7 +566,7 @@ export default function MemberFormations({ session }) {
                 Annuler
               </button>
               <button
-                onClick={() => executeRegister(paymentModalFormation.id, selectedPaymentMode)}
+                onClick={() => executeRegister(paymentModalFormation.id, 'sur_place')}
                 disabled={saving === paymentModalFormation.id}
                 className="flex-1 py-3 bg-secondary text-white font-semibold rounded-2xl text-xs hover:bg-secondary/90 transition shadow-md flex items-center justify-center gap-1.5 disabled:opacity-60"
               >
@@ -536,7 +575,7 @@ export default function MemberFormations({ session }) {
                 ) : (
                   <>
                     <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
-                    {selectedPaymentMode === 'online' ? 'Valider & Payer en ligne' : 'Confirmer l\'inscription'}
+                    Confirmer l'inscription
                   </>
                 )}
               </button>

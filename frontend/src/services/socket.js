@@ -1,13 +1,30 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const EXPLICIT_SOCKET_URL = import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || '';
+const IS_LOCALHOST = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const SOCKET_ENABLED = Boolean(import.meta.env.VITE_SOCKET_URL) || (IS_LOCALHOST && (!EXPLICIT_SOCKET_URL || EXPLICIT_SOCKET_URL.includes('localhost')));
+const SOCKET_URL = EXPLICIT_SOCKET_URL || (IS_LOCALHOST ? 'http://localhost:5000' : '');
+
+const NOOP_SOCKET = {
+  connected: false,
+  connect: () => NOOP_SOCKET,
+  disconnect: () => {},
+  emit: () => {},
+  on: () => {},
+  off: () => {},
+};
 
 let socket = null;
 
 export function getSocket() {
+  if (!SOCKET_ENABLED || !SOCKET_URL) {
+    return NOOP_SOCKET;
+  }
   if (!socket) {
     socket = io(SOCKET_URL, {
       autoConnect: false,
+      reconnectionAttempts: 2,
+      reconnectionDelay: 2000,
       transports: ['websocket', 'polling'],
     });
   }
@@ -16,6 +33,7 @@ export function getSocket() {
 
 export function connectSocket() {
   const s = getSocket();
+  if (s === NOOP_SOCKET) return s;
   if (!s.connected) {
     s.connect();
   }

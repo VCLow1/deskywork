@@ -3,6 +3,8 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { guestApi } from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
 import { useTheme } from '../context/ThemeContext';
+import { formatDT } from '../utils/format';
+import { PARTNER_THIRTY_THREE_BASE64, PARTNER_NERO_BASE64 } from '../assets/partners/partnerLogos';
 
 /* ─── Charte DeskyWork dynamique ─── */
 function getThemeColors(dark) {
@@ -25,9 +27,56 @@ const SPACE_LABELS = {
   meeting_room: 'Salle de réunion',
   training_room: 'Salle de formation',
   event_space: 'Espace événementiel',
+  hot_desk: 'Poste nomade (Hot Desk)',
+  dedicated_desk: 'Poste fixe (Dedicated Desk)',
 };
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&h=600&fit=crop';
+
+const FALLBACK_PARTNER_DETAILS = {
+  'nero-coworking': {
+    id: 'nero-coworking',
+    nom: 'Nero Coworking Space',
+    slug: 'nero-coworking',
+    ville: 'Tunis',
+    pays: 'Tunisie',
+    adresse: 'Avenue Hédi Nouira, Ennasr 2, Tunis',
+    telephone: '+216 71 888 999',
+    email: 'contact@nerocoworking.tn',
+    site_web: 'https://nerocoworking.tn',
+    description: 'Un espace de coworking moderne et calme, pensé pour les freelances, startups et équipes en quête de productivité. Situé au cœur d’Ennasr 2, Nero Coworking offre un environnement stimulant doté de postes nomades, bureaux privatifs insonorisés et salles de réunion équipées de technologies audiovisuelles.',
+    cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=1200&h=600&fit=crop',
+    logo_url: PARTNER_NERO_BASE64,
+    statut: 'actif',
+    espaces: [
+      { id: 'nero-os-1', nom: 'Open Space Nomade', type: 'open_space', capacite: 25, tarif_heure: 5.000, tarif_journee: 25.000, tarif_mois: 250.000, photos: ['https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Climatisation', 'Café / Thé', 'Imprimante'] },
+      { id: 'nero-bp-1', nom: 'Bureau Privé 4 Personnes', type: 'private_office', capacite: 4, tarif_heure: 20.000, tarif_journee: 90.000, tarif_mois: 950.000, photos: ['https://images.unsplash.com/photo-1497215728101-856f4ea42174?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Climatisation', 'Accès 24/7', 'Tableau blanc'] },
+      { id: 'nero-sr-1', nom: 'Salle de Réunion Prestige', type: 'meeting_room', capacite: 10, tarif_heure: 30.000, tarif_journee: 150.000, tarif_mois: null, photos: ['https://images.unsplash.com/photo-1517502884422-41eaead166d4?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Projecteur', 'Visioconférence', 'Tableau blanc', 'Climatisation'] },
+    ],
+    domiciliation: { actif: true, tarif_mensuel: 75.000, description: 'Adresse fiscale et commerciale au centre d\'Ennasr 2 avec gestion du courrier.' }
+  },
+  'thirty-three-space': {
+    id: 'thirty-three-space',
+    nom: 'Thirty Three Space',
+    slug: 'thirty-three-space',
+    ville: 'Tunis',
+    pays: 'Tunisie',
+    adresse: 'Les Berges du Lac 2, Tunis',
+    telephone: '+216 71 999 333',
+    email: 'contact@thirtythreespace.com',
+    site_web: 'https://thirtythreespace.com/',
+    description: 'Un lieu collaboratif et chaleureux conçu pour le coworking quotidien, les ateliers et les sessions de formation. Au bord du lac, profitez d’espaces baignés de lumière naturelle, d’un coin café convivial et d’une infrastructure réseau ultra haut-débit.',
+    cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&h=600&fit=crop',
+    logo_url: PARTNER_THIRTY_THREE_BASE64,
+    statut: 'actif',
+    espaces: [
+      { id: 'tt-os-1', nom: 'Espace Collaboratif Lac', type: 'open_space', capacite: 30, tarif_heure: 6.000, tarif_journee: 28.000, tarif_mois: 280.000, photos: ['https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Café / Thé', 'Climatisation', 'Parking'] },
+      { id: 'tt-sf-1', nom: 'Salle de Formation & Workshop', type: 'training_room', capacite: 20, tarif_heure: 35.000, tarif_journee: 180.000, tarif_mois: null, photos: ['https://images.unsplash.com/photo-1524178232363-1fb2b075b655?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Projecteur', 'Tableau blanc', 'Climatisation', 'Visioconférence'] },
+      { id: 'tt-ev-1', nom: 'Espace Événementiel', type: 'event_space', capacite: 45, tarif_heure: 70.000, tarif_journee: 350.000, tarif_mois: null, photos: ['https://images.unsplash.com/photo-1511578314322-379afb476865?w=800&h=500&fit=crop'], equipements: ['Wi-Fi', 'Projecteur', 'Sonorisation', 'Climatisation', 'Parking'] },
+    ],
+    domiciliation: { actif: true, tarif_mensuel: 85.000, description: 'Domiciliation juridique prestigieuse aux Berges du Lac 2.' }
+  }
+};
 
 function mapsLink(coworking) {
   if (coworking.latitude && coworking.longitude) {
@@ -50,11 +99,26 @@ export default function CoworkingDetail() {
   useEffect(() => {
     async function load() {
       try {
+        if (FALLBACK_PARTNER_DETAILS[id]) {
+          try {
+            const res = await guestApi.getCoworking(id);
+            if (res?.coworking) {
+              setCoworking(res.coworking);
+              return;
+            }
+          } catch (_) {}
+          setCoworking(FALLBACK_PARTNER_DETAILS[id]);
+          return;
+        }
         const res = await guestApi.getCoworking(id);
         if (res.error || !res.coworking) throw new Error(res.error || 'Coworking introuvable.');
         setCoworking(res.coworking);
       } catch (e) {
-        setError(e.message);
+        if (FALLBACK_PARTNER_DETAILS[id]) {
+          setCoworking(FALLBACK_PARTNER_DETAILS[id]);
+        } else {
+          setError(e.message);
+        }
       } finally {
         setLoading(false);
       }
@@ -119,6 +183,29 @@ export default function CoworkingDetail() {
 
       <div style={{ maxWidth: 1240, margin: '0 auto', padding: '2rem 24px 0' }}>
 
+        {c.is_preview && (
+          <div style={{
+            marginBottom: 24,
+            padding: '12px 18px',
+            borderRadius: 14,
+            background: dark ? 'rgba(245, 158, 11, 0.14)' : '#fffbeb',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            color: dark ? '#fde68a' : '#92400e',
+            fontSize: '.9rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 10,
+          }}>
+            <span>Mode aperçu gérant : cet établissement ({c.preview_statut || 'en attente'}) n'est pas encore visible au public.</span>
+            <Link to="/admin/dashboard" style={{ color: '#f95d00', fontWeight: 800, textDecoration: 'none' }}>
+              ← Retour au tableau de bord
+            </Link>
+          </div>
+        )}
+
         {/* ── INFOS / COORDONNÉES ── */}
         <div className="row g-4 mb-5">
           <div className="col-lg-7">
@@ -155,6 +242,84 @@ export default function CoworkingDetail() {
           </div>
         </div>
 
+        {/* ── ENCART DOMICILIATION D'ENTREPRISE (CDC v3.0) ── */}
+        {c.domiciliation && (
+          <div style={{
+            background: dark ? 'linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.95))' : 'linear-gradient(135deg, #ffffff, #fff7ed)',
+            borderRadius: 22,
+            border: `1.5px solid ${dark ? 'rgba(249,93,0,0.35)' : '#fed7aa'}`,
+            padding: '1.8rem',
+            marginBottom: '2.5rem',
+            boxShadow: dark ? '0 10px 30px rgba(0,0,0,0.3)' : '0 10px 30px rgba(249,93,0,0.08)',
+          }}>
+            <div className="d-flex align-items-start justify-content-between flex-wrap gap-3">
+              <div style={{ maxWidth: 720 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{
+                    background: 'linear-gradient(135deg, #f95d00, #ea580c)',
+                    color: '#ffffff',
+                    padding: '4px 12px',
+                    borderRadius: 999,
+                    fontSize: '.75rem',
+                    fontWeight: 800,
+                    letterSpacing: '.04em',
+                    textTransform: 'uppercase',
+                  }}>
+                    🏢 Domiciliation d'entreprise disponible
+                  </span>
+                  {c.domiciliation.tarif_mensuel > 0 && (
+                    <span style={{
+                      fontFamily: 'Sora',
+                      fontWeight: 800,
+                      color: EC.cobalt,
+                      fontSize: '1.05rem',
+                    }}>
+                      à partir de {Number(c.domiciliation.tarif_mensuel).toFixed(3)} DT / mois
+                    </span>
+                  )}
+                </div>
+                <h3 style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.navy, fontSize: '1.25rem', margin: '4px 0 8px' }}>
+                  Établissez le siège social de votre entreprise chez {c.nom}
+                </h3>
+                <p style={{ color: EC.muted, fontSize: '.92rem', lineHeight: 1.7, margin: 0 }}>
+                  {c.domiciliation.description || 'Adresse commerciale et fiscale officielle, gestion du courrier et attestations pour votre immatriculation au Registre National des Entreprises (RNE).'}
+                </p>
+                {c.domiciliation.tarif_annuel > 0 && (
+                  <p style={{ color: EC.muted, fontSize: '.82rem', marginTop: 8, marginBottom: 0, fontWeight: 600 }}>
+                    💡 Formule annuelle avec remise : <strong style={{ color: EC.navy }}>{Number(c.domiciliation.tarif_annuel).toFixed(3)} DT / an</strong>
+                  </p>
+                )}
+              </div>
+              <div className="d-flex flex-column gap-2" style={{ minWidth: 200 }}>
+                <a
+                  href={`mailto:${c.email || 'contact@deskywork.com'}?subject=Demande de domiciliation - ${encodeURIComponent(c.nom)}&body=Bonjour, je souhaite souscrire au service de domiciliation d'entreprise auprès de votre établissement.`}
+                  style={{
+                    background: 'linear-gradient(135deg, #100f0d, #291a0c)',
+                    color: '#ffffff',
+                    padding: '12px 20px',
+                    borderRadius: 12,
+                    fontWeight: 800,
+                    textDecoration: 'none',
+                    fontSize: '.88rem',
+                    textAlign: 'center',
+                    boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>mail</span>
+                  Demander ma domiciliation
+                </a>
+                <span style={{ fontSize: '.75rem', color: EC.muted, textAlign: 'center' }}>
+                  Contrat &amp; règlement sécurisés sur place
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── ESPACES ── */}
         <div className="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
           <div>
@@ -164,11 +329,48 @@ export default function CoworkingDetail() {
             </p>
           </div>
           <Link to={`/book-guest?tenantId=${c.id}`}
+            onClick={() => {
+              fetch(`${import.meta.env.VITE_API_URL || ''}/api/public/coworkings/${c.id}/track`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'click' }),
+              }).catch(() => {});
+            }}
             style={{ background: 'linear-gradient(135deg, #f95d00 0%, #ff8a3d 100%)', color: '#ffffff', padding: '12px 22px', borderRadius: 12, fontWeight: 800, textDecoration: 'none', fontSize: '.9rem', boxShadow: '0 12px 22px rgba(249,93,0,0.25)' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 17, verticalAlign: '-3px', marginRight: 6 }}>event_available</span>
             Réserver en tant qu'invité
           </Link>
         </div>
+
+        {/* Équipements & Galerie Marketplace (CDC v3.0) */}
+        {(Array.isArray(c.equipements) && c.equipements.length > 0) || (Array.isArray(c.gallery_photos) && c.gallery_photos.length > 0) ? (
+          <div className="mb-5">
+            {Array.isArray(c.equipements) && c.equipements.length > 0 && (
+              <div className="mb-4">
+                <h3 style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.navy, fontSize: '1.15rem', marginBottom: 10 }}>Équipements & services inclus</h3>
+                <div className="d-flex flex-wrap gap-2">
+                  {c.equipements.map((eq, idx) => (
+                    <span key={idx} style={{ background: EC.soft, color: EC.navy, border: `1px solid ${EC.outline}`, padding: '6px 12px', borderRadius: 999, fontSize: '.82rem', fontWeight: 600 }}>
+                      ✓ {eq}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Array.isArray(c.gallery_photos) && c.gallery_photos.length > 0 && (
+              <div>
+                <h3 style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.navy, fontSize: '1.15rem', marginBottom: 10 }}>Galerie photos</h3>
+                <div className="row g-3">
+                  {c.gallery_photos.map((url, idx) => (
+                    <div key={idx} className="col-6 col-md-4 col-lg-3">
+                      <img src={url} alt={`${c.nom} ${idx + 1}`} style={{ width: '100%', height: 145, objectFit: 'cover', borderRadius: 16, border: `1px solid ${EC.outline}` }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {!c.espaces || c.espaces.length === 0 ? (
           <div className="text-center" style={{ background: EC.cardBg, border: `1.5px solid ${EC.outline}`, borderRadius: 20, padding: '3rem' }}>
@@ -192,7 +394,7 @@ export default function CoworkingDetail() {
                         </span>
                         {esp.tarif_horaire > 0 && (
                           <span style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.cobalt, fontSize: '1.1rem' }}>
-                            {parseFloat(esp.tarif_horaire).toFixed(2)} DT <span style={{ fontSize: 11, fontWeight: 700, color: EC.muted }}>/ h</span>
+                            {formatDT(esp.tarif_horaire)} <span style={{ fontSize: 11, fontWeight: 700, color: EC.muted }}>/ h</span>
                           </span>
                         )}
                       </div>

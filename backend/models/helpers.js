@@ -275,6 +275,8 @@ async function countOverlappingFormations(espaceId, dateDebut, dateFin, excludeF
   return count || 0;
 }
 
+const SHARED_SPACE_TYPES = ['open_space', 'hot_desk'];
+
 const FORMATION_ROOM_UNAVAILABLE =
   "Cette salle n'est pas disponible à cette date. Changez la date de la formation ou choisissez une autre salle.";
 
@@ -289,14 +291,52 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
     throw new Error('Espace introuvable.');
   }
 
-  const overlappingCount = await countOverlappingBookings(espaceId, dateDebut, dateFin, excludeId);
+  let overlappingCount = await countOverlappingBookings(espaceId, dateDebut, dateFin, excludeId);
+
+  // CDC v3.0 D3 : vérifier si une session de travail en cours/en dépassement occupe
+  // encore cet espace sans avoir été libérée manuellement (« C'est bon, libérée »).
+  try {
+    const reqStartMs = new Date(dateDebut).getTime();
+    const nowMs = Date.now();
+    // Si la réservation demandée commence aujourd'hui ou dans les 2h à venir
+    if (reqStartMs <= nowMs + 2 * 3600 * 1000) {
+      const { data: openRes } = await supabaseAdmin
+        .from('reservations')
+        .select('id')
+        .eq('espace_id', espaceId)
+        .in('statut', ['confirmed', 'pending'])
+        .lte('date_debut', dateFin);
+      const resIds = (openRes || []).map((r) => r.id).filter((id) => id !== excludeId);
+      if (resIds.length > 0) {
+        const { count: activeSessCount } = await supabaseAdmin
+          .from('sessions')
+          .select('id', { count: 'exact', head: true })
+          .in('reservation_id', resIds)
+          .in('statut', ['active', 'overtime'])
+          .is('check_out', null);
+        if ((activeSessCount || 0) > 0 && exclusive) {
+          return {
+            isAvailable: false,
+            shared: false,
+            spaceType: espace.type,
+            spaceName: espace.nom,
+            capacity: Math.max(1, parseInt(espace.capacite, 10) || 1),
+            overlappingCount: Math.max(1, overlappingCount),
+            remaining: 0,
+            conflictMessage: "Ressource encore occupée : la session de travail en cours n'a pas encore été libérée manuellement par l'accueil.",
+          };
+        }
+      }
+    }
+  } catch (_) {}
   const overlappingFormations = await countOverlappingFormations(
     espaceId,
     dateDebut,
     dateFin,
     options.excludeFormationId || null
   );
-  const isOpenSpace = espace.type === 'open_space';
+  // CDC v3.0 : Open Space et Hot Desk = postes partagés (capacité max) ; les autres types sont exclusifs.
+  const isOpenSpace = SHARED_SPACE_TYPES.includes(espace.type);
   const exclusive = options.exclusive === true || !isOpenSpace;
   const capacity = Math.max(1, parseInt(espace.capacite, 10) || 1);
 
@@ -311,7 +351,7 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
   } else if (exclusive) {
     remaining = overlappingCount > 0 ? 0 : 1;
     isAvailable = overlappingCount === 0;
-    conflictMessage = isAvailable ? null : FORMATION_ROOM_UNAVAILABLE;
+    conflictMessage = isAvailable ? null : 'Cet espace est déjà réservé sur ce créneau. Veuillez choisir un autre horaire.';
   } else {
     remaining = Math.max(0, capacity - overlappingCount);
     isAvailable = overlappingCount < capacity;
@@ -332,7 +372,7 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
   };
 }
 
-async function createReservationWithPayment({ userId, espaceId, dateDebut, dateFin, tenantId, mode = 'online' }) {
+async function createReservationWithPayment({ userId, espaceId, dateDebut, dateFin, tenantId, mode = 'on_site' }) {
   const { data: espData } = await supabaseAdmin
     .from('espaces')
     .select('tarif_horaire, tenant_id')
@@ -341,10 +381,11 @@ async function createReservationWithPayment({ userId, espaceId, dateDebut, dateF
 
   const hours = Math.max(1, (new Date(dateFin) - new Date(dateDebut)) / (1000 * 60 * 60));
   const tarif = parseFloat(espData?.tarif_horaire) || 0;
-  const computedMontant = parseFloat((hours * tarif).toFixed(2));
+  const computedMontant = parseFloat((hours * tarif).toFixed(3));
   const bookingTenantId = tenantId || espData?.tenant_id || null;
 
-  let dbMode = 'online';
+  // CDC v3.0 D1 : règlement 100 % sur place — plus de mode « online ».
+  let dbMode = 'on_site';
   if (mode === 'sur_place' || mode === 'on_site') dbMode = 'on_site';
   else if (mode === 'phone') dbMode = 'phone';
 
@@ -366,7 +407,7 @@ async function createReservationWithPayment({ userId, espaceId, dateDebut, dateF
 
   let payment = null;
   if (computedMontant > 0) {
-    const paymentMode = dbMode === 'online' ? 'online' : 'cash';
+    const paymentMode = 'cash'; // règlement sur place (espèces, chèque ou virement saisi par le staff)
     const { data: paymentRow, error: payErr } = await supabaseAdmin
       .from('paiements')
       .insert({
@@ -383,6 +424,42 @@ async function createReservationWithPayment({ userId, espaceId, dateDebut, dateF
   }
 
   return { reservation, payment, tenantId: bookingTenantId };
+}
+
+
+/**
+ * Insertion tolérante au schéma (CDC v3.0 — résilience multi-déploiement).
+ * Si PostgREST/Postgres signale une colonne inconnue (PGRST204 / 42703), la colonne
+ * est retirée du payload (ou remplacée par son alias, ex. user_id → membre_id)
+ * puis l'insertion est retentée (max 8 tentatives).
+ *
+ * @param {object} client   Client Supabase (admin ou utilisateur)
+ * @param {string} table    Nom de la table
+ * @param {object} payload  Ligne à insérer
+ * @param {object} [opts]
+ * @param {Record<string,string>} [opts.aliases] colonne absente → colonne de remplacement
+ * @param {string} [opts.select='*'] projection retournée
+ * @returns {Promise<{data:any, error:any, dropped:string[]}>}
+ */
+async function insertWithColumnFallback(client, table, payload, opts = {}) {
+  const { aliases = {}, select = '*' } = opts;
+  const row = { ...payload };
+  const dropped = [];
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data, error } = await client.from(table).insert(row).select(select).single();
+    if (!error) return { data, error: null, dropped };
+    const msg = String(error.message || '');
+    const m = msg.match(/Could not find the '([^']+)' column/i)
+      || msg.match(/column "?([a-z0-9_]+)"? (?:of relation "[^"]+" )?does not exist/i);
+    if (!m || !(m[1] in row)) return { data: null, error, dropped };
+    const col = m[1];
+    const value = row[col];
+    delete row[col];
+    dropped.push(col);
+    const alias = aliases[col];
+    if (alias && !(alias in row)) row[alias] = value;
+  }
+  return { data: null, error: new Error('Insertion impossible : schéma incompatible.'), dropped };
 }
 
 async function hasBookingOverlap(espaceId, dateDebut, dateFin, excludeId = null) {
@@ -411,6 +488,7 @@ module.exports = {
   ensureQrToken,
   computeRemainingMinutes,
   hasBookingOverlap,
+  insertWithColumnFallback,
   getBookingAvailability,
   countOverlappingBookings,
   countOverlappingFormations,

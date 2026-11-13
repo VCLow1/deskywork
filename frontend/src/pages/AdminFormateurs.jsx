@@ -276,8 +276,8 @@ export default function AdminFormateurs({ session }) {
           {[
             { label: 'Total formateurs', value: formateurs.length, icon: 'group', color: 'text-slate-800 bg-slate-100' },
             { label: 'Comptes actifs', value: actifs, icon: 'check_circle', color: 'text-emerald-700 bg-emerald-50' },
-            { label: 'Honoraires en att.', value: `${pending.toFixed(0)} DT`, icon: 'pending_actions', color: 'text-amber-700 bg-amber-50' },
-            { label: 'Honoraires versés', value: `${paid.toFixed(0)} DT`, icon: 'payments', color: 'text-slate-800 bg-slate-100' },
+            { label: 'Payouts en attente', value: `${pending.toFixed(3)} DT`, icon: 'pending_actions', color: 'text-amber-700 bg-amber-50' },
+            { label: 'Payouts payés', value: `${paid.toFixed(3)} DT`, icon: 'payments', color: 'text-slate-800 bg-slate-100' },
           ].map(({ label, value, icon, color }) => (
             <div key={label} className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-outline-variant/20 shadow-sm flex items-center gap-3">
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${color}`}>
@@ -381,9 +381,15 @@ export default function AdminFormateurs({ session }) {
                           </td>
 
                           <td className="p-4">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>{t.statut_compte === 'actif' ? 'check_circle' : 'block'}</span>
-                              {t.statut_compte === 'actif' ? 'Actif' : 'Suspendu'}
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                              t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800'
+                                : t.statut_compte === 'en_attente' ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-red-100 text-red-800'
+                            }`}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>
+                                {t.statut_compte === 'actif' ? 'check_circle' : t.statut_compte === 'en_attente' ? 'hourglass_top' : 'block'}
+                              </span>
+                              {t.statut_compte === 'actif' ? 'Validé' : t.statut_compte === 'en_attente' ? 'En attente (Pending)' : 'Suspendu'}
                             </span>
                           </td>
 
@@ -459,7 +465,7 @@ export default function AdminFormateurs({ session }) {
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant mb-1">{r.formations?.titre || 'Honoraires'}</p>
-                      <p className="font-bold text-emerald-700 text-lg mb-2">{parseFloat(r.montant).toFixed(2)} DT</p>
+                      <p className="font-bold text-emerald-700 text-lg mb-2">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
                       {r.statut === 'en_attente' && (
                         <button onClick={() => handleMarkPaid(r.id)} className="w-full py-2 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700">
                           Marquer comme payé
@@ -488,7 +494,7 @@ export default function AdminFormateurs({ session }) {
                         <tr key={r.id} className="hover:bg-surface-container-lowest transition-colors group">
                           <td className="p-4 font-semibold text-slate-900">{r.profiles?.prenom} {r.profiles?.nom}</td>
                           <td className="p-4 text-xs text-on-surface-variant">{r.formations?.titre || '—'}</td>
-                          <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant).toFixed(2)} DT</td>
+                          <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</td>
                           <td className="p-4">
                             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold border ${r.statut === 'paye'
                               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -722,7 +728,7 @@ export default function AdminFormateurs({ session }) {
             <div className="space-y-3">
               <div className="flex justify-between items-center p-3 bg-surface-container-low rounded-2xl text-sm">
                 <span className="text-on-surface-variant font-medium">Total cumulé</span>
-                <span className="font-sora font-bold text-primary">{total.toFixed(2)} DT</span>
+                <span className="font-sora font-bold text-primary">{total.toFixed(3)} DT</span>
               </div>
               {myRemu.map(r => (
                 <div key={r.id} className="flex items-center justify-between p-3.5 border border-outline-variant/20 rounded-2xl">
@@ -736,7 +742,7 @@ export default function AdminFormateurs({ session }) {
                     {r.note && <p className="text-xs italic text-on-surface-variant mt-0.5">{r.note}</p>}
                   </div>
                   <div className="text-right ml-4">
-                    <p className="font-bold text-emerald-700">{parseFloat(r.montant).toFixed(2)} DT</p>
+                    <p className="font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
                     <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                       }`}>
                       {r.statut === 'paye' ? 'Payé' : 'En attente'}

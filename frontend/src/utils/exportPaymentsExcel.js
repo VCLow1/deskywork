@@ -4,7 +4,7 @@ const MODE_LABELS = {
   cash: 'Espèces',
   bank_transfer: 'Virement',
   check: 'Chèque',
-  online: 'En ligne',
+  online: 'Sur place',
 };
 
 const STATUT_LABELS = {

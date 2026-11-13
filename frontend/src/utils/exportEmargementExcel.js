@@ -48,7 +48,7 @@ export async function exportEmargementToExcel(formation, emargementData) {
   sheet.mergeCells('A2:F2');
   const subCell = sheet.getCell('A2');
   const dateDebut = formation.date_debut ? new Date(formation.date_debut).toLocaleDateString('fr-FR') : '—';
-  subCell.value = `Session du ${dateDebut} · Lieu: ${formation.espaces?.nom || 'DeskyWork Workspace'}`;
+  subCell.value = `Session de formation du ${dateDebut} · Lieu: ${formation.espaces?.nom || 'DeskyWork Workspace'}`;
   subCell.font = { name: 'Calibri', size: 11, italic: true, color: { argb: 'FFF95D00' } };
   subCell.alignment = { horizontal: 'center', vertical: 'middle' };
   sheet.getRow(2).height = 20;

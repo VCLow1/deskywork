@@ -130,16 +130,16 @@ function NotificationItem({ notification, onClick }) {
               fontWeight: 700,
               padding: '2px 8px',
               borderRadius: 9999,
-              background: notification.canal.includes('WhatsApp') ? 'rgba(37,211,102,0.12)' : 'rgba(249,93,0,0.08)',
-              color: notification.canal.includes('WhatsApp') ? '#15803d' : '#f95d00',
+              background: 'rgba(249,93,0,0.08)',
+              color: '#f95d00',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,
             }}>
               <span className="material-symbols-outlined" style={{ fontSize: 11 }}>
-                {notification.canal.includes('WhatsApp') ? 'chat' : 'mail'}
+                {notification.canal === 'Dashboard' || notification.canal === 'In-App' ? 'notifications' : 'mail'}
               </span>
-              {notification.canal}
+              {notification.canal === 'Dashboard' ? 'In-App' : 'E-mail'}
             </span>
           )}
         </div>

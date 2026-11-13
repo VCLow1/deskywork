@@ -4,9 +4,10 @@ import BrandLogo from './BrandLogo';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../supabaseClient';
 import { joinUser, onNotificationCreated, onNotificationChanged } from '../../services/socket';
-import { memberPortalApi } from '../../services/api';
+import { memberPortalApi, tenantAdminApi } from '../../services/api';
 import {
   ADMIN_NAV,
+  getAdminNav,
   STAFF_NAV,
   MEMBER_NAV,
   FORMATEUR_NAV,
@@ -18,6 +19,7 @@ import {
 } from '../../utils/roles';
 
 function getProfilePath(role) {
+  if (role === 'super_admin') return '/super-admin/dashboard';
   if (role === 'member') return '/dashboard/profile';
   if (role === 'formateur') return '/trainer/profile';
   if (isAdminRole(role)) return '/admin/profile-coworking';
@@ -29,11 +31,17 @@ const PAGE_TITLES = {
   '/book/step1': 'Réserver un espace',
   '/book/step2': 'Réserver un espace',
   '/book/step3': 'Réserver un espace',
-  '/admin/profile-coworking': 'Profil du Coworking',
+  '/admin/profile-coworking': 'Profil & Activité',
   '/admin/formations': 'Formations',
   '/admin/formateurs': 'Formateurs',
   '/admin/onboarding': 'Configuration initiale',
   '/admin/notifications': 'Notifications',
+  '/admin/notifications-support': 'Notifications & Support',
+  '/admin/clients': 'Membres & Clients',
+  '/admin/team': 'Équipe (Staff)',
+  '/admin/subscription': 'Mon Abonnement',
+  '/admin/rapports': 'Rapports',
+  '/admin/statistiques': 'Statistiques Marketplace',
   '/trainer-dashboard': 'Tableau de bord',
   '/trainer/notifications': 'Notifications',
   '/member/profile': 'Mon Profil',
@@ -92,20 +100,24 @@ function getNotificationTarget(type, role) {
     return role === 'super_admin' ? '/super-admin/users' : (isAdmin ? '/admin/formateurs' : getHomePath(role));
   }
   if (normalizedType.includes('reservation') || normalizedType.includes('session')) {
-    if (isAdmin || role === 'super_admin') return '/admin/reservations';
+    if (role === 'super_admin') return '/super-admin/reservations';
+    if (isAdmin) return '/admin/reservations';
     return role === 'formateur' ? '/trainer/bookings' : '/dashboard/bookings';
   }
   if (normalizedType.includes('paiement') || normalizedType.includes('payment') || normalizedType.includes('facture')) {
-    if (isAdmin || role === 'super_admin') return '/admin/payments';
+    if (role === 'super_admin') return '/super-admin/payments';
+    if (isAdmin) return '/admin/payments';
     return role === 'formateur' ? '/trainer/payments' : '/member/payments';
   }
   if (normalizedType.includes('message')) {
-    return isAdmin || role === 'super_admin'
+    if (role === 'super_admin') return '/super-admin/contacts';
+    return isAdmin
       ? '/admin/messages'
       : role === 'formateur' ? '/trainer/messages' : '/dashboard/messages';
   }
   if (normalizedType.includes('formation') || normalizedType.includes('inscription')) {
-    if (isAdmin || role === 'super_admin') return '/admin/formations';
+    if (role === 'super_admin') return '/super-admin/formations';
+    if (isAdmin) return '/admin/formations';
     return role === 'formateur' ? '/trainer/formations' : '/dashboard/formations';
   }
   if (normalizedType.includes('abonnement')) return '/dashboard/abonnement';
@@ -116,6 +128,11 @@ function getNotificationTarget(type, role) {
 const routeChunkPreloaders = {
   '/super-admin/dashboard': () => import('../../pages/SuperAdminDashboard'),
   '/super-admin/tenants': () => import('../../pages/TenantManagement'),
+  '/super-admin/validations': () => import('../../pages/SuperAdminValidation'),
+  '/super-admin/reservations': () => import('../../pages/SuperAdminReservations'),
+  '/super-admin/payments': () => import('../../pages/SuperAdminPayments'),
+  '/super-admin/formations': () => import('../../pages/SuperAdminFormationsList'),
+  '/super-admin/espaces': () => import('../../pages/SuperAdminEspaces'),
   '/super-admin/billing': () => import('../../pages/TenantBilling'),
   '/super-admin/users': () => import('../../pages/SuperAdminUsers'),
   '/super-admin/monitoring': () => import('../../pages/SuperAdminMonitoring'),
@@ -130,6 +147,12 @@ const routeChunkPreloaders = {
   '/admin/messages': () => import('../../pages/AdminMessages'),
   '/admin/agenda': () => import('../../pages/AdminAgenda'),
   '/admin/notifications': () => import('../../pages/AdminNotifications'),
+  '/admin/notifications-support': () => import('../../pages/AdminNotificationsSupport'),
+  '/admin/clients': () => import('../../pages/AdminClients'),
+  '/admin/team': () => import('../../pages/AdminTeam'),
+  '/admin/subscription': () => import('../../pages/AdminSubscription'),
+  '/admin/rapports': () => import('../../pages/AdminReports'),
+  '/admin/statistiques': () => import('../../pages/AdminMarketplaceStats'),
   '/admin/multi-sites': () => import('../../pages/AdminMultiSites'),
   '/admin/profile-coworking': () => import('../../pages/AdminCoworkingProfile'),
   '/dashboard': () => import('../../pages/Dashboard'),
@@ -148,6 +171,8 @@ const routeChunkPreloaders = {
 };
 
 const prefetchedRoutes = new Set();
+let prefetchTimer = null;
+
 function prefetchRoute(to) {
   if (!to || prefetchedRoutes.has(to)) return;
   const loader = routeChunkPreloaders[to];
@@ -157,13 +182,74 @@ function prefetchRoute(to) {
   }
 }
 
+function schedulePrefetch(to) {
+  if (!to || prefetchedRoutes.has(to)) return;
+  if (prefetchTimer) clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => {
+    prefetchTimer = null;
+    prefetchRoute(to);
+  }, 150);
+}
+
+function cancelPrefetch() {
+  if (prefetchTimer) {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = null;
+  }
+}
+
+const PORTAL_META_CACHE_TTL_MS = 30_000;
+const tenantMetaCache = new Map();
+const notificationsCache = new Map();
+
 /* === NavLink Sidebar === */
 function NavLink({ item, isActive, onClick, dark }) {
+  if (item.locked) {
+    return (
+      <div
+        title="Fonctionnalité disponible en Phase 2 / Option"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 14px',
+          borderRadius: 12,
+          fontWeight: 600,
+          fontSize: 13.5,
+          opacity: 0.55,
+          cursor: 'not-allowed',
+          userSelect: 'none',
+          color: dark ? 'rgba(251,255,255,0.55)' : '#6b7280',
+        }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 19, flexShrink: 0 }}>
+          {item.icon}
+        </span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.label}
+        </span>
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: 99,
+            background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.08)',
+            color: dark ? '#cbd5e1' : '#57534e',
+            flexShrink: 0,
+          }}
+        >
+          {item.badge || 'Phase 2'}
+        </span>
+      </div>
+    );
+  }
+
   const itemColor = isActive ? '#f95d00' : (dark ? '#fbffff' : '#100f0d');
   const translatedLabel = item.label;
 
   const handleMouseEnter = (e) => {
-    prefetchRoute(item.to);
+    schedulePrefetch(item.to);
     if (!isActive) {
       e.currentTarget.style.background = dark ? 'rgba(249,93,0,0.10)' : 'rgba(249,93,0,0.06)';
       e.currentTarget.style.color = '#f95d00';
@@ -177,7 +263,6 @@ function NavLink({ item, isActive, onClick, dark }) {
       to={item.to}
       onClick={onClick}
       onMouseEnter={handleMouseEnter}
-      onFocus={() => prefetchRoute(item.to)}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -194,6 +279,7 @@ function NavLink({ item, isActive, onClick, dark }) {
         color: itemColor,
       }}
       onMouseLeave={e => {
+        cancelPrefetch();
         if (!isActive) {
           e.currentTarget.style.background = 'transparent';
           e.currentTarget.style.color = itemColor;
@@ -215,7 +301,23 @@ function NavLink({ item, isActive, onClick, dark }) {
         {item.icon}
       </span>
       <span style={{ flex: 1, color: itemColor }}>{translatedLabel}</span>
-      {isActive && (
+      {item.badge && (
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: 99,
+            background: isActive ? '#f95d00' : 'rgba(249,93,0,0.12)',
+            color: isActive ? '#ffffff' : '#f95d00',
+            flexShrink: 0,
+            textTransform: 'uppercase',
+          }}
+        >
+          {item.badge}
+        </span>
+      )}
+      {isActive && !item.badge && (
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f95d00', flexShrink: 0 }} />
       )}
     </Link>
@@ -238,10 +340,56 @@ export default function PortalLayout({ children, profile, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [tenantLogo, setTenantLogo] = useState(null);
+  const [tenantActivite, setTenantActivite] = useState(() => localStorage.getItem('active_org_activite') || 'mixte');
 
   const dropdownRef = useRef(null);
   const notifRef = useRef(null);
+  const searchRef = useRef(null);
+  const [globalQuery, setGlobalQuery] = useState('');
+  const [globalResults, setGlobalResults] = useState(null);
+  const [globalSearching, setGlobalSearching] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const { dark, toggle } = useTheme();
+
+  // Fermer les résultats de recherche globale au clic extérieur
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  // Recherche globale débouclée (admin / staff)
+  useEffect(() => {
+    const q = globalQuery.trim();
+    if (q.length < 2 || !['admin', 'staff'].includes(profile?.role)) {
+      setGlobalResults(null);
+      setGlobalSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setGlobalSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await tenantAdminApi.globalSearch(q);
+        if (!cancelled) {
+          setGlobalResults(res);
+          setSearchOpen(true);
+        }
+      } catch (_) {
+        if (!cancelled) setGlobalResults({ membres: [], reservations: [], espaces: [] });
+      } finally {
+        if (!cancelled) setGlobalSearching(false);
+      }
+    }, 260);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [globalQuery, profile?.role]);
 
   // Fermer le menu mobile lors d'un changement d'URL
   useEffect(() => {
@@ -251,56 +399,100 @@ export default function PortalLayout({ children, profile, onLogout }) {
   const initials = `${profile?.prenom?.[0] || ''}${profile?.nom?.[0] || ''}`.toUpperCase() || 'U';
 
 
-  // Chargement du logo tenant fallback
+  // Chargement du logo tenant fallback (déclenché uniquement quand tenant_id change, avec cache 30s)
+  const loadedTenantRef = useRef(null);
   useEffect(() => {
+    const tenantId = profile?.tenant_id;
+    if (!tenantId || loadedTenantRef.current === tenantId) return;
+    const cached = tenantMetaCache.get(tenantId);
+    if (cached && cached.expiresAt > Date.now()) {
+      loadedTenantRef.current = tenantId;
+      if (cached.logoUrl && !profile?.photo_url && !profile?.avatar_url) {
+        setTenantLogo(cached.logoUrl);
+      }
+      if (cached.activite) {
+        setTenantActivite(cached.activite);
+        localStorage.setItem('active_org_activite', cached.activite);
+      }
+      return;
+    }
+
+    let cancelled = false;
     async function loadTenantLogo() {
-      if (profile?.tenant_id && !profile?.photo_url && !profile?.avatar_url) {
-        try {
-          const { data: tenantData } = await supabase
-            .from('tenants')
-            .select('logo_url')
-            .eq('id', profile.tenant_id)
-            .single();
-          if (tenantData?.logo_url) {
-            setTenantLogo(tenantData.logo_url);
-          }
-        } catch (e) {
-          // silencieux
+      try {
+        const { data: tenantData } = await supabase
+          .from('tenants')
+          .select('logo_url, settings')
+          .eq('id', tenantId)
+          .single();
+        if (cancelled) return;
+        loadedTenantRef.current = tenantId;
+        const logoUrl = tenantData?.logo_url || null;
+        const activite = tenantData?.settings?.activite || null;
+        tenantMetaCache.set(tenantId, {
+          logoUrl,
+          activite,
+          expiresAt: Date.now() + PORTAL_META_CACHE_TTL_MS,
+        });
+        if (logoUrl && !profile?.photo_url && !profile?.avatar_url) {
+          setTenantLogo(logoUrl);
         }
+        if (activite) {
+          setTenantActivite(activite);
+          localStorage.setItem('active_org_activite', activite);
+        }
+      } catch (e) {
+        // silencieux
       }
     }
     loadTenantLogo();
-  }, [profile]);
+    return () => { cancelled = true; };
+  }, [profile?.id, profile?.tenant_id, profile?.photo_url, profile?.avatar_url]);
 
   // Chargement + Écoute Temps Réel des Notifications
   useEffect(() => {
     if (!profile?.id) return;
+    let cancelled = false;
 
-    async function fetchNotifications() {
+    async function fetchNotifications(force = false) {
+      const cached = notificationsCache.get(profile.id);
+      if (!force && cached && cached.expiresAt > Date.now()) {
+        setNotifications(cached.notifications);
+        setUnreadCount(cached.unreadCount);
+        return;
+      }
       try {
         const response = await memberPortalApi.getNotifications({ page: 1, limit: 20 });
+        if (cancelled) return;
         const data = response.data?.notifications ?? response.notifications ?? [];
+        const count = response.data?.unreadCount ?? response.unreadCount ?? data.filter(n => !n.lu).length;
         if (data) {
+          notificationsCache.set(profile.id, {
+            notifications: data,
+            unreadCount: count,
+            expiresAt: Date.now() + PORTAL_META_CACHE_TTL_MS,
+          });
           setNotifications(data);
-          setUnreadCount(response.data?.unreadCount ?? response.unreadCount ?? data.filter(n => !n.lu).length);
+          setUnreadCount(count);
         }
       } catch (err) {
         // silencieux
       }
     }
 
-    fetchNotifications();
+    fetchNotifications(false);
 
     joinUser(profile.id);
     const removeCreatedListener = onNotificationCreated((notification) => {
       if (notification?.user_id !== profile.id) return;
+      notificationsCache.delete(profile.id);
       setNotifications(prev => {
         const alreadyPresent = prev.some(item => item.id === notification.id);
         if (!alreadyPresent && !notification.lu) setUnreadCount(count => count + 1);
         return [notification, ...prev.filter(item => item.id !== notification.id)].slice(0, 20);
       });
     });
-    const removeChangedListener = onNotificationChanged(() => fetchNotifications());
+    const removeChangedListener = onNotificationChanged(() => fetchNotifications(true));
 
     // Realtime: re-fetch on any INSERT/UPDATE/DELETE for this user's notifications
     const channel = supabase
@@ -314,6 +506,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
           filter: `user_id=eq.${profile.id}`,
         },
         (payload) => {
+          notificationsCache.delete(profile.id);
           // For new notifications, add directly to state for instant update
           if (payload.eventType === 'INSERT' && payload.new) {
             setNotifications(prev => {
@@ -323,7 +516,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
             });
           } else {
             // For UPDATE/DELETE, re-fetch to stay in sync
-            fetchNotifications();
+            fetchNotifications(true);
           }
         }
       )
@@ -334,13 +527,32 @@ export default function PortalLayout({ children, profile, onLogout }) {
       });
 
     return () => {
+      cancelled = true;
       removeCreatedListener();
       removeChangedListener();
       supabase.removeChannel(channel);
     };
   }, [profile?.id]);
 
-  const avatarUrl = profile?.photo_url || profile?.avatar_url || profile?.avatar || profile?.tenant?.logo_url || tenantLogo || null;
+  const [livePhotoUrl, setLivePhotoUrl] = useState(profile?.photo_url || profile?.avatar_url || null);
+
+  useEffect(() => {
+    if (profile?.photo_url || profile?.avatar_url) {
+      setLivePhotoUrl(profile.photo_url || profile.avatar_url);
+    }
+  }, [profile?.photo_url, profile?.avatar_url]);
+
+  useEffect(() => {
+    const handleProfileUpdate = (e) => {
+      if (e?.detail?.photo_url) {
+        setLivePhotoUrl(e.detail.photo_url);
+      }
+    };
+    window.addEventListener('profile-updated', handleProfileUpdate);
+    return () => window.removeEventListener('profile-updated', handleProfileUpdate);
+  }, []);
+
+  const avatarUrl = livePhotoUrl || profile?.photo_url || profile?.avatar_url || profile?.avatar || profile?.tenant?.logo_url || tenantLogo || null;
 
   const isSuperAdmin = profile?.role === 'super_admin';
   const isStaff = profile?.role === 'staff';
@@ -351,7 +563,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
     : isStaff
       ? STAFF_NAV
       : adminView
-        ? ADMIN_NAV
+        ? getAdminNav(tenantActivite)
         : isTrainer
           ? FORMATEUR_NAV
           : MEMBER_NAV;
@@ -475,7 +687,148 @@ export default function PortalLayout({ children, profile, onLogout }) {
         </div>
 
 
-        {/* Search supprimé */}
+        {/* Barre de recherche globale (Admin & Staff) */}
+        {['admin', 'staff'].includes(profile?.role) && (
+          <div ref={searchRef} className="hidden md:block" style={{ position: 'relative', width: 'min(420px, 36vw)', margin: '0 16px' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ position: 'absolute', left: 12, fontSize: 18, color: dark ? '#9ca3af' : '#6b7280', pointerEvents: 'none' }}
+              >
+                search
+              </span>
+              <input
+                type="search"
+                value={globalQuery}
+                onFocus={() => { if (globalResults) setSearchOpen(true); }}
+                onChange={(e) => setGlobalQuery(e.target.value)}
+                placeholder="Rechercher un membre, une réservation, un espace..."
+                style={{
+                  width: '100%',
+                  padding: '8px 34px 8px 38px',
+                  borderRadius: 12,
+                  fontSize: 13,
+                  border: dark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(16,15,13,0.12)',
+                  background: dark ? 'rgba(255,255,255,0.06)' : '#f7f5f2',
+                  color: dark ? '#fbffff' : '#100f0d',
+                  outline: 'none',
+                }}
+              />
+              {globalSearching && (
+                <span style={{ position: 'absolute', right: 10, fontSize: 11, color: '#f95d00', fontWeight: 700 }}>...</span>
+              )}
+            </div>
+
+            {searchOpen && globalResults && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  right: 0,
+                  zIndex: 120,
+                  borderRadius: 16,
+                  padding: 10,
+                  maxHeight: 380,
+                  overflowY: 'auto',
+                  background: dark ? '#1c1a17' : '#ffffff',
+                  border: dark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(16,15,13,0.1)',
+                  boxShadow: '0 18px 40px rgba(0,0,0,0.2)',
+                }}
+              >
+                {globalResults.membres?.length === 0 && globalResults.reservations?.length === 0 && globalResults.espaces?.length === 0 ? (
+                  <p style={{ margin: 0, padding: '12px 10px', fontSize: 12.5, color: '#6b7280', textAlign: 'center' }}>
+                    Aucun résultat pour « {globalQuery} »
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {globalResults.membres?.length > 0 && (
+                      <div>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f95d00' }}>
+                          Membres ({globalResults.membres.length})
+                        </p>
+                        {globalResults.membres.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => {
+                              setSearchOpen(false);
+                              navigate(`/admin/clients?search=${encodeURIComponent(m.email || m.nom)}`);
+                            }}
+                            style={{
+                              width: '100%', textAlign: 'left', border: 'none', background: 'transparent',
+                              padding: '7px 10px', borderRadius: 10, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              color: dark ? '#fbffff' : '#100f0d',
+                            }}
+                          >
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{m.prenom} {m.nom}</span>
+                            <span style={{ fontSize: 11, color: '#6b7280' }}>{m.email}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {globalResults.reservations?.length > 0 && (
+                      <div>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#0ea5e9' }}>
+                          Réservations ({globalResults.reservations.length})
+                        </p>
+                        {globalResults.reservations.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => {
+                              setSearchOpen(false);
+                              navigate(`/admin/reservations?search=${encodeURIComponent(r.profiles?.email || r.guest_nom || r.spaces?.nom || '')}`);
+                            }}
+                            style={{
+                              width: '100%', textAlign: 'left', border: 'none', background: 'transparent',
+                              padding: '7px 10px', borderRadius: 10, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              color: dark ? '#fbffff' : '#100f0d',
+                            }}
+                          >
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>
+                              {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : (r.guest_nom || 'Réservation')} · {r.spaces?.nom || 'Espace'}
+                            </span>
+                            <span style={{ fontSize: 11, color: '#6b7280' }}>
+                              {new Date(r.date_debut).toLocaleDateString('fr-FR')}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {globalResults.espaces?.length > 0 && (
+                      <div>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
+                          Espaces ({globalResults.espaces.length})
+                        </p>
+                        {globalResults.espaces.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSearchOpen(false);
+                              navigate('/admin/espaces');
+                            }}
+                            style={{
+                              width: '100%', textAlign: 'left', border: 'none', background: 'transparent',
+                              padding: '7px 10px', borderRadius: 10, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              color: dark ? '#fbffff' : '#100f0d',
+                            }}
+                          >
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{e.nom}</span>
+                            <span style={{ fontSize: 11, color: '#6b7280' }}>{e.capacite} pers. · {e.tarif_horaire} DT/h</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Right: User profile + Notification Bell + Dark toggle + Clickable Avatar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', flexShrink: 0 }}>

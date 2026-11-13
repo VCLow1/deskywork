@@ -9,10 +9,33 @@ const ITEMS_PER_PAGE = 10;
 
 const ESPACE_TYPES = [
   { value: 'open_space', label: 'Open Space', icon: 'desk', color: '#f95d00' },
-  { value: 'private_office', label: 'Bureau privé', icon: 'meeting_room', color: '#6d28d9' },
-  { value: 'meeting_room', label: 'Salle de réunion', icon: 'groups', color: '#1a7a5a' },
-  { value: 'training_room', label: 'Salle de formation', icon: 'school', color: '#b45309' },
-  { value: 'event_space', label: 'Espace événementiel', icon: 'celebration', color: '#b91c1c' },
+  { value: 'private_office', label: 'Bureau privé (Private Office)', icon: 'meeting_room', color: '#6d28d9' },
+  { value: 'meeting_room', label: 'Salle de réunion (Meeting Room)', icon: 'groups', color: '#1a7a5a' },
+  { value: 'training_room', label: 'Salle de formation (Training Room)', icon: 'school', color: '#b45309' },
+  { value: 'event_space', label: 'Espace événementiel (Event Space)', icon: 'celebration', color: '#b91c1c' },
+  { value: 'hot_desk', label: 'Poste nomade (Hot Desk)', icon: 'laptop_mac', color: '#0e7490' },
+  { value: 'dedicated_desk', label: 'Poste fixe (Dedicated Desk)', icon: 'push_pin', color: '#4338ca' },
+];
+
+const AMENITIES_OPTIONS = [
+  'Wi-Fi Fibre Haut Débit',
+  'Prises électriques individuelles',
+  'Vidéoprojecteur HD',
+  'Tableau blanc & Marqueurs',
+  'Écran TV / Moniteur',
+  'Système visioconférence',
+  'Climatisation / Chauffage',
+  'Isolation phonique',
+  'Machine à café / Eau fraîche',
+  'Accès sécurisé 24/7',
+  'Lumière naturelle',
+  'Imprimante & Scanner',
+];
+
+const STATUT_OPTIONS = [
+  { value: 'actif', label: 'Actif', color: '#10b981', bg: '#ecfdf5', icon: 'check_circle' },
+  { value: 'en_maintenance', label: 'En maintenance', color: '#f59e0b', bg: '#fffbeb', icon: 'construction' },
+  { value: 'inactif', label: 'Inactif', color: '#64748b', bg: '#f1f5f9', icon: 'cancel' },
 ];
 
 function fileToBase64(file) {
@@ -35,7 +58,19 @@ async function uploadImageToBackend(file, folder = 'espaces') {
   return res.publicUrl;
 }
 
-const EMPTY_FORM = { nom: '', type: 'open_space', capacite: 10, tarif_horaire: 15, photo_url: '' };
+const EMPTY_FORM = {
+  nom: '',
+  type: 'open_space',
+  capacite: 10,
+  description: '',
+  statut: 'actif',
+  horaires: '08:00 - 20:00',
+  tarif_horaire: 15,
+  tarif_journalier: 75,
+  tarif_mensuel: 450,
+  equipements: ['Wi-Fi Fibre Haut Débit', 'Prises électriques individuelles'],
+  photo_url: '',
+};
 
 const inputCls = 'w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/30 bg-white text-sm text-primary outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15 transition-all placeholder:text-on-surface-variant/50';
 
@@ -59,7 +94,9 @@ export default function AdminEspaces({ session }) {
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
   const showError = (msg) => { setToastErr(msg); setTimeout(() => setToastErr(''), 4000); };
 
-  useEffect(() => { loadData(); }, [session]);
+  useEffect(() => {
+    if (userId) loadData();
+  }, [userId]);
 
   const loadData = async () => {
     try {
@@ -92,8 +129,14 @@ export default function AdminEspaces({ session }) {
         nom: form.nom.trim(),
         type: form.type,
         capacite: parseInt(form.capacite, 10),
+        description: form.description ? form.description.trim() : '',
+        statut: form.statut || 'actif',
+        horaires: form.horaires ? form.horaires.trim() : '08:00 - 20:00',
         tarif_horaire: parseFloat(form.tarif_horaire) || 0,
-        ...(form.photo_url ? { photo_url: form.photo_url } : {}),
+        tarif_journalier: parseFloat(form.tarif_journalier) || 0,
+        tarif_mensuel: parseFloat(form.tarif_mensuel) || 0,
+        equipements: Array.isArray(form.equipements) ? form.equipements : [],
+        photo_url: form.photo_url || '',
       };
       if (editId) {
         await tenantAdminApi.updateEspace(editId, payload);
@@ -116,7 +159,13 @@ export default function AdminEspaces({ session }) {
       nom: espace.nom || '',
       type: espace.type || 'open_space',
       capacite: espace.capacite || 10,
+      description: espace.description || '',
+      statut: espace.statut || (espace.actif === false ? 'inactif' : 'actif'),
+      horaires: espace.horaires || '08:00 - 20:00',
       tarif_horaire: espace.tarif_horaire || 0,
+      tarif_journalier: espace.tarif_journalier || 0,
+      tarif_mensuel: espace.tarif_mensuel || 0,
+      equipements: Array.isArray(espace.equipements) ? espace.equipements : [],
       photo_url: espace.photo_url || '',
     });
     setShowForm(true);
@@ -127,8 +176,8 @@ export default function AdminEspaces({ session }) {
     if (!confirm(`Supprimer l'espace "${espace.nom}" ? Cette action supprimera aussi toutes les données associées.`)) return;
     try {
       await tenantAdminApi.deleteEspace(espace.id);
+      setEspaces(prev => prev.filter(item => item.id !== espace.id));
       showToast(`Espace "${espace.nom}" supprimé.`);
-      await loadData();
     } catch (e) { showError(e.message); }
   };
 
@@ -189,7 +238,7 @@ export default function AdminEspaces({ session }) {
               {editId ? '✏️ Modifier l\'espace' : '✨ Nouvel espace'}
             </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-6">
               {/* Nom */}
               <div className="sm:col-span-2">
                 <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Nom de l'espace *</label>
@@ -198,9 +247,18 @@ export default function AdminEspaces({ session }) {
                   className={inputCls} />
               </div>
 
-              {/* Type */}
+              {/* Statut */}
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Type *</label>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Statut de l'espace *</label>
+                <select value={form.statut} onChange={e => setForm(f => ({ ...f, statut: e.target.value }))}
+                  className={inputCls}>
+                  {STATUT_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+
+              {/* Type (7 typologies officielles CDC v3.0) */}
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Typologie (7 types officiels) *</label>
                 <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
                   className={inputCls}>
                   {ESPACE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -209,25 +267,103 @@ export default function AdminEspaces({ session }) {
 
               {/* Capacité */}
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Capacité (personnes) *</label>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Capacité maximale (personnes) *</label>
                 <input type="number" min="1" max="500" value={form.capacite}
                   onChange={e => setForm(f => ({ ...f, capacite: e.target.value }))}
                   className={inputCls} />
               </div>
 
-              {/* Tarif horaire */}
+              {/* Horaires d'ouverture */}
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif horaire (DT)</label>
-                <input type="number" min="0" step="0.5" value={form.tarif_horaire}
-                  onChange={e => setForm(f => ({ ...f, tarif_horaire: e.target.value }))}
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Horaires d'ouverture</label>
+                <input type="text" value={form.horaires}
+                  onChange={e => setForm(f => ({ ...f, horaires: e.target.value }))}
+                  placeholder="Ex : 08:00 - 20:00"
                   className={inputCls} />
               </div>
 
-              {/* Photo upload — pleine largeur, visible en création ET en édition */}
-              <div className="sm:col-span-2">
+              {/* Description complète */}
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Description complète de l'espace</label>
+                <textarea
+                  rows={3}
+                  value={form.description}
+                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="Description détaillée de l'ambiance, de la configuration du mobilier, du calme ou de la vue..."
+                  className={inputCls}
+                />
+              </div>
+
+              {/* Tarifs (DT à 3 décimales) */}
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif horaire (DT HT)</label>
+                <input type="number" min="0" step="0.001" value={form.tarif_horaire}
+                  onChange={e => setForm(f => ({ ...f, tarif_horaire: e.target.value }))}
+                  placeholder="Ex : 15.000"
+                  className={inputCls} />
+                <p className="text-[10px] text-on-surface-variant mt-1">
+                  Format : {Number(form.tarif_horaire || 0).toFixed(3)} DT
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif journalier (DT HT)</label>
+                <input type="number" min="0" step="0.001" value={form.tarif_journalier}
+                  onChange={e => setForm(f => ({ ...f, tarif_journalier: e.target.value }))}
+                  placeholder="Ex : 75.000"
+                  className={inputCls} />
+                <p className="text-[10px] text-on-surface-variant mt-1">
+                  Format : {Number(form.tarif_journalier || 0).toFixed(3)} DT
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif mensuel (DT HT)</label>
+                <input type="number" min="0" step="0.001" value={form.tarif_mensuel}
+                  onChange={e => setForm(f => ({ ...f, tarif_mensuel: e.target.value }))}
+                  placeholder="Ex : 450.000"
+                  className={inputCls} />
+                <p className="text-[10px] text-on-surface-variant mt-1">
+                  Format : {Number(form.tarif_mensuel || 0).toFixed(3)} DT
+                </p>
+              </div>
+
+              {/* Équipements (Amenities) */}
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-2">Équipements &amp; Commodités inclus</label>
+                <div className="flex flex-wrap gap-2">
+                  {AMENITIES_OPTIONS.map(amenity => {
+                    const selected = (form.equipements || []).includes(amenity);
+                    return (
+                      <button
+                        key={amenity}
+                        type="button"
+                        onClick={() => {
+                          setForm(f => ({
+                            ...f,
+                            equipements: selected
+                              ? f.equipements.filter(item => item !== amenity)
+                              : [...(f.equipements || []), amenity]
+                          }));
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                          selected
+                            ? 'bg-secondary text-white border-secondary'
+                            : 'bg-surface-container-low text-on-surface-variant border-outline-variant/30 hover:border-secondary'
+                        }`}
+                      >
+                        {selected ? `✓ ${amenity}` : `+ ${amenity}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Photo upload — pleine largeur */}
+              <div className="sm:col-span-2 lg:col-span-3">
                 <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
-                  Photo de l'espace
-                  {!editId && <span className="ml-2 text-[10px] font-normal text-secondary normal-case tracking-normal">(facultatif — vous pouvez en ajouter une maintenant ou plus tard)</span>}
+                  Photo principale de l'espace
+                  {!editId && <span className="ml-2 text-[10px] font-normal text-secondary normal-case tracking-normal">(facultatif — modifiable à tout moment)</span>}
                 </label>
                 <div
                   className={`relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all cursor-pointer overflow-hidden ${
@@ -245,7 +381,7 @@ export default function AdminEspaces({ session }) {
 
                   {form.photo_url ? (
                     <>
-                      <img src={form.photo_url} alt="Aperçu" className="w-full h-44 object-cover rounded-2xl" />
+                      <img src={form.photo_url} alt="Aperçu" className="w-full h-48 object-cover rounded-2xl" />
                       <div className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                         <div className="flex flex-col items-center gap-2">
                           <span className="material-symbols-outlined text-white" style={{ fontSize: 28 }}>photo_camera</span>
@@ -339,18 +475,81 @@ export default function AdminEspaces({ session }) {
                     )}
 
                     <div className="p-5">
-                      <h3 className="font-sora font-bold text-primary text-base mb-3">{espace.nom}</h3>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 className="font-sora font-bold text-primary text-base leading-snug">{espace.nom}</h3>
+                        {(() => {
+                          const currentStatut = espace.statut || (espace.actif === false ? 'inactif' : 'actif');
+                          const stInfo = STATUT_OPTIONS.find(s => s.value === currentStatut) || STATUT_OPTIONS[0];
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0"
+                              style={{ color: stInfo.color, background: stInfo.bg }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>{stInfo.icon}</span>
+                              {stInfo.label}
+                            </span>
+                          );
+                        })()}
+                      </div>
 
-                      <div className="grid grid-cols-2 gap-3 mb-4">
-                        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>group</span>
-                          <span>{espace.capacite} pers.</span>
+                      {espace.description && (
+                        <p className="text-xs text-on-surface-variant line-clamp-2 mb-3">
+                          {espace.description}
+                        </p>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2 text-xs text-on-surface-variant mb-3 bg-surface-container-low/40 p-2.5 rounded-2xl">
+                        <div className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-secondary" style={{ fontSize: 15 }}>group</span>
+                          <span>{espace.capacite} pers. max</span>
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>payments</span>
-                          <span>{espace.tarif_horaire > 0 ? `${espace.tarif_horaire} DT/h` : 'Gratuit'}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-secondary" style={{ fontSize: 15 }}>schedule</span>
+                          <span>{espace.horaires || '08:00 - 20:00'}</span>
                         </div>
                       </div>
+
+                      {/* Tarifs CDC v3.0 (3 décimales en DT) */}
+                      <div className="space-y-1 mb-3 pt-1 border-t border-outline-variant/10 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-on-surface-variant">Tarif horaire :</span>
+                          <span className="font-bold text-primary">
+                            {espace.tarif_horaire > 0 ? `${Number(espace.tarif_horaire).toFixed(3)} DT/h` : 'Gratuit'}
+                          </span>
+                        </div>
+                        {Number(espace.tarif_journalier) > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-on-surface-variant">Tarif journalier :</span>
+                            <span className="font-semibold text-secondary">
+                              {Number(espace.tarif_journalier).toFixed(3)} DT/j
+                            </span>
+                          </div>
+                        )}
+                        {Number(espace.tarif_mensuel) > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-on-surface-variant">Tarif mensuel :</span>
+                            <span className="font-semibold text-primary">
+                              {Number(espace.tarif_mensuel).toFixed(3)} DT/mois
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Équipements inclus */}
+                      {Array.isArray(espace.equipements) && espace.equipements.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {espace.equipements.slice(0, 2).map((eq, i) => (
+                            <span key={i} className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-secondary/8 text-secondary">
+                              ✓ {eq}
+                            </span>
+                          ))}
+                          {espace.equipements.length > 2 && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-on-surface-variant/70">
+                              +{espace.equipements.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       <div className="flex items-center gap-2 pt-3 border-t border-outline-variant/10">
                         <button

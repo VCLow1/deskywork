@@ -10,6 +10,8 @@ const ESPACE_TYPES = [
   { value: 'meeting_room', label: 'Salle de réunion' },
   { value: 'training_room', label: 'Salle de formation' },
   { value: 'event_space', label: 'Espace événementiel' },
+  { value: 'hot_desk', label: 'Poste nomade (Hot Desk)' },
+  { value: 'dedicated_desk', label: 'Poste fixe (Dedicated Desk)' },
 ];
 
 function fileToBase64(file) {
@@ -62,12 +64,13 @@ export default function AdminOnboarding({ session }) {
     finally { setUploading(false); }
   };
 
-  useEffect(() => { loadData(); }, [session]);
+  const userId = session?.user?.id;
+  useEffect(() => { if (userId) loadData(); }, [userId]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const { data: prof } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+      const { data: prof } = await supabase.from('profiles').select('role').eq('id', userId).single();
       if (prof?.role !== 'admin') {
         navigate('/admin/dashboard');
         return;

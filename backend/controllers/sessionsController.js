@@ -71,7 +71,7 @@ async function listSessions(req, res) {
         reservations (
           id, user_id, espace_id, date_debut, date_fin, statut,
           espaces (nom, type),
-          profiles (nom, prenom, email)
+          profiles!user_id (nom, prenom, email)
         )
       `)
       .order('created_at', { ascending: false });
@@ -298,7 +298,7 @@ async function checkIn(req, res) {
           reservations (
             id, date_debut, date_fin, statut,
             espaces (nom, type),
-            profiles (nom, prenom, email)
+            profiles!user_id (nom, prenom, email)
           )
         `)
         .single();
@@ -319,7 +319,7 @@ async function checkIn(req, res) {
           reservations (
             id, date_debut, date_fin, statut,
             espaces (nom, type),
-            profiles (nom, prenom, email)
+            profiles!user_id (nom, prenom, email)
           )
         `)
         .single();
@@ -425,6 +425,244 @@ async function checkOut(req, res) {
   }
 }
 
+
+// ─── CDC v3.0 D3 & D4 : Calcul temps réel & tarification dépassement ────────
+function computeWorkSessionDetails(sessionRow, overtimeRateOverride = null) {
+  const res = sessionRow.reservations || {};
+  const nowMs = Date.now();
+  const debutMs = res.date_debut ? new Date(res.date_debut).getTime() : nowMs;
+  const finMs = res.date_fin ? new Date(res.date_fin).getTime() : nowMs;
+  const isReleased = Boolean(sessionRow.check_out) || sessionRow.statut === 'completed';
+
+  let etat = 'en_cours';
+  let etat_label = 'En cours';
+  let seconds_remaining = Math.max(0, Math.floor((finMs - nowMs) / 1000));
+  let overtime_seconds = 0;
+
+  if (isReleased) {
+    etat = 'terminee';
+    etat_label = 'Terminée';
+    seconds_remaining = 0;
+    if (sessionRow.check_out && finMs) {
+      overtime_seconds = Math.max(0, Math.floor((new Date(sessionRow.check_out).getTime() - finMs) / 1000));
+    }
+  } else if (!sessionRow.check_in && nowMs < debutMs) {
+    etat = 'a_venir';
+    etat_label = 'À venir';
+    seconds_remaining = Math.max(0, Math.floor((finMs - debutMs) / 1000));
+  } else if (nowMs > finMs) {
+    etat = 'en_depassement';
+    etat_label = 'En dépassement';
+    seconds_remaining = 0;
+    overtime_seconds = Math.floor((nowMs - finMs) / 1000);
+  } else if (seconds_remaining <= 15 * 60) {
+    etat = 'bientot_terminee';
+    etat_label = 'Bientôt terminée';
+  }
+
+  const overtime_minutes = Math.ceil(overtime_seconds / 60);
+  const hourlyRate = Number(
+    overtimeRateOverride != null ? overtimeRateOverride : (res.espaces?.tarif_horaire || 0)
+  );
+  const montant_depassement = overtime_minutes > 0 && hourlyRate > 0
+    ? Number(((overtime_minutes / 60) * hourlyRate).toFixed(3))
+    : 0;
+
+  return {
+    etat,
+    etat_label,
+    is_released: isReleased,
+    seconds_remaining,
+    temps_restant: Math.ceil(seconds_remaining / 60),
+    overtime_seconds,
+    overtime_minutes,
+    hourly_overtime_rate: hourlyRate,
+    montant_depassement,
+  };
+}
+
+async function getTenantOvertimeRate(tenantId) {
+  if (!tenantId) return null;
+  try {
+    const { data } = await supabaseAdmin.from('tenants').select('settings').eq('id', tenantId).maybeSingle();
+    if (data?.settings?.tarif_depassement_heure != null) {
+      return Number(data.settings.tarif_depassement_heure);
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function getLiveSessions(req, res) {
+  try {
+    const overtimeRate = await getTenantOvertimeRate(req.tenantId);
+
+    // 1. Sessions en base (priorité aux non libérées : check_out IS NULL)
+    let q = supabaseAdmin
+      .from('sessions')
+      .select(`
+        *,
+        reservations (
+          id, user_id, guest_id, espace_id, tenant_id, date_debut, date_fin, statut,
+          espaces (id, nom, type, tarif_horaire),
+          profiles!user_id (id, nom, prenom, email, telephone)
+        )
+      `)
+      .order('check_in', { ascending: false })
+      .limit(80);
+    const { data: sessionRows, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const filtered = (sessionRows || []).filter((s) => {
+      if (!req.tenantId) return true;
+      return s.reservations?.tenant_id === req.tenantId;
+    });
+
+    const live = filtered
+      .filter((s) => !s.check_out && s.statut !== 'completed')
+      .map((s) => ({
+        ...s,
+        membre: s.reservations?.profiles
+          ? `${s.reservations.profiles.prenom || ''} ${s.reservations.profiles.nom || ''}`.trim() || s.reservations.profiles.email
+          : 'Visiteur',
+        espace_nom: s.reservations?.espaces?.nom || 'Espace',
+        ...computeWorkSessionDetails(s, overtimeRate),
+      }));
+
+    // 2. Réservations confirmées du jour pas encore check-in (statut "À venir")
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    let rQ = supabaseAdmin
+      .from('reservations')
+      .select('id, user_id, espace_id, tenant_id, date_debut, date_fin, statut, espaces(id, nom, type, tarif_horaire), profiles!user_id(id, nom, prenom, email)')
+      .eq('statut', 'confirmed')
+      .gte('date_fin', new Date(Date.now() - 3600000).toISOString())
+      .lte('date_debut', todayEnd.toISOString())
+      .order('date_debut', { ascending: true });
+    if (req.tenantId) rQ = rQ.eq('tenant_id', req.tenantId);
+    const { data: confirmedToday } = await rQ;
+
+    const checkedReservationIds = new Set(filtered.map((s) => s.reservation_id));
+    const upcoming = (confirmedToday || [])
+      .filter((r) => !checkedReservationIds.has(r.id))
+      .map((r) => ({
+        id: `upcoming-${r.id}`,
+        reservation_id: r.id,
+        statut: 'upcoming',
+        check_in: null,
+        check_out: null,
+        reservations: r,
+        membre: r.profiles ? `${r.profiles.prenom || ''} ${r.profiles.nom || ''}`.trim() || r.profiles.email : 'Visiteur',
+        espace_nom: r.espaces?.nom || 'Espace',
+        etat: 'a_venir',
+        etat_label: 'À venir',
+        is_released: false,
+        seconds_remaining: Math.max(0, Math.floor((new Date(r.date_fin).getTime() - new Date(r.date_debut).getTime()) / 1000)),
+        temps_restant: Math.ceil(Math.max(0, (new Date(r.date_fin).getTime() - new Date(r.date_debut).getTime()) / 60000)),
+        overtime_seconds: 0,
+        overtime_minutes: 0,
+        montant_depassement: 0,
+      }));
+
+    res.json({
+      live_sessions: [...live, ...upcoming],
+      counts: {
+        total_open: live.length,
+        en_cours: live.filter((s) => s.etat === 'en_cours').length,
+        bientot_terminee: live.filter((s) => s.etat === 'bientot_terminee').length,
+        en_depassement: live.filter((s) => s.etat === 'en_depassement').length,
+        a_venir: upcoming.length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/sessions/:id/release — Bouton explicite « C'est bon, libérée » (CDC v3.0 D3 & D4)
+async function releaseSession(req, res) {
+  const { id } = req.params;
+  try {
+    const { data: session, error: fetchErr } = await supabaseAdmin
+      .from('sessions')
+      .select(`
+        *,
+        reservations (id, user_id, tenant_id, date_debut, date_fin, espaces(nom, type, tarif_horaire))
+      `)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !session) {
+      return res.status(404).json({ error: 'Session de travail introuvable.' });
+    }
+    if (session.check_out && session.statut === 'completed') {
+      return res.status(400).json({ error: 'Cette ressource a déjà été libérée.' });
+    }
+
+    const resTenant = session.reservations?.tenant_id || req.tenantId || null;
+    const overtimeRate = await getTenantOvertimeRate(resTenant);
+    const details = computeWorkSessionDetails(session, overtimeRate);
+    const nowIso = new Date().toISOString();
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('sessions')
+      .update({
+        check_out: nowIso,
+        statut: 'completed',
+        temps_restant: 0,
+      })
+      .eq('id', session.id)
+      .select('*, reservations(id, user_id, date_debut, date_fin, espaces(nom, type, tarif_horaire))')
+      .single();
+
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    // D4 : Si dépassement de temps, créer automatiquement le Montant dû sur place
+    let overtimePayment = null;
+    if (details.montant_depassement > 0 && session.reservations?.user_id) {
+      const { data: payRow, error: payErr } = await supabaseAdmin
+        .from('paiements')
+        .insert({
+          user_id: session.reservations.user_id,
+          reservation_id: session.reservation_id,
+          montant: details.montant_depassement,
+          mode: 'cash',
+          statut: 'pending',
+          tenant_id: resTenant,
+          reference_externe: `DEPASSEMENT-${details.overtime_minutes}MIN`,
+        })
+        .select('*')
+        .single();
+      if (!payErr) overtimePayment = payRow;
+    }
+
+    emitSessionEnded({
+      id: updated.id,
+      user_id: session.reservations?.user_id,
+      reservation_id: session.reservation_id,
+      check_out: updated.check_out,
+      statut: 'completed',
+      espace: session.reservations?.espaces,
+    });
+
+    res.json({
+      session: updated,
+      released: true,
+      overtime_minutes: details.overtime_minutes,
+      overtime_amount: details.montant_depassement,
+      montant_du_payment: overtimePayment,
+      message: details.montant_depassement > 0
+        ? `C'est bon, ressource libérée ! Dépassement de ${details.overtime_minutes} min facturé (${details.montant_depassement.toFixed(3)} DT) ajouté au Montant dû.`
+        : "C'est bon, la ressource a été libérée dans le calendrier.",
+    });
+  } catch (err) {
+    console.error('Erreur releaseSession:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getCancellationPolicyRoute,
   updateCancellationPolicyRoute,
@@ -433,4 +671,6 @@ module.exports = {
   getMyActiveSessions,
   checkIn,
   checkOut,
+  getLiveSessions,
+  releaseSession,
 };

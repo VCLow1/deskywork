@@ -77,6 +77,8 @@ const SPACE_TYPE_LABELS = {
   meeting_room: 'Salle de réunion',
   training_room: 'Salle de formation',
   event_space: 'Espace événementiel',
+  hot_desk: 'Poste nomade (Hot Desk)',
+  dedicated_desk: 'Poste fixe (Dedicated Desk)',
 };
 
 /* ─── Keyframes injected once ─── */
@@ -588,7 +590,7 @@ export default function Dashboard({ session }) {
                   <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full pulse-dot" style={{ background: timerColor }} />
                     <span className="text-[11px] font-bold uppercase tracking-[.14em]" style={{ color: timerColor }}>
-                      Session en cours
+                      Session de travail en cours
                     </span>
                   </div>
                   <h2 className="font-sora font-bold text-primary text-lg">
@@ -620,7 +622,7 @@ export default function Dashboard({ session }) {
                     disabled={checkingOut}
                     className="px-5 py-2 rounded-lg bg-[#FF6F59] text-white text-sm font-semibold hover:opacity-90 active:scale-[.97] transition-all disabled:opacity-50"
                   >
-                    {checkingOut ? '…' : 'Terminer la session'}
+                    {checkingOut ? '…' : 'Terminer la session de travail'}
                   </button>
                 </div>
               </div>
@@ -657,7 +659,7 @@ export default function Dashboard({ session }) {
             /* ── NO SESSION STATE ── */
             <div className="bg-white rounded-3xl p-6 border border-outline-variant/10 h-full flex flex-col items-center justify-center text-center min-h-[200px]" style={{ boxShadow: '0 8px 24px rgba(16,35,63,.05)' }}>
               <span className="material-symbols-outlined text-outline-variant mb-3" style={{ fontSize: 48 }}>desk</span>
-              <p className="font-sora font-bold text-primary text-base mb-1">Aucune session en cours</p>
+              <p className="font-sora font-bold text-primary text-base mb-1">Aucune session de travail en cours</p>
               <p className="text-sm text-on-surface-variant mb-4">Réservez un espace ou effectuez un check-in depuis vos réservations.</p>
               <Link
                 to="/book/step1"
@@ -947,7 +949,7 @@ export default function Dashboard({ session }) {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-sora font-bold text-primary text-base flex items-center gap-2">
                   <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 20 }}>receipt_long</span>
-                  Factures récentes
+                  Reçus récents
                 </h3>
                 <Link to="/member/payments" className="text-sm font-semibold text-[#f95d00] hover:underline transition-colors">Voir tout</Link>
               </div>
@@ -955,7 +957,7 @@ export default function Dashboard({ session }) {
               {recentPayments.length === 0 ? (
                 <div className="flex flex-col items-center py-8 text-center">
                   <span className="material-symbols-outlined text-outline-variant mb-2" style={{ fontSize: 32 }}>receipt_long</span>
-                  <p className="text-xs text-on-surface-variant">Aucune facture pour le moment.</p>
+                  <p className="text-xs text-on-surface-variant">Aucun reçu pour le moment.</p>
                 </div>
               ) : (
                 <div className="space-y-2.5">
@@ -979,7 +981,7 @@ export default function Dashboard({ session }) {
                           <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight ${PAYMENT_STATUT_COLORS[p.statut] || 'bg-gray-100 text-gray-500'}`}>
                             {PAYMENT_STATUT_LABELS[p.statut] || p.statut}
                           </span>
-                          <span className="font-sora font-bold text-primary text-sm whitespace-nowrap">{parseFloat(p.montant || 0).toFixed(2)} DT</span>
+                          <span className="font-sora font-bold text-primary text-sm whitespace-nowrap">{parseFloat(p.montant || 0).toFixed(3)} DT</span>
                           <button
                             onClick={() => handleDownloadReceipt(p.id)}
                             disabled={downloadingReceipt === p.id}
@@ -999,7 +1001,7 @@ export default function Dashboard({ session }) {
               to="/member/payments"
               className="w-full text-center py-2 mt-4 rounded-xl text-xs font-bold text-secondary border border-secondary/20 hover:bg-secondary/5 transition-all block"
             >
-              Toutes mes factures
+              Tous mes reçus
             </Link>
           </div>
         </div>
@@ -1157,7 +1159,7 @@ export default function Dashboard({ session }) {
           { icon: 'person', label: 'Profil', to: '/dashboard/profile', color: '#f95d00' },
           { icon: 'notifications', label: 'Notifications', to: '/dashboard/notifications', color: '#FF6F59' },
           { icon: 'school', label: 'Formations', to: '/dashboard/formations', color: '#2FBE8F' },
-          { icon: 'receipt_long', label: 'Factures', to: '/member/payments', color: '#8b5cf6' },
+          { icon: 'receipt_long', label: 'Mes reçus', to: '/member/payments', color: '#8b5cf6' },
         ].map((link) => (
           <Link
             key={link.label}

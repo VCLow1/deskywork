@@ -1,7 +1,7 @@
 // services/api/_core.js — Client HTTP partagé (fetch + auth JWT + Cache SWR ultra-rapide)
 import { supabase } from '../../supabaseClient';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? window.location.origin : 'http://localhost:5000');
 
 const SESSION_EXPIRED_MESSAGE = 'Session expirée. Veuillez vous reconnecter.';
 
@@ -136,7 +136,14 @@ export async function apiFetch(path, options = {}, retried = false) {
       }
 
       if (!response.ok) {
-        const message = body.error || `Erreur API (${response.status})`;
+        const rawErr = body?.error;
+        const parsedErr =
+          typeof rawErr === 'string' && rawErr.trim() && rawErr.trim() !== '{}'
+            ? rawErr.trim()
+            : typeof rawErr === 'object' && rawErr !== null
+              ? (rawErr.message || (Object.keys(rawErr).length > 0 ? JSON.stringify(rawErr) : ''))
+              : '';
+        const message = parsedErr || body?.message || `Erreur API (${response.status})`;
         if (isAuthError(response.status, message)) throw new Error(SESSION_EXPIRED_MESSAGE);
         const err = new Error(message);
         err.status = response.status;

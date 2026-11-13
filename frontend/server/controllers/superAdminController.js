@@ -113,14 +113,73 @@ async function updateTenant(req, res) {
 
 // DELETE /api/super-admin/tenants/:id
 async function deleteTenant(req, res) {
-  const { data: tenant, error: fetchErr } = await supabaseAdmin.from('tenants').select('id, nom').eq('id', req.params.id).single();
-  if (fetchErr || !tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
+  try {
+    const tenantId = req.params.id;
+    const { data: tenant, error: fetchErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, nom, statut, owner_id, contact_admin_id')
+      .eq('id', tenantId)
+      .maybeSingle();
 
-  const { error } = await supabaseAdmin.from('tenants').delete().eq('id', req.params.id);
-  if (error) return res.status(400).json({ error: error.message });
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id, nom, owner_id, statut')
+      .eq('id', tenantId)
+      .maybeSingle();
 
-  await auditLog(req.user.id, 'tenant_deleted', 'tenant', tenant.id, tenant.nom, {}, req.ip);
-  res.json({ message: `Coworking "${tenant.nom}" supprimé.` });
+    if ((fetchErr && !org) || (!tenant && !org)) {
+      return res.status(404).json({ error: 'Coworking introuvable.' });
+    }
+
+    const displayName = tenant?.nom || org?.nom || 'Coworking';
+
+    // Repérer les administrateurs exclusifs de ce coworking (rôle admin, aucun autre établissement possédé)
+    const { data: tenantProfiles } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role')
+      .eq('tenant_id', tenantId)
+      .eq('role', 'admin');
+
+    const candidateAdminIds = new Set(
+      [
+        tenant?.owner_id,
+        tenant?.contact_admin_id,
+        org?.owner_id,
+        ...(tenantProfiles || []).map((p) => p.id),
+      ].filter((id) => id && id !== req.user.id)
+    );
+
+    await deleteOrganizationAndTenantCascade(tenantId);
+
+    // Supprimer les comptes admin exclusivement liés à ce coworking afin de libérer leur e-mail
+    for (const adminId of candidateAdminIds) {
+      const { data: adminProf } = await supabaseAdmin
+        .from('profiles')
+        .select('id, role')
+        .eq('id', adminId)
+        .maybeSingle();
+      if (!adminProf || adminProf.role !== 'admin') continue;
+
+      const [{ data: otherOrgs }, { data: otherTenants }] = await Promise.all([
+        supabaseAdmin.from('organizations').select('id').eq('owner_id', adminId).limit(1),
+        supabaseAdmin
+          .from('tenants')
+          .select('id')
+          .or(`owner_id.eq.${adminId},contact_admin_id.eq.${adminId}`)
+          .limit(1),
+      ]);
+
+      if (!(otherOrgs && otherOrgs.length > 0) && !(otherTenants && otherTenants.length > 0)) {
+        await deleteUserCore(adminId, req.user.id, req.ip, { skipAudit: true });
+      }
+    }
+
+    await auditLog(req.user.id, 'tenant_deleted', 'tenant', tenantId, displayName, {}, req.ip);
+    res.json({ message: `Coworking "${displayName}" supprimé.` });
+  } catch (err) {
+    console.error('❌ Erreur deleteTenant:', err);
+    res.status(500).json({ error: formatSupabaseErr(err, 'Erreur lors de la suppression du coworking.') });
+  }
 }
 
 // POST /api/super-admin/tenants/:id/onboard
@@ -373,33 +432,276 @@ async function updateUser(req, res) {
   res.json({ user: data });
 }
 
-// DELETE /api/super-admin/users/:id
-async function deleteUser(req, res) {
-  const userId = req.params.id;
-  if (userId === req.user.id) return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
+function formatSupabaseErr(err, fallback = 'Erreur lors de l\'opération.') {
+  if (!err) return fallback;
+  const raw = typeof err === 'string' ? err : (err.message || err.error_description || err.msg || err.code || '');
+  const trimmed = String(raw || '').trim();
+  if (trimmed && trimmed !== '{}') return trimmed;
+  try {
+    const serialized = JSON.stringify(err);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch (_) {}
+  return fallback;
+}
 
-  const { data: target } = await supabaseAdmin.from('profiles').select('nom, prenom, role').eq('id', userId).single();
-  if (!target) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+async function safeDbStep(fn) {
+  try {
+    await fn();
+  } catch (_) {}
+}
 
-  // Nettoyage des données liées (FK sans ON DELETE CASCADE) avant suppression du profil
-  await supabaseAdmin.from('messages').delete().eq('sender_id', userId);
-  await supabaseAdmin.from('conversation_members').delete().eq('user_id', userId);
+async function deleteOrganizationAndTenantCascade(orgId) {
+  if (!orgId) return;
+  await safeDbStep(() => supabaseAdmin.from('profiles').update({ tenant_id: null }).eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('membres_sites').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('documents_membres').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('contenu_documents').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('credits_membres').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('politique_annulation_espaces').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('politique_annulation').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('remuneration_formateurs').delete().eq('tenant_id', orgId));
 
-  const { data: convs } = await supabaseAdmin.from('conversations').select('id').or(`created_by.eq.${userId}`);
-  const convIds = (convs || []).map(c => c.id);
-  if (convIds.length > 0) {
-    await supabaseAdmin.from('messages').delete().in('conversation_id', convIds);
-    await supabaseAdmin.from('conversation_members').delete().in('conversation_id', convIds);
-    await supabaseAdmin.from('conversations').delete().in('id', convIds);
+  const { data: orgFormations } = await supabaseAdmin.from('formations').select('id').eq('tenant_id', orgId);
+  const fIds = (orgFormations || []).map((f) => f.id);
+  if (fIds.length > 0) {
+    await safeDbStep(() => supabaseAdmin.from('inscriptions_formations').delete().in('formation_id', fIds));
+  }
+  await safeDbStep(() => supabaseAdmin.from('formations').delete().eq('tenant_id', orgId));
+
+  await safeDbStep(() => supabaseAdmin.from('paiements').delete().eq('tenant_id', orgId));
+
+  const { data: orgReservations } = await supabaseAdmin.from('reservations').select('id').eq('tenant_id', orgId);
+  const rIds = (orgReservations || []).map((r) => r.id);
+  if (rIds.length > 0) {
+    await safeDbStep(() => supabaseAdmin.from('sessions').delete().in('reservation_id', rIds));
+    await safeDbStep(() => supabaseAdmin.from('paiements').delete().in('reservation_id', rIds));
+  }
+  await safeDbStep(() => supabaseAdmin.from('reservations').delete().eq('tenant_id', orgId));
+
+  await safeDbStep(() => supabaseAdmin.from('abonnements').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('tarifs_abonnements').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('codes_promo').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('guests').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('espaces').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('sites').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('notifications').delete().eq('tenant_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('rgpd_demandes').delete().eq('tenant_id', orgId));
+
+  const { data: orgConvs } = await supabaseAdmin.from('conversations').select('id').eq('tenant_id', orgId);
+  const cIds = (orgConvs || []).map((c) => c.id);
+  if (cIds.length > 0) {
+    await safeDbStep(() => supabaseAdmin.from('messages').delete().in('conversation_id', cIds));
+    await safeDbStep(() => supabaseAdmin.from('conversation_members').delete().in('conversation_id', cIds));
+    await safeDbStep(() => supabaseAdmin.from('conversations').delete().in('id', cIds));
   }
 
-  await supabaseAdmin.from('super_admin_audit_log').delete().eq('user_id', userId);
+  await safeDbStep(() => supabaseAdmin.from('memberships').delete().eq('organization_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('invitations').delete().eq('organization_id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('tenants').delete().eq('id', orgId));
+  await safeDbStep(() => supabaseAdmin.from('organizations').delete().eq('id', orgId));
+}
 
-  const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
-  if (authErr) return res.status(400).json({ error: authErr.message });
+async function purgeOrphanAuthUsersByEmail(email, excludeUserId = null) {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return;
+  try {
+    for (let page = 1; page <= 20; page++) {
+      const { data: listData, error: listErr } = await supabaseAdmin.auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      });
+      if (listErr || !listData?.users?.length) break;
+      const matches = listData.users.filter(
+        (u) => u.id !== excludeUserId && u.email?.trim().toLowerCase() === normalized
+      );
+      for (const u of matches) {
+        const { data: prof } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('id', u.id)
+          .maybeSingle();
+        if (!prof?.id) {
+          await safeDbStep(() => supabaseAdmin.auth.admin.deleteUser(u.id, false));
+        }
+      }
+      if (listData.users.length < 1000) break;
+    }
+  } catch (_) {}
+}
 
-  await auditLog(req.user.id, 'user_deleted', 'user', userId, `${target.prenom} ${target.nom}`, { role: target.role }, req.ip);
-  res.json({ message: `Utilisateur "${target.prenom} ${target.nom}" supprimé.` });
+async function deleteUserCore(userId, actorUserId, actorIp, { skipAudit = false } = {}) {
+  const { data: target, error: targetErr } = await supabaseAdmin
+    .from('profiles')
+    .select('id, nom, prenom, email, role, tenant_id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (targetErr) {
+    return { status: 400, error: formatSupabaseErr(targetErr) };
+  }
+  if (!target) {
+    // Tenter quand même de supprimer un éventuel compte orphelin dans auth.users
+    const { data: authLookup } = await supabaseAdmin.auth.admin.getUserById(userId).catch(() => ({ data: null }));
+    if (authLookup?.user) {
+      await safeDbStep(() => supabaseAdmin.auth.admin.deleteUser(userId, false));
+      return { status: 200, deletedOrphan: true, message: 'Compte orphelin supprimé.' };
+    }
+    return { status: 404, error: 'Utilisateur introuvable.' };
+  }
+
+  const targetEmailLower = target.email ? target.email.trim().toLowerCase() : '';
+
+  // 1. Gérer les organisations / tenants dont l'utilisateur est propriétaire ou contact
+  const { data: ownedOrgs } = await supabaseAdmin
+    .from('organizations')
+    .select('id, statut, email')
+    .eq('owner_id', userId);
+
+  for (const org of ownedOrgs || []) {
+    const [{ data: otherMembers }, { data: otherTenantUsers }] = await Promise.all([
+      supabaseAdmin.from('memberships').select('id').eq('organization_id', org.id).neq('user_id', userId).limit(1),
+      supabaseAdmin.from('profiles').select('id').eq('tenant_id', org.id).neq('id', userId).limit(1),
+    ]);
+    const hasOtherUsers = Boolean((otherMembers && otherMembers.length > 0) || (otherTenantUsers && otherTenantUsers.length > 0));
+
+    if (['brouillon', 'en_validation', 'suspendu'].includes(org.statut) || !hasOtherUsers) {
+      await deleteOrganizationAndTenantCascade(org.id);
+    } else {
+      const orgPatch = { owner_id: null };
+      if (targetEmailLower && org.email?.trim().toLowerCase() === targetEmailLower) {
+        orgPatch.email = null;
+      }
+      const { error: nullErr } = await supabaseAdmin.from('organizations').update(orgPatch).eq('id', org.id);
+      if (nullErr) {
+        await safeDbStep(() =>
+          supabaseAdmin
+            .from('organizations')
+            .update({ owner_id: actorUserId, ...(orgPatch.email === null ? { email: null } : {}) })
+            .eq('id', org.id)
+        );
+      }
+    }
+  }
+
+  await safeDbStep(() => supabaseAdmin.from('tenants').update({ owner_id: null }).eq('owner_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('tenants').update({ contact_admin_id: null }).eq('contact_admin_id', userId));
+  if (targetEmailLower) {
+    await safeDbStep(() => supabaseAdmin.from('tenants').update({ email: null }).ilike('email', targetEmailLower).is('owner_id', null));
+  }
+
+  // 2. Nettoyage complet des tables liées (FK / données utilisateur) avant suppression
+  await safeDbStep(() => supabaseAdmin.from('messages').delete().eq('sender_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('conversation_members').delete().eq('user_id', userId));
+
+  const { data: convs } = await supabaseAdmin.from('conversations').select('id').eq('created_by', userId);
+  const convIds = (convs || []).map((c) => c.id);
+  if (convIds.length > 0) {
+    await safeDbStep(() => supabaseAdmin.from('messages').delete().in('conversation_id', convIds));
+    await safeDbStep(() => supabaseAdmin.from('conversation_members').delete().in('conversation_id', convIds));
+    await safeDbStep(() => supabaseAdmin.from('conversations').delete().in('id', convIds));
+  }
+
+  const [{ data: resByUser }, { data: resByMember }] = await Promise.all([
+    supabaseAdmin.from('reservations').select('id').eq('user_id', userId),
+    supabaseAdmin.from('reservations').select('id').eq('membre_id', userId),
+  ]);
+  const userResIds = Array.from(new Set([...(resByUser || []), ...(resByMember || [])].map((r) => r.id)));
+  if (userResIds.length > 0) {
+    await safeDbStep(() => supabaseAdmin.from('sessions').delete().in('reservation_id', userResIds));
+    await safeDbStep(() => supabaseAdmin.from('paiements').delete().in('reservation_id', userResIds));
+  }
+
+  await safeDbStep(() => supabaseAdmin.from('notifications').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('memberships').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('invitations').update({ invited_by: null }).eq('invited_by', userId));
+  await safeDbStep(() => supabaseAdmin.from('invitations').update({ accepted_by: null }).eq('accepted_by', userId));
+  await safeDbStep(() => supabaseAdmin.from('guests').update({ converti_en_membre_id: null }).eq('converti_en_membre_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('trainer_profiles').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('inscriptions_formations').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('inscriptions_formations').delete().eq('membre_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('remuneration_formateurs').delete().eq('formateur_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('formations').delete().eq('formateur_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('sessions').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('paiements').update({ traite_par: null }).eq('traite_par', userId));
+  await safeDbStep(() => supabaseAdmin.from('paiements').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('reservations').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('reservations').delete().eq('membre_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('historique_tarifs').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('abonnements').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('credits_membres').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('membres_sites').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('documents_membres').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('rgpd_demandes').update({ traite_par: null }).eq('traite_par', userId));
+  await safeDbStep(() => supabaseAdmin.from('rgpd_demandes').delete().eq('user_id', userId));
+  await safeDbStep(() => supabaseAdmin.from('super_admin_audit_log').delete().eq('user_id', userId));
+  if (targetEmailLower) {
+    await safeDbStep(() => supabaseAdmin.from('email_otp').delete().ilike('email', targetEmailLower));
+    await safeDbStep(() => supabaseAdmin.from('invitations').delete().ilike('email', targetEmailLower));
+  }
+
+  // 3. Supprimer d'abord le compte Supabase Auth (déclenche ON DELETE CASCADE vers profiles)
+  // afin de ne JAMAIS laisser un compte orphelin dans auth.users si Auth échoue
+  const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(userId, false);
+  if (authErr) {
+    const authMsg = formatSupabaseErr(authErr, '');
+    if (!/not\s*found/i.test(authMsg)) {
+      return {
+        status: 400,
+        error: `Impossible de supprimer le compte dans Supabase Auth : ${authMsg || 'contrainte en base.'}`,
+      };
+    }
+  }
+
+  // 4. Nettoyage défensif du profil s'il existe encore (ex: sans ON DELETE CASCADE)
+  const { data: leftoverProf } = await supabaseAdmin
+    .from('profiles')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (leftoverProf?.id) {
+    const { error: profDelErr } = await supabaseAdmin.from('profiles').delete().eq('id', userId);
+    if (profDelErr) {
+      return { status: 400, error: formatSupabaseErr(profDelErr, 'Impossible de supprimer le profil utilisateur.') };
+    }
+  }
+
+  // 5. Purger tout compte auth.users orphelin (sans profil) portant la même adresse e-mail
+  if (targetEmailLower) {
+    await purgeOrphanAuthUsersByEmail(targetEmailLower, userId);
+  }
+
+  if (!skipAudit) {
+    await auditLog(
+      actorUserId,
+      'user_deleted',
+      'user',
+      userId,
+      `${target.prenom || ''} ${target.nom || ''}`.trim() || target.email,
+      { role: target.role, email: target.email },
+      actorIp
+    );
+  }
+
+  return { status: 200, message: `Utilisateur "${target.prenom} ${target.nom}" supprimé.` };
+}
+
+// DELETE /api/super-admin/users/:id
+async function deleteUser(req, res) {
+  try {
+    const userId = req.params.id;
+    if (userId === req.user.id) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
+    }
+
+    const result = await deleteUserCore(userId, req.user.id, req.ip);
+    if (result.status !== 200) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    return res.json({ message: result.message });
+  } catch (err) {
+    console.error('❌ Erreur deleteUser:', err);
+    res.status(500).json({ error: formatSupabaseErr(err, 'Erreur interne lors de la suppression du compte.') });
+  }
 }
 
 // GET /api/super-admin/users/roles-summary

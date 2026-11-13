@@ -141,11 +141,11 @@ export default function BookingStep2({ session }) {
               Configurez votre créneau
             </h1>
             <p style={{ fontSize: '14px', color: '#5a6a8a', margin: 0 }}>
-              Espace sélectionné : <strong style={{ color: '#f95d00' }}>{space.nom}</strong> ({parseFloat(space.tarif_horaire).toFixed(2)} DT / h)
+              Espace sélectionné : <strong style={{ color: '#f95d00' }}>{space.nom}</strong> ({parseFloat(space.tarif_horaire).toFixed(3)} DT / h)
             </p>
-            {space.type === 'open_space' ? (
+            {(space.type === 'open_space' || space.type === 'hot_desk') ? (
               <p style={{ fontSize: '13px', color: '#059669', margin: '8px 0 0 0', fontWeight: 600 }}>
-                Open space partagé — plusieurs personnes peuvent réserver le même créneau, jusqu’à {space.capacite} places.
+                Espace partagé — plusieurs personnes peuvent réserver le même créneau, jusqu’à {space.capacite} places.
               </p>
             ) : (
               <p style={{ fontSize: '13px', color: '#64748b', margin: '8px 0 0 0' }}>

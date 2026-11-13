@@ -1,5 +1,5 @@
 // services/api/formations.js — Formateurs & Formations (Module G)
-import { apiFetch } from './_core';
+import { apiFetch, getAuthHeaders, API_URL } from './_core';
 
 export const formationApi = {
   // ── Formateurs ──────────────────────────────────────────────────────────
@@ -46,6 +46,22 @@ export const formationApi = {
     }),
   getEmargement: (formationId) =>
     apiFetch(`/api/formations/${formationId}/emargement`),
+  downloadEmargementPdf: async (formationId, titre = 'formation') => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_URL}/api/formations/${formationId}/emargement?format=pdf`, {
+      headers: { ...headers },
+    });
+    if (!response.ok) throw new Error("Impossible de générer la feuille d'émargement PDF.");
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `emargement-${String(titre).replace(/[^a-z0-9]+/gi, '_').toLowerCase()}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  },
 
   // ── Espace membre ────────────────────────────────────────────────────────
   getMesFormations: () => apiFetch('/api/members/me/formations'),

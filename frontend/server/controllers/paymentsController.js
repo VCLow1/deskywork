@@ -27,9 +27,9 @@ async function createPayment(req, res) {
       return res.status(400).json({ error: 'Un paiement doit être lié à une réservation ou un abonnement.' });
     }
 
-    const validModes = ['cash', 'bank_transfer', 'check', 'online'];
+    const validModes = ['cash', 'bank_transfer', 'check']; // D1 : plus de mode « online »
     if (!validModes.includes(mode)) {
-      return res.status(400).json({ error: 'Mode de paiement invalide. Valeurs acceptées : cash, bank_transfer, check, online.' });
+      return res.status(400).json({ error: 'Mode de paiement invalide. Valeurs acceptées : cash, bank_transfer, check.' });
     }
 
     const validStatuts = ['pending', 'paid', 'failed', 'refunded'];
@@ -128,9 +128,9 @@ async function createPaymentSelf(req, res) {
     // Normaliser 'sur_place' / 'on_site' → 'cash' pour la base de données
     if (mode === 'sur_place' || mode === 'on_site') mode = 'cash';
 
-    const validModes = ['cash', 'bank_transfer', 'check', 'online'];
+    const validModes = ['cash', 'bank_transfer', 'check']; // D1 : plus de mode « online »
     if (!validModes.includes(mode)) {
-      return res.status(400).json({ error: `Mode de paiement invalide: '${mode}'. Valeurs acceptées : sur_place, on_site, cash, bank_transfer, check, online.` });
+      return res.status(400).json({ error: `Mode de paiement invalide: '${mode}'. Valeurs acceptées : sur_place, on_site, cash, bank_transfer, check.` });
     }
 
     const validStatuts = ['pending', 'paid', 'failed', 'refunded'];
@@ -198,7 +198,7 @@ async function createPaymentSelf(req, res) {
       abonnement_id: abonnement_id || null,
       montant: parseFloat(montant),
       mode,
-      statut: statut || 'pending',
+      statut: 'pending', // D1 : seul le staff encaisse (statut « paid » réservé à createPayment)
       tenant_id: req.tenantId,
     };
 
@@ -212,7 +212,7 @@ async function createPaymentSelf(req, res) {
       return res.status(400).json({ error: error.message });
     }
 
-    res.status(201).json({ payment: data, message: 'Paiement créé avec succès.' });
+    res.status(201).json({ payment: data, message: 'Montant dû enregistré. Règlement à effectuer sur place.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -341,15 +341,16 @@ async function updatePayment(req, res) {
       return res.status(400).json({ error: 'Statut invalide. Valeurs acceptées : pending, paid, failed, refunded.' });
     }
     updates.statut = statut;
-    if (statut === 'paid' && !date_paiement) {
-      updates.date_paiement = new Date().toISOString();
+    if (statut === 'paid') {
+      if (!date_paiement) updates.date_paiement = new Date().toISOString();
+      updates.numero_recu = req.body.numero_recu || generateReceiptNumber();
     }
   }
 
   if (mode !== undefined) {
-    const validModes = ['cash', 'bank_transfer', 'check', 'online'];
+    const validModes = ['cash', 'bank_transfer', 'check']; // D1 : plus de mode « online »
     if (!validModes.includes(mode)) {
-      return res.status(400).json({ error: 'Mode de paiement invalide. Valeurs acceptées : cash, bank_transfer, check, online.' });
+      return res.status(400).json({ error: 'Mode de paiement invalide. Valeurs acceptées : cash, bank_transfer, check.' });
     }
     updates.mode = mode;
   }
@@ -588,6 +589,254 @@ async function stripeWebhookHandler(req, res) {
   }
 }
 
+
+function generateReceiptNumber() {
+  const year = new Date().getFullYear();
+  const rnd = Math.floor(10000 + Math.random() * 90000);
+  return `REC-${year}-${rnd}`;
+}
+
+// GET /api/montant-du — Entité « Montant dû » unifiée (réservations, dépassements, prolongations, formations, abonnements)
+async function getMontantDu(req, res) {
+  try {
+    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile.role);
+    const targetUserId = isStaff ? (req.query.user_id || null) : req.user.id;
+
+    let q = supabaseAdmin
+      .from('paiements')
+      .select(`
+        *,
+        profiles(id, nom, prenom, email, telephone, type_membre),
+        reservations(id, date_debut, date_fin, espaces(nom, type)),
+        abonnements(id, type, date_debut, date_fin),
+        inscriptions_formations(id, formation_id, formations(id, titre))
+      `)
+      .eq('statut', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (targetUserId) q = q.eq('user_id', targetUserId);
+    if (isStaff && req.tenantId) q = q.eq('tenant_id', req.tenantId);
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const items = (data || []).map((p) => {
+      const ref = String(p.reference_externe || '').toUpperCase();
+      let categorie = 'autre';
+      let libelle = 'Frais';
+      if (ref.startsWith('DEPASSEMENT')) {
+        categorie = 'depassement';
+        libelle = `Dépassement horaire — ${p.reservations?.espaces?.nom || 'Espace'}`;
+      } else if (ref.startsWith('PENALITE') || ref.startsWith('NOSHOW') || ref.startsWith('ANNULATION')) {
+        categorie = 'penalite';
+        libelle = ref.replace(/^PENALITE[:\-\s]*/i, '').trim() || `Pénalité — ${p.reservations?.espaces?.nom || 'Établissement'}`;
+      } else if (ref.startsWith('PROLONGATION')) {
+        categorie = 'prolongation';
+        libelle = `Prolongation — ${p.reservations?.espaces?.nom || 'Espace'}`;
+      } else if (p.inscriptions_formations?.length > 0 || ref.startsWith('FORMATION')) {
+        categorie = 'formation';
+        const titre = p.inscriptions_formations?.[0]?.formations?.titre || 'Session de formation';
+        libelle = `Formation : ${titre}`;
+      } else if (p.abonnement_id) {
+        categorie = 'abonnement';
+        libelle = `Abonnement : ${p.abonnements?.type || 'Standard'}`;
+      } else if (p.reservation_id) {
+        categorie = 'reservation';
+        libelle = `Réservation — ${p.reservations?.espaces?.nom || 'Espace'}`;
+      } else if (p.reference_externe) {
+        libelle = p.reference_externe;
+      }
+      return {
+        ...p,
+        categorie,
+        libelle,
+        montant_du: Number(parseFloat(p.montant || 0).toFixed(3)),
+      };
+    });
+
+    const totalDu = Number(items.reduce((sum, it) => sum + it.montant_du, 0).toFixed(3));
+    res.json({ items, total_du: totalDu, count: items.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/payments/:id/collect — Encaissement sur place (complet ou partiel) + Reçu PDF numéroté (CDC v3.0 D1 & Chantier 4.2)
+async function collectPayment(req, res) {
+  const { id } = req.params;
+  const { mode = 'cash', montant_encaisse } = req.body;
+  const validModes = ['cash', 'bank_transfer', 'check'];
+  if (!validModes.includes(mode)) {
+    return res.status(400).json({ error: 'Mode invalide. Valeurs acceptées : cash (Espèces), bank_transfer (Virement), check (Chèque).' });
+  }
+
+  try {
+    const { data: pendingRow, error: fetchErr } = await supabaseAdmin
+      .from('paiements')
+      .select('*, profiles(nom, prenom, email), reservations(date_debut, date_fin, espaces(nom)), abonnements(type, date_debut, date_fin)')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !pendingRow) return res.status(404).json({ error: 'Montant dû introuvable.' });
+    if (pendingRow.statut === 'paid') return res.status(400).json({ error: 'Ce montant est déjà intégralement encaissé.' });
+
+    const totalDu = Number(parseFloat(pendingRow.montant || 0).toFixed(3));
+    const encaisse = montant_encaisse != null ? Number(parseFloat(montant_encaisse).toFixed(3)) : totalDu;
+    if (!Number.isFinite(encaisse) || encaisse <= 0 || encaisse > totalDu + 0.001) {
+      return res.status(400).json({ error: `Le montant encaissé doit être compris entre 0,001 DT et ${totalDu.toFixed(3)} DT.` });
+    }
+
+    const reste = Number((totalDu - encaisse).toFixed(3));
+    const nowIso = new Date().toISOString();
+    const numeroRecu = pendingRow.numero_recu || generateReceiptNumber();
+
+    let paidPayment = null;
+    let remainingPayment = null;
+
+    if (reste > 0.009) {
+      // Encaissement partiel : on diminue le solde restant et on crée une ligne encaissée avec son reçu numéroté
+      const { data: rem, error: remErr } = await supabaseAdmin
+        .from('paiements')
+        .update({ montant: reste })
+        .eq('id', pendingRow.id)
+        .select('*')
+        .single();
+      if (remErr) return res.status(400).json({ error: remErr.message });
+      remainingPayment = rem;
+
+      const { data: tranche, error: trErr } = await supabaseAdmin
+        .from('paiements')
+        .insert({
+          user_id: pendingRow.user_id,
+          reservation_id: pendingRow.reservation_id,
+          abonnement_id: pendingRow.abonnement_id,
+          tenant_id: pendingRow.tenant_id,
+          montant: encaisse,
+          mode,
+          statut: 'paid',
+          date_paiement: nowIso,
+          numero_recu: numeroRecu,
+          reference_externe: `PARTIEL-${pendingRow.reference_externe || pendingRow.id.slice(0, 8)}`,
+        })
+        .select('*, profiles(nom, prenom, email), reservations(date_debut, date_fin, espaces(nom)), abonnements(type, date_debut, date_fin)')
+        .single();
+      if (trErr) return res.status(400).json({ error: trErr.message });
+      paidPayment = tranche;
+    } else {
+      // Encaissement total
+      const { data: fullPaid, error: fpErr } = await supabaseAdmin
+        .from('paiements')
+        .update({
+          statut: 'paid',
+          mode,
+          date_paiement: nowIso,
+          numero_recu: numeroRecu,
+        })
+        .eq('id', pendingRow.id)
+        .select('*, profiles(nom, prenom, email), reservations(date_debut, date_fin, espaces(nom)), abonnements(type, date_debut, date_fin)')
+        .single();
+      if (fpErr) return res.status(400).json({ error: fpErr.message });
+      paidPayment = fullPaid;
+
+      // Mettre à jour statut paiement sur inscription_formation éventuelle
+      try {
+        await supabaseAdmin
+          .from('inscriptions_formations')
+          .update({ statut_paiement: 'paye', updated_at: nowIso })
+          .eq('paiement_id', pendingRow.id);
+      } catch (_) {}
+    }
+
+    // Notifier & envoyer le Reçu PDF par e-mail (D1 & D2)
+    try {
+      if (paidPayment?.profiles) {
+        await notifyPaiementEnregistre(
+          supabaseAdmin,
+          paidPayment,
+          { id: paidPayment.user_id, nom: paidPayment.profiles.nom, prenom: paidPayment.profiles.prenom, email: paidPayment.profiles.email }
+        );
+        if (isEmailConfigured()) {
+          const pdfBuffer = await generateReceiptPDF(paidPayment, {
+            coworkingName: process.env.COWORKING_NAME || 'DeskyWork',
+            coworkingEmail: process.env.COWORKING_EMAIL || 'contact@deskywork.tn',
+            coworkingTel: process.env.COWORKING_TEL || '+216 52 882 880 / +216 52 882 930',
+            coworkingAdresse: process.env.COWORKING_ADRESSE || 'Tunis, Tunisie',
+          });
+          await sendReceiptEmail(paidPayment, pdfBuffer, {
+            coworkingName: process.env.COWORKING_NAME || 'DeskyWork',
+            coworkingEmail: process.env.COWORKING_EMAIL || 'contact@deskywork.tn',
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Notification/Reçu email encaissement:', e.message);
+    }
+
+    res.json({
+      partial: reste > 0.009,
+      paid_payment: paidPayment,
+      remaining_payment: remainingPayment,
+      numero_recu: paidPayment.numero_recu,
+      message: reste > 0.009
+        ? `Encaissement partiel de ${encaisse.toFixed(3)} DT enregistré (Reçu ${paidPayment.numero_recu}). Reste dû : ${reste.toFixed(3)} DT.`
+        : `Encaissement complet de ${encaisse.toFixed(3)} DT enregistré (Reçu ${paidPayment.numero_recu}).`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/montant-du — Ajouter manuellement un montant dû (pénalité, dépassement, prolongation, frais)
+async function createMontantDu(req, res) {
+  try {
+    const { user_id, reservation_id = null, categorie = 'penalite', motif = '', montant } = req.body;
+    const m = parseFloat(montant);
+    if (!user_id || !Number.isFinite(m) || m <= 0) {
+      return res.status(400).json({ error: 'user_id et montant positif requis.' });
+    }
+
+    const prefixMap = {
+      penalite: 'PENALITE',
+      depassement: 'DEPASSEMENT',
+      prolongation: 'PROLONGATION',
+      formation: 'FORMATION',
+      autre: 'FRAIS',
+    };
+    const prefix = prefixMap[categorie] || 'PENALITE';
+    const refExterne = `${prefix}${motif ? ` : ${String(motif).trim()}` : ''}`;
+
+    const { data, error } = await supabaseAdmin
+      .from('paiements')
+      .insert({
+        user_id,
+        reservation_id: reservation_id || null,
+        tenant_id: req.tenantId,
+        montant: Number(m.toFixed(3)),
+        mode: 'cash',
+        statut: 'pending',
+        reference_externe: refExterne,
+      })
+      .select('*, profiles(id, nom, prenom, email)')
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    try {
+      await supabaseAdmin.from('notifications').insert({
+        user_id,
+        titre: 'Nouveau montant dû enregistré',
+        message: `Un montant de ${Number(m).toFixed(3)} DT (${refExterne}) a été ajouté à régler sur place.`,
+        type: 'warning',
+        lu: false,
+      });
+    } catch (_) {}
+
+    res.status(201).json({ item: data, message: 'Montant dû enregistré.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   createPayment,
   createPaymentSelf,
@@ -595,6 +844,9 @@ module.exports = {
   getMemberPayments,
   getPendingPayments,
   updatePayment,
+  getMontantDu,
+  createMontantDu,
+  collectPayment,
   getPaymentReceipt,
   stripePay,
   stripeVerify,

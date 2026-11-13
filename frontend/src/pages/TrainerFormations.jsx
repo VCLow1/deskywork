@@ -321,7 +321,7 @@ export default function TrainerFormations({ session }) {
     programme: '', prerequis: '', materiel: '',
     statut: 'planifiee',
     reservation_id: '',
-    mode: 'sur_place', // 'sur_place' | 'online'
+    mode: 'sur_place',
   };
   const [form, setForm] = useState(emptyForm);
   const [spaceCheck, setSpaceCheck] = useState({ status: 'idle', message: '' });
@@ -350,7 +350,7 @@ export default function TrainerFormations({ session }) {
     const esp = getSelectedSpace();
     if (!esp || !esp.tarif_horaire) return 0;
     const hours = calculateSpaceHours();
-    return parseFloat((hours * parseFloat(esp.tarif_horaire)).toFixed(2));
+    return parseFloat((hours * parseFloat(esp.tarif_horaire)).toFixed(3));
   };
 
   useEffect(() => { loadUserData(); }, []);
@@ -494,7 +494,7 @@ export default function TrainerFormations({ session }) {
       materiel: f.materiel || '',
       statut: f.statut || 'planifiee',
       reservation_id: f.reservation_id || '',
-      mode: f.reservations?.mode === 'online' ? 'online' : 'sur_place',
+      mode: 'sur_place',
     });
     setError('');
     setShowFormModal(true);
@@ -725,7 +725,7 @@ export default function TrainerFormations({ session }) {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined" style={{ fontSize: 13 }}>payments</span>
-                        {f.prix_inscription > 0 ? `${parseFloat(f.prix_inscription).toFixed(2)} DT` : 'Gratuit'}
+                        {f.prix_inscription > 0 ? `${parseFloat(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
                       </div>
                     </div>
                     {/* Fill bar */}
@@ -800,7 +800,7 @@ export default function TrainerFormations({ session }) {
                           </td>
                           <td className="p-4 font-semibold text-primary text-sm">
                             {f.prix_inscription > 0
-                              ? `${parseFloat(f.prix_inscription).toFixed(2)} DT`
+                              ? `${parseFloat(f.prix_inscription).toFixed(3)} DT`
                               : <span className="text-emerald-600 text-xs font-semibold">Gratuit</span>}
                           </td>
                           <td className="p-4">
@@ -953,7 +953,7 @@ export default function TrainerFormations({ session }) {
             )}
           </div>
 
-          {/* ══ ÉTAPE 2 : Coworking Space (désactivé si dates invalides) ══ */}
+          {/* ══ ÉTAPE 2 : Établissement partenaire (désactivé si dates invalides) ══ */}
           <div className={`rounded-2xl border p-4 space-y-3 transition-all duration-200 ${!form.date_debut || !form.date_fin || new Date(form.date_debut) >= new Date(form.date_fin)
             ? 'border-slate-200 bg-slate-50 opacity-50 pointer-events-none select-none'
             : 'border-amber-200 bg-amber-50'
@@ -963,10 +963,10 @@ export default function TrainerFormations({ session }) {
                 <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 14 }}>apartment</span>
               </span>
               <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">
-                Étape 2 — Coworking Space
+                Étape 2 — Établissement &amp; Salle
               </span>
             </div>
-            <Field label="Choisir un coworking space">
+            <Field label="Choisir un établissement partenaire">
               <select
                 className={inputCls}
                 value={selectedTenantId}
@@ -1092,79 +1092,9 @@ export default function TrainerFormations({ session }) {
                   </div>
                 </div>
 
-                {/* Sélection du mode de paiement */}
-                <div>
-                  <label className="block text-xs font-bold text-emerald-950 mb-2">
-                    Mode de paiement de la réservation *
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {/* Option 1 : Sur place */}
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setForm(p => ({ ...p, mode: 'sur_place' }))}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setForm(p => ({ ...p, mode: 'sur_place' })); }}
-                      className={`p-3 rounded-2xl border-2 cursor-pointer transition-all duration-150 relative ${form.mode === 'sur_place'
-                        ? 'border-secondary bg-secondary/5 shadow-xs'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`material-symbols-outlined text-lg ${form.mode === 'sur_place' ? 'text-secondary' : 'text-slate-500'}`}>
-                          storefront
-                        </span>
-                        <span className={`text-xs font-bold ${form.mode === 'sur_place' ? 'text-slate-900' : 'text-slate-700'}`}>
-                          Sur place
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        À l'accueil le jour J (Espèces, chèque ou TPE).
-                      </p>
-                      {form.mode === 'sur_place' && (
-                        <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-secondary" />
-                      )}
-                    </div>
-
-                    {/* Option 2 : En ligne */}
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setForm(p => ({ ...p, mode: 'online' }))}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setForm(p => ({ ...p, mode: 'online' })); }}
-                      className={`p-3 rounded-2xl border-2 cursor-pointer transition-all duration-150 relative ${form.mode === 'online'
-                        ? 'border-secondary bg-secondary/5 shadow-xs'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`material-symbols-outlined text-lg ${form.mode === 'online' ? 'text-secondary' : 'text-slate-500'}`}>
-                          credit_card
-                        </span>
-                        <span className={`text-xs font-bold ${form.mode === 'online' ? 'text-slate-900' : 'text-slate-700'}`}>
-                          En ligne
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        Par carte bancaire (dès acceptation admin).
-                      </p>
-                      {form.mode === 'online' && (
-                        <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-secondary" />
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Note explicative du workflow */}
-                  <div className="mt-2.5 p-3 rounded-xl bg-white/95 border border-emerald-200/90 text-[11px] text-slate-600 leading-relaxed">
-                    {form.mode === 'sur_place' ? (
-                      <>
-                        ℹ️ <strong>Processus :</strong> Votre réservation sera transmise au coworking en attente. Une fois acceptée par l'administrateur, votre salle est garantie et vous réglerez à votre arrivée à l'accueil.
-                      </>
-                    ) : (
-                      <>
-                        ℹ️ <strong>Processus :</strong> Votre réservation sera transmise au coworking en attente. Dès que l'administrateur l'aura acceptée, vous pourrez régler en ligne par carte bancaire.
-                      </>
-                    )}
-                  </div>
+                {/* Mode de règlement CDC v3.0 D1 : 100 % sur place */}
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+                  <strong>Règlement à effectuer sur place</strong> (espèces, chèque ou virement) lors de votre arrivée à l'établissement. Un reçu PDF numéroté vous sera remis après encaissement.
                 </div>
               </div>
             )}

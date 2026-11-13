@@ -1,10 +1,12 @@
-// pages/Login.jsx — Écran de connexion unique pour tous les profils & redirection contextuelle
+// pages/Login.jsx — Écran de connexion unique (CDC v3.0 : Email/Mot de passe + Google SSO uniquement ;
+// la connexion par code WhatsApp/SMS est reportée en phase 2).
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
 import { useLanguage, LanguageSwitcher } from '../context/LanguageContext';
 import { authUnifiedApi } from '../services/api/authUnified';
+import { clearPendingOAuthRole } from '../constants/registrationRoles';
 
 /* ─── Icône SVG Google ─── */
 const GoogleIcon = () => (
@@ -21,49 +23,52 @@ export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Mode de connexion : 'password' | 'phone_otp'
-  const [loginMode, setLoginMode] = useState('password');
-
   // Champs Mot de passe
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
 
-  // Champs OTP WhatsApp/SMS
-  const [phone, setPhone] = useState('+216 ');
-  const [phoneOtpCode, setPhoneOtpCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpCountdown, setOtpCountdown] = useState(60);
-
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
 
   // Vérifier les messages dans l'URL
   useEffect(() => {
     const reason = searchParams.get('reason');
-    if (reason === 'pending') {
+    const verified = searchParams.get('verified');
+    const emailParam = searchParams.get('email');
+    const oauthErr = searchParams.get('error');
+    const oauthErrDesc = searchParams.get('error_description');
+    const msgParam = searchParams.get('message');
+    if (emailParam) setEmail((prev) => prev || emailParam);
+    if (verified === '1') {
+      setInfoMsg('Votre adresse e-mail est confirmée. Connectez-vous pour accéder à votre espace.');
+    }
+    if (msgParam) {
+      setErrorMsg(msgParam);
+    } else if (oauthErr === 'account_exists') {
+      setErrorMsg('Cette adresse e-mail est déjà associée à un compte existant. Veuillez vous connecter.');
+    } else if (reason === 'pending') {
       setErrorMsg(t('login.pendingApprovalAlert'));
     } else if (reason === 'suspended') {
       setErrorMsg(t('login.suspendedAlert'));
+    } else if (oauthErr === 'oauth_failed') {
+      setErrorMsg(oauthErrDesc || 'La connexion avec Google n\'a pas abouti. Veuillez réessayer.');
     }
   }, [searchParams, t]);
-
-  // Compte à rebours OTP
-  useEffect(() => {
-    if (!otpSent || otpCountdown <= 0) return;
-    const timer = setInterval(() => {
-      setOtpCountdown((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [otpSent, otpCountdown]);
 
   // ── Redirection après connexion réussie ──────────────────────────────────────
   const handlePostLoginRedirect = async (user) => {
     try {
       const context = await authUnifiedApi.getMyContext();
 
+      if (context.requiresEmailVerification) {
+        navigate(`/verify-email?email=${encodeURIComponent(user?.email || email)}`, { replace: true });
+        return;
+      }
+
       if (context.hasMultipleOrgs) {
-        // L'utilisateur appartient à plusieurs organisations -> sélecteur d'espace
         navigate('/select-space', { replace: true });
         return;
       }
@@ -75,7 +80,6 @@ export default function Login() {
 
       navigate(context.recommendedRedirect || '/dashboard', { replace: true });
     } catch (_) {
-      // Fallback
       navigate('/dashboard', { replace: true });
     }
   };
@@ -85,10 +89,14 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
+    setInfoMsg('');
+    setUnverifiedEmail('');
+
+    const cleanEmail = email.trim().toLowerCase();
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
+        email: cleanEmail,
         password,
       });
 
@@ -96,7 +104,13 @@ export default function Login() {
 
       await handlePostLoginRedirect(data.user);
     } catch (err) {
-      setErrorMsg(err.message || 'Identifiants incorrects.');
+      const msg = String(err?.message || '');
+      if (msg.toLowerCase().includes('email not confirmed')) {
+        setUnverifiedEmail(cleanEmail);
+        setErrorMsg('Votre adresse e-mail n\'est pas encore vérifiée. Veuillez activer votre compte avant de vous connecter.');
+      } else {
+        setErrorMsg(err.message || 'Identifiants incorrects.');
+      }
     } finally {
       setLoading(false);
     }
@@ -105,6 +119,7 @@ export default function Login() {
   // ── 2. Connexion Sociale Google ────────────────────────────────────────────
   const handleGoogleLogin = async () => {
     setErrorMsg('');
+    clearPendingOAuthRole();
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -115,45 +130,6 @@ export default function Login() {
       if (error) throw error;
     } catch (err) {
       setErrorMsg(err.message || 'Erreur Google OAuth.');
-    }
-  };
-
-  // ── 3. Envoi OTP Téléphone WhatsApp/SMS ─────────────────────────────────────
-  const handleSendPhoneOtp = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      await authUnifiedApi.sendPhoneOtp({ phone: phone.trim(), channel: 'whatsapp' });
-      setOtpSent(true);
-      setOtpCountdown(60);
-    } catch (err) {
-      setErrorMsg(err.message || 'Erreur lors de l\'envoi du code.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── 4. Vérification OTP Téléphone pour Login ────────────────────────────────
-  const handleVerifyPhoneOtpLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg('');
-
-    try {
-      const verifyRes = await authUnifiedApi.verifyPhoneOtp({
-        phone: phone.trim(),
-        code: phoneOtpCode.trim(),
-      });
-
-      if (!verifyRes.success) throw new Error(t('otp.invalidCode'));
-
-      // Connexion via session Supabase
-      const { data: { session } } = await supabase.auth.getSession();
-      await handlePostLoginRedirect(session?.user);
-    } catch (err) {
-      setErrorMsg(err.message || t('otp.invalidCode'));
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -258,7 +234,6 @@ export default function Login() {
           PANNEAU DROIT — Formulaire de connexion
           ══════════════════════════════════════════ */}
       <div className="w-full min-w-0 flex-1 page-gradient flex flex-col relative overflow-hidden">
-        {/* Header */}
         <header className="flex items-center justify-between px-6 py-4 relative z-10 border-b border-outline-variant/15">
           <div className="lg:hidden">
             <BrandLogo to="/" height={38} />
@@ -272,7 +247,6 @@ export default function Login() {
           </div>
         </header>
 
-        {/* Contenu centré */}
         <main className="w-full flex-1 flex items-center justify-center px-4 sm:px-6 py-8 relative z-10">
           <div className="w-full max-w-[440px] animate-fade-up">
 
@@ -285,15 +259,34 @@ export default function Login() {
               </p>
             </div>
 
+            {infoMsg && (
+              <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in bg-emerald-50 text-emerald-800 border border-emerald-200">
+                <span className="material-symbols-outlined text-[18px] shrink-0">check_circle</span>
+                <span>{infoMsg}</span>
+              </div>
+            )}
+
             {errorMsg && (
-              <div className="mb-5 p-4 rounded-2xl flex items-center gap-3 text-sm animate-fade-in bg-red-50 text-red-700 border border-red-200">
-                <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
-                <span>{errorMsg}</span>
+              <div className="mb-5 p-4 rounded-2xl space-y-2 text-sm animate-fade-in bg-red-50 text-red-700 border border-red-200">
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
+                  <span>{errorMsg}</span>
+                </div>
+                {unverifiedEmail && (
+                  <div className="pl-7">
+                    <Link
+                      to={`/verify-email?email=${encodeURIComponent(unverifiedEmail)}`}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-[#f95d00] hover:underline"
+                    >
+                      Vérifier mon e-mail / Renvoyer le lien
+                      <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                    </Link>
+                  </div>
+                )}
               </div>
             )}
 
             <div className="glass-card rounded-3xl shadow-elevated p-6 sm:p-8 space-y-5">
-              {/* Connexion Sociale Google */}
               <button
                 type="button"
                 onClick={handleGoogleLogin}
@@ -310,181 +303,76 @@ export default function Login() {
                 <div className="flex-1 h-px bg-outline-variant/25" />
               </div>
 
-              {/* Sélecteur de méthode : Mot de passe OU OTP WhatsApp */}
-              <div className="flex p-1 bg-surface-container-low rounded-xl border border-outline-variant/20 text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setLoginMode('password')}
-                  className={`flex-1 py-1.5 rounded-lg transition-all ${
-                    loginMode === 'password'
-                      ? 'bg-white text-on-surface shadow-sm'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  Email + Mot de passe
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginMode('phone_otp')}
-                  className={`flex-1 py-1.5 rounded-lg transition-all ${
-                    loginMode === 'phone_otp'
-                      ? 'bg-white text-on-surface shadow-sm'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  Code WhatsApp
-                </button>
-              </div>
-
-              {/* Formulaire Mot de passe classique */}
-              {loginMode === 'password' && (
-                <form onSubmit={handlePasswordLogin} className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-on-surface" htmlFor="login-email">
-                      {t('login.emailLabel')}
-                    </label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                        <span className="material-symbols-outlined text-[19px]">mail</span>
-                      </span>
-                      <input
-                        id="login-email"
-                        type="email"
-                        required
-                        autoComplete="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder={t('login.emailPlaceholder')}
-                        className="form-input pl-10"
-                      />
-                    </div>
+              <form onSubmit={handlePasswordLogin} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-on-surface" htmlFor="login-email">
+                    {t('login.emailLabel')}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
+                      <span className="material-symbols-outlined text-[19px]">mail</span>
+                    </span>
+                    <input
+                      id="login-email"
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder={t('login.emailPlaceholder')}
+                      className="form-input pl-10"
+                    />
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-on-surface" htmlFor="login-password">
-                      {t('login.passwordLabel')}
-                    </label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
-                        <span className="material-symbols-outlined text-[19px]">lock</span>
-                      </span>
-                      <input
-                        id="login-password"
-                        type={showPwd ? 'text' : 'password'}
-                        required
-                        autoComplete="current-password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder={t('login.passwordPlaceholder')}
-                        className="form-input pl-10 pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPwd(!showPwd)}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline hover:text-on-surface"
-                      >
-                        <span className="material-symbols-outlined text-[19px]">
-                          {showPwd ? 'visibility_off' : 'visibility'}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <Link to="/forgot-password" className="text-xs font-semibold text-secondary hover:underline">
-                      {t('login.forgotPassword')}
-                    </Link>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="btn-primary w-full py-3 rounded-xl font-semibold text-sm shadow-md flex items-center justify-center gap-2"
-                  >
-                    {loading ? (
-                      <><span className="animate-spin material-symbols-outlined text-[18px]">refresh</span> {t('login.submitting')}</>
-                    ) : (
-                      <><span className="material-symbols-outlined text-[18px]">login</span> {t('login.submitBtn')}</>
-                    )}
-                  </button>
-                </form>
-              )}
-
-              {/* Formulaire Connexion Rapide OTP WhatsApp */}
-              {loginMode === 'phone_otp' && (
-                <div className="space-y-4">
-                  {!otpSent ? (
-                    <div className="space-y-3">
-                      <p className="text-xs text-on-surface-variant leading-relaxed">
-                        {t('login.phoneOtpDesc')}
-                      </p>
-                      <div className="space-y-1">
-                        <label className="text-xs font-semibold text-on-surface">
-                          Numéro de téléphone
-                        </label>
-                        <input
-                          type="tel"
-                          required
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="+216 99 999 999"
-                          className="form-input"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        disabled={loading || !phone || phone.length < 8}
-                        onClick={handleSendPhoneOtp}
-                        className="btn-primary w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
-                      >
-                        {loading ? t('common.loading') : t('login.sendOtp')}
-                      </button>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleVerifyPhoneOtpLogin} className="space-y-4">
-                      <p className="text-xs text-on-surface-variant">
-                        Entrez le code reçu sur WhatsApp ({phone})
-                      </p>
-                      <input
-                        type="text"
-                        maxLength={6}
-                        autoFocus
-                        required
-                        value={phoneOtpCode}
-                        onChange={(e) => setPhoneOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="••••••"
-                        className="form-input text-center text-2xl tracking-[0.5em] font-mono py-2.5 font-bold"
-                      />
-                      <button
-                        type="submit"
-                        disabled={loading || phoneOtpCode.length < 6}
-                        className="btn-primary w-full py-3 rounded-xl font-semibold text-sm"
-                      >
-                        {loading ? t('otp.verifying') : t('otp.verifyBtn')}
-                      </button>
-                      <div className="flex items-center justify-center gap-3 text-xs">
-                        <button
-                          type="button"
-                          disabled={otpCountdown > 0 || loading}
-                          onClick={handleSendPhoneOtp}
-                          className={otpCountdown > 0 ? 'text-outline-variant' : 'text-secondary hover:underline'}
-                        >
-                          {otpCountdown > 0 ? t('common.retryIn', { seconds: otpCountdown }) : t('common.resend')}
-                        </button>
-                        <span>•</span>
-                        <button
-                          type="button"
-                          onClick={() => setOtpSent(false)}
-                          className="text-on-surface-variant hover:underline"
-                        >
-                          Changer de numéro
-                        </button>
-                      </div>
-                    </form>
-                  )}
                 </div>
-              )}
 
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-on-surface" htmlFor="login-password">
+                    {t('login.passwordLabel')}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-outline pointer-events-none">
+                      <span className="material-symbols-outlined text-[19px]">lock</span>
+                    </span>
+                    <input
+                      id="login-password"
+                      type={showPwd ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={t('login.passwordPlaceholder')}
+                      className="form-input pl-10 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd(!showPwd)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline hover:text-on-surface"
+                    >
+                      <span className="material-symbols-outlined text-[19px]">
+                        {showPwd ? 'visibility_off' : 'visibility'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <Link to="/forgot-password" className="text-xs font-semibold text-secondary hover:underline">
+                    {t('login.forgotPassword')}
+                  </Link>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="btn-primary w-full py-3 rounded-xl font-semibold text-sm shadow-md flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <><span className="animate-spin material-symbols-outlined text-[18px]">refresh</span> {t('login.submitting')}</>
+                  ) : (
+                    <><span className="material-symbols-outlined text-[18px]">login</span> {t('login.submitBtn')}</>
+                  )}
+                </button>
+              </form>
             </div>
 
             <p className="text-center text-xs text-on-surface-variant mt-5">

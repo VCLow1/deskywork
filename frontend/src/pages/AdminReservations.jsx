@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { bookingApi } from '../services/api';
+import { bookingApi, memberApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
@@ -17,10 +17,30 @@ const STATUT_CONFIG = {
     badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50',
     icon: 'check_circle',
   },
+  refused: {
+    label: 'Refusée',
+    badgeClass: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-700/50',
+    icon: 'block',
+  },
   cancelled: {
     label: 'Annulée',
-    badgeClass: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-700/50',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
     icon: 'cancel',
+  },
+  completed: {
+    label: 'Terminée',
+    badgeClass: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700/50',
+    icon: 'task_alt',
+  },
+  no_show: {
+    label: 'Absent (no-show)',
+    badgeClass: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700/50',
+    icon: 'person_off',
+  },
+  waitlisted: {
+    label: "En liste d'attente",
+    badgeClass: 'bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-700/50',
+    icon: 'queue',
   },
 };
 
@@ -40,11 +60,38 @@ export default function AdminReservations({ session }) {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Filtres
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filterStatut, setFilterStatut] = useState('all');
   const [filterEspace, setFilterEspace] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') || '');
+  const [showNewModal, setShowNewModal] = useState(() => searchParams.get('new') === '1');
+  const [membersList, setMembersList] = useState([]);
+  const [creatingBooking, setCreatingBooking] = useState(false);
+  const [newBookingForm, setNewBookingForm] = useState(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      user_id: '',
+      espace_id: '',
+      date: today,
+      heure_debut: '09:00',
+      heure_fin: '12:00',
+      notes: '',
+    };
+  });
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (q !== null) setSearchQuery(q);
+    if (searchParams.get('new') === '1') setShowNewModal(true);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (showNewModal && membersList.length === 0) {
+      memberApi.getAll().then((r) => setMembersList(r.members || [])).catch(() => {});
+    }
+  }, [showNewModal]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -81,16 +128,24 @@ export default function AdminReservations({ session }) {
 
   const handleConfirmBooking = async (booking) => {
     const id = typeof booking === 'object' ? booking.id : booking;
-    const mode = typeof booking === 'object' ? booking.mode : 'online';
-    const isSurPlace = mode === 'sur_place' || mode === 'on_site';
     setActionId(id);
     try {
       await bookingApi.update(id, { statut: 'confirmed' });
-      if (isSurPlace) {
-        showToast('Réservation acceptée ! Le membre réglera sur place à l\'accueil le jour J.');
-      } else {
-        showToast('Réservation acceptée ! Le membre a désormais le droit de payer en ligne.');
-      }
+      showToast("Réservation confirmée ! Règlement à effectuer sur place lors de l'arrivée du client.");
+      await loadData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleUpdateStatus = async (id, statut, confirmMsg, successMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setActionId(id);
+    try {
+      await bookingApi.update(id, { statut });
+      showToast(successMsg);
       await loadData();
     } catch (e) {
       setError(e.message);
@@ -217,6 +272,14 @@ export default function AdminReservations({ session }) {
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowNewModal(true)}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-[#f95d00] text-white rounded-xl font-semibold text-xs sm:text-sm hover:bg-[#e55500] transition-all shadow-sm"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_circle</span>
+            <span>Nouvelle réservation</span>
+          </button>
           <Link
             to="/admin/agenda"
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-outline-variant/30 text-primary rounded-xl font-semibold text-xs sm:text-sm hover:bg-surface-container transition-all shadow-sm"
@@ -308,6 +371,10 @@ export default function AdminReservations({ session }) {
               <option value="all">Tous les statuts</option>
               <option value="pending">En attente</option>
               <option value="confirmed">Confirmée</option>
+              <option value="refused">Refusée</option>
+              <option value="completed">Terminée</option>
+              <option value="no_show">Absent (no-show)</option>
+              <option value="waitlisted">En liste d'attente</option>
               <option value="cancelled">Annulée</option>
             </select>
           </div>
@@ -428,19 +495,14 @@ export default function AdminReservations({ session }) {
                         </div>
                       </td>
 
-                      {/* Mode de Paiement */}
+                      {/* Mode de Paiement (CDC v3.0 D1 : 100 % sur place) */}
                       <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
-                        {(b.mode === 'sur_place' || b.mode === 'on_site' || b.mode === 'cash') ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-xs">
-                            <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 14 }}>storefront</span>
-                            <span>Sur place</span>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-xs">
+                          <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 14 }}>storefront</span>
+                          <span>
+                            {b.mode === 'check' ? 'Chèque (sur place)' : b.mode === 'bank_transfer' ? 'Virement (sur place)' : 'Sur place'}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-900 border border-blue-200 shadow-xs">
-                            <span className="material-symbols-outlined text-blue-600" style={{ fontSize: 14 }}>credit_card</span>
-                            <span>En ligne</span>
-                          </span>
-                        )}
+                        </span>
                       </td>
 
                       {/* Statut Badge */}
@@ -455,19 +517,56 @@ export default function AdminReservations({ session }) {
                       <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           {b.statut === 'pending' && (
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmBooking(b)}
-                              disabled={isActing}
-                              title={b.mode === 'sur_place' || b.mode === 'on_site' ? "Accepter (paiement sur place à l'accueil)" : "Accepter (autorise le paiement en ligne)"}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50"
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
-                              <span className="hidden xs:inline">Accepter</span>
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmBooking(b)}
+                                disabled={isActing}
+                                title="Accepter (règlement sur place à l'accueil)"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
+                                <span className="hidden xs:inline">Accepter</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateStatus(b.id, 'refused', 'Refuser cette demande de réservation ?', 'Réservation refusée.')}
+                                disabled={isActing}
+                                title="Refuser la demande"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>block</span>
+                                <span className="hidden xs:inline">Refuser</span>
+                              </button>
+                            </>
                           )}
 
-                          {['pending', 'confirmed'].includes(b.statut) && (
+                          {b.statut === 'confirmed' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateStatus(b.id, 'completed', null, 'Réservation marquée terminée.')}
+                                disabled={isActing}
+                                title="Marquer comme terminée"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sky-700 hover:bg-sky-50 border border-sky-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span>
+                                <span className="hidden sm:inline">Terminée</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateStatus(b.id, 'no_show', 'Marquer ce client comme absent (no-show) ?', 'Statut Absent (no-show) enregistré.')}
+                                disabled={isActing}
+                                title="Marquer absent (no-show)"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-orange-700 hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person_off</span>
+                                <span className="hidden sm:inline">Absent</span>
+                              </button>
+                            </>
+                          )}
+
+                          {['pending', 'confirmed', 'waitlisted'].includes(b.statut) && (
                             <button
                               type="button"
                               onClick={() => handleCancelBooking(b.id)}
@@ -506,6 +605,141 @@ export default function AdminReservations({ session }) {
           label="réservations"
         />
       </div>
+
+      {showNewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setCreatingBooking(true);
+              setError('');
+              try {
+                const date_debut = new Date(`${newBookingForm.date}T${newBookingForm.heure_debut}:00`).toISOString();
+                const date_fin = new Date(`${newBookingForm.date}T${newBookingForm.heure_fin}:00`).toISOString();
+                await bookingApi.create({
+                  user_id: newBookingForm.user_id,
+                  espace_id: newBookingForm.espace_id,
+                  date_debut,
+                  date_fin,
+                  notes: newBookingForm.notes,
+                });
+                showToast('Réservation créée avec succès.');
+                setShowNewModal(false);
+                if (searchParams.get('new')) setSearchParams({});
+                await loadData();
+              } catch (err) {
+                setError(err.message);
+              } finally {
+                setCreatingBooking(false);
+              }
+            }}
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Nouvelle réservation</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewModal(false);
+                  if (searchParams.get('new')) setSearchParams({});
+                }}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Membre *</label>
+              <select
+                required
+                value={newBookingForm.user_id}
+                onChange={(e) => setNewBookingForm((p) => ({ ...p, user_id: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                <option value="">— Sélectionner un membre —</option>
+                {membersList.map((m) => (
+                  <option key={m.id} value={m.id}>{m.prenom} {m.nom} ({m.email})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Espace *</label>
+              <select
+                required
+                value={newBookingForm.espace_id}
+                onChange={(e) => setNewBookingForm((p) => ({ ...p, espace_id: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                <option value="">— Sélectionner un espace —</option>
+                {espaces.map((esp) => (
+                  <option key={esp.id} value={esp.id}>{esp.nom} ({esp.tarif_horaire} DT/h)</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs font-semibold mb-1">Date *</label>
+                <input
+                  type="date"
+                  required
+                  value={newBookingForm.date}
+                  onChange={(e) => setNewBookingForm((p) => ({ ...p, date: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">Début *</label>
+                <input
+                  type="time"
+                  required
+                  value={newBookingForm.heure_debut}
+                  onChange={(e) => setNewBookingForm((p) => ({ ...p, heure_debut: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">Fin *</label>
+                <input
+                  type="time"
+                  required
+                  value={newBookingForm.heure_fin}
+                  onChange={(e) => setNewBookingForm((p) => ({ ...p, heure_fin: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Notes</label>
+              <input
+                type="text"
+                value={newBookingForm.notes}
+                onChange={(e) => setNewBookingForm((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Besoin particulier..."
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewModal(false);
+                  if (searchParams.get('new')) setSearchParams({});
+                }}
+                className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={creatingBooking}
+                className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white hover:bg-[#e55500] disabled:opacity-50"
+              >
+                {creatingBooking ? 'Création…' : 'Confirmer la réservation'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </PortalLayout>
   );
 }

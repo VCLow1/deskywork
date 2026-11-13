@@ -676,4 +676,315 @@ async function getSuperAdminReport(req, res) {
   }
 }
 
-module.exports = { getAdminReport, getSuperAdminReport };
+// ===========================================================================
+//  CDC v3.0 — RAPPORTS DETAILLES FILTRABLES + EXPORT PDF
+// ===========================================================================
+async function buildDetailedReportData(req) {
+  try {
+    const tid = req.tenantId;
+    const period = String(req.query.period || 'mois');
+    const espaceId = req.query.espace_id ? String(req.query.espace_id) : null;
+    let win = getPeriodWindow(period);
+
+    if (req.query.from && req.query.to) {
+      const f = new Date(`${req.query.from}T00:00:00.000Z`);
+      const t = new Date(`${req.query.to}T23:59:59.999Z`);
+      if (!Number.isNaN(f.getTime()) && !Number.isNaN(t.getTime()) && t >= f) {
+        win = {
+          period: 'custom',
+          from: f.toISOString(),
+          to: t.toISOString(),
+          fromJ: f,
+          toJ: t,
+          ms: Math.max(86400000, t.getTime() - f.getTime()),
+        };
+      }
+    }
+
+    let espQ = supabaseAdmin.from('espaces').select('id, nom, type, capacite, tarif_horaire').order('nom');
+    if (tid) espQ = espQ.eq('tenant_id', tid);
+
+    let tenantQ = tid
+      ? supabaseAdmin.from('tenants').select('id, nom, ville, email').eq('id', tid).maybeSingle()
+      : Promise.resolve({ data: null });
+
+    let payPaidQ = supabaseAdmin
+      .from('paiements')
+      .select('id, user_id, reservation_id, montant, mode, statut, numero_recu, date_paiement, created_at, reference_externe, profiles(nom, prenom, email), reservations(espace_id, espaces(nom, type))')
+      .eq('statut', 'paid')
+      .gte('created_at', win.from)
+      .lte('created_at', win.to)
+      .order('created_at', { ascending: false });
+    if (tid) payPaidQ = payPaidQ.eq('tenant_id', tid);
+
+    let payPendingQ = supabaseAdmin
+      .from('paiements')
+      .select('id, user_id, reservation_id, montant, statut, created_at, reference_externe, profiles(nom, prenom, email, telephone), reservations(espace_id, espaces(nom))')
+      .eq('statut', 'pending')
+      .order('created_at', { ascending: false });
+    if (tid) payPendingQ = payPendingQ.eq('tenant_id', tid);
+
+    let resQ = supabaseAdmin
+      .from('reservations')
+      .select('id, user_id, espace_id, date_debut, date_fin, statut, montant_total, guest_nom, espaces(id, nom, type), profiles!user_id(nom, prenom, email)')
+      .gte('date_debut', win.from)
+      .lte('date_debut', win.to)
+      .order('date_debut', { ascending: false });
+    if (tid) resQ = resQ.eq('tenant_id', tid);
+    if (espaceId) resQ = resQ.eq('espace_id', espaceId);
+
+    let sessQ = supabaseAdmin
+      .from('sessions')
+      .select('id, reservation_id, tenant_id, check_in, check_out, temps_restant, statut, created_at, reservations(espace_id, date_debut, date_fin, espaces(nom), profiles!user_id(nom, prenom, email))')
+      .gte('created_at', win.from)
+      .lte('created_at', win.to)
+      .order('created_at', { ascending: false });
+    if (tid) sessQ = sessQ.eq('tenant_id', tid);
+
+    let memQ = supabaseAdmin
+      .from('profiles')
+      .select('id, nom, prenom, email, telephone, type_membre, statut_compte, created_at')
+      .in('role', ['member', 'guest']);
+    if (tid) memQ = memQ.eq('tenant_id', tid);
+
+    let formQ = supabaseAdmin
+      .from('formations')
+      .select('id, titre, date_debut, date_fin, prix, places_max, statut, formateur_id, inscriptions_formations(id, statut)')
+      .order('date_debut', { ascending: false });
+    if (tid) formQ = formQ.eq('tenant_id', tid);
+
+    const [
+      tenantRes,
+      espRes,
+      paidRes,
+      pendingRes,
+      resRes,
+      sessRes,
+      memRes,
+      formRes,
+    ] = await Promise.all([
+      Promise.resolve(tenantQ).catch(() => ({ data: null })),
+      Promise.resolve(espQ).catch(() => ({ data: [] })),
+      Promise.resolve(payPaidQ).catch(() => ({ data: [] })),
+      Promise.resolve(payPendingQ).catch(() => ({ data: [] })),
+      Promise.resolve(resQ).catch(() => ({ data: [] })),
+      Promise.resolve(sessQ).catch(() => ({ data: [] })),
+      Promise.resolve(memQ).catch(() => ({ data: [] })),
+      Promise.resolve(formQ).catch(() => ({ data: [] })),
+    ]);
+
+    const tenant = tenantRes?.data || null;
+    const espaces = Array.isArray(espRes?.data) ? espRes.data : [];
+    const paidRows = Array.isArray(paidRes?.data) ? paidRes.data : [];
+    const pendingRows = Array.isArray(pendingRes?.data) ? pendingRes.data : [];
+    const resRows = Array.isArray(resRes?.data) ? resRes.data : [];
+    const sessRows = Array.isArray(sessRes?.data) ? sessRes.data : [];
+    const memRows = Array.isArray(memRes?.data) ? memRes.data : [];
+    const formRows = Array.isArray(formRes?.data) ? formRes.data : [];
+
+    const filteredPaid = espaceId
+      ? paidRows.filter((p) => p.reservations?.espace_id === espaceId)
+      : paidRows;
+
+    const filteredPending = espaceId
+      ? pendingRows.filter((p) => p.reservations?.espace_id === espaceId)
+      : pendingRows;
+
+    const totalCA = Number(filteredPaid.reduce((s, p) => s + parseFloat(p.montant || 0), 0).toFixed(3));
+    const caByMode = {};
+    filteredPaid.forEach((p) => {
+      const m = p.mode || 'cash';
+      caByMode[m] = Number(((caByMode[m] || 0) + parseFloat(p.montant || 0)).toFixed(3));
+    });
+
+    const espList = espaceId ? espaces.filter((e) => e.id === espaceId) : espaces;
+    const periodHours = Math.max(1, win.ms / 3600000);
+    const occupation = espList.map((e) => {
+      const rList = resRows.filter((r) => r.espace_id === e.id && r.statut !== 'cancelled');
+      const bookedHours = rList.reduce((sum, r) => sum + Math.max(0, (new Date(r.date_fin) - new Date(r.date_debut)) / 3600000), 0);
+      const caEsp = filteredPaid.filter((p) => p.reservations?.espace_id === e.id).reduce((s, p) => s + parseFloat(p.montant || 0), 0);
+      return {
+        id: e.id,
+        nom: e.nom,
+        type: e.type,
+        reservations: rList.length,
+        heures_reservees: Math.round(bookedHours * 10) / 10,
+        taux_occupation: Math.min(100, Math.round((bookedHours / periodHours) * 100)),
+        ca: Number(caEsp.toFixed(3)),
+      };
+    });
+    const avgOccupation = occupation.length > 0 ? Math.round(occupation.reduce((s, o) => s + o.taux_occupation, 0) / occupation.length) : 0;
+
+    const sessList = espaceId
+      ? sessRows.filter((s) => s.reservations?.espace_id === espaceId)
+      : sessRows;
+    const overtimes = sessList.filter((s) => s.statut === 'overtime' || Number(s.temps_restant || 0) < 0);
+    const noShows = resRows.filter((r) => r.statut === 'no_show' || r.statut === 'cancelled');
+
+    const membersList = memRows;
+    const newMembers = membersList.filter((m) => new Date(m.created_at) >= new Date(win.from) && new Date(m.created_at) <= new Date(win.to));
+
+    const totalImpayes = Number(filteredPending.reduce((s, p) => s + parseFloat(p.montant || 0), 0).toFixed(3));
+
+    const formations = formRows.map((f) => {
+      const inscr = (f.inscriptions_formations || []).filter((i) => i.statut !== 'annulee');
+      const cap = Number(f.places_max || 0);
+      return {
+        id: f.id,
+        titre: f.titre,
+        date_debut: f.date_debut,
+        statut: f.statut,
+        formateur: 'Formateur',
+        inscrits: inscr.length,
+        payes: inscr.length,
+        capacite: cap,
+        taux_remplissage: cap > 0 ? Math.min(100, Math.round((inscr.length / cap) * 100)) : 0,
+        ca_estime: Number((inscr.length * parseFloat(f.prix || 0)).toFixed(3)),
+      };
+    });
+
+    return {
+      tenant: tenant || { nom: 'Établissement DeskyWork' },
+      periode: { key: win.period, from: win.from, to: win.to, label: periodLabel(win) },
+      espace_id: espaceId,
+      espaces,
+      ca: {
+        total: totalCA,
+        transactions: filteredPaid.length,
+        panier_moyen: filteredPaid.length > 0 ? Number((totalCA / filteredPaid.length).toFixed(3)) : 0,
+        par_mode: caByMode,
+        liste: filteredPaid,
+      },
+      occupation: {
+        taux_moyen: avgOccupation,
+        total_reservations: resRows.length,
+        par_espace: occupation,
+      },
+      presence: {
+        total_sessions: sessList.length,
+        en_cours: sessList.filter((s) => s.statut === 'active' || s.statut === 'en_cours').length,
+        cloturees: sessList.filter((s) => s.check_out).length,
+        depassements: overtimes.length,
+        no_shows_annulations: noShows.length,
+        liste: sessList,
+      },
+      membres: {
+        total: membersList.length,
+        actifs: membersList.filter((m) => m.statut_compte !== 'suspendu').length,
+        entreprises: membersList.filter((m) => m.type_membre === 'entreprise').length,
+        nouveaux_periode: newMembers.length,
+        liste: membersList,
+      },
+      impayes: {
+        total: totalImpayes,
+        count: filteredPending.length,
+        liste: filteredPending,
+      },
+      formations: {
+        total: formations.length,
+        total_inscrits: formations.reduce((s, f) => s + f.inscrits, 0),
+        liste: formations,
+      },
+    };
+  } catch (err) {
+    console.error('Erreur buildDetailedReportData:', err);
+    return {
+      tenant: { nom: 'Établissement DeskyWork' },
+      periode: { key: 'mois', from: new Date().toISOString(), to: new Date().toISOString(), label: 'Ce mois' },
+      espaces: [],
+      ca: { total: 0, transactions: 0, panier_moyen: 0, par_mode: {}, liste: [] },
+      occupation: { taux_moyen: 0, total_reservations: 0, par_espace: [] },
+      presence: { total_sessions: 0, en_cours: 0, cloturees: 0, depassements: 0, no_shows_annulations: 0, liste: [] },
+      membres: { total: 0, actifs: 0, entreprises: 0, nouveaux_periode: 0, liste: [] },
+      impayes: { total: 0, count: 0, liste: [] },
+      formations: { total: 0, total_inscrits: 0, liste: [] },
+    };
+  }
+}
+
+async function getDetailedReport(req, res) {
+  try {
+    const data = await buildDetailedReportData(req);
+    res.json(data);
+  } catch (err) {
+    console.error('Erreur detailed report:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function downloadAdminReportPdf(req, res) {
+  try {
+    const PDFDocument = require('pdfkit');
+    const report = await buildDetailedReportData(req);
+    const buf = await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 45 });
+      const chunks = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('error', reject);
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+      doc.rect(0, 0, doc.page.width, 90).fill('#282522');
+      doc.fillColor('#f95d00').font('Helvetica-Bold').fontSize(20).text('DESKYWORK · RAPPORT D\'ACTIVITÉ', 45, 24);
+      doc.fillColor('#ffffff').font('Helvetica').fontSize(10).text(`${report.tenant.nom || 'Établissement'} — ${report.periode.label}`, 45, 52);
+      doc.fillColor('#cbd5e1').fontSize(8.5).text(`Généré le ${new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Tunis' })}`, 45, 68);
+
+      let y = 110;
+      const drawSection = (title, lines) => {
+        if (y > 720) { doc.addPage(); y = 50; }
+        doc.fillColor('#282522').font('Helvetica-Bold').fontSize(12).text(title, 45, y);
+        doc.moveTo(45, y + 16).lineTo(550, y + 16).strokeColor('#f95d00').lineWidth(1.5).stroke();
+        y += 24;
+        doc.fillColor('#334155').font('Helvetica').fontSize(9.5);
+        lines.forEach((line) => {
+          if (y > 760) { doc.addPage(); y = 50; }
+          doc.text(line, 50, y, { width: 495 });
+          y += 16;
+        });
+        y += 10;
+      };
+
+      drawSection('1. Chiffre d\'affaires & Encaissements', [
+        `Total encaissé : ${report.ca.total.toFixed(3)} DT (${report.ca.transactions} transaction(s))`,
+        `Panier moyen : ${report.ca.panier_moyen.toFixed(3)} DT`,
+        `Répartition par mode : ${Object.entries(report.ca.par_mode).map(([m, v]) => `${m}: ${Number(v).toFixed(3)} DT`).join(' · ') || 'Aucune transaction'}`,
+      ]);
+
+      drawSection('2. Occupation des espaces', [
+        `Taux d'occupation moyen : ${report.occupation.taux_moyen}% · Réservations totales : ${report.occupation.total_reservations}`,
+        ...report.occupation.par_espace.slice(0, 12).map((o) => `• ${o.nom} (${o.type}) : ${o.reservations} résa(s), ${o.heures_reservees}h, occupation ${o.taux_occupation}%, CA ${o.ca.toFixed(3)} DT`),
+      ]);
+
+      drawSection('3. Présence & Sessions de travail', [
+        `Sessions totales : ${report.presence.total_sessions} · En cours : ${report.presence.en_cours} · Clôturées : ${report.presence.cloturees}`,
+        `Dépassements constatés : ${report.presence.depassements} · No-shows / Annulations : ${report.presence.no_shows_annulations}`,
+      ]);
+
+      drawSection('4. Membres & Clients', [
+        `Total membres : ${report.membres.total} (Actifs : ${report.membres.actifs}, Comptes Entreprises : ${report.membres.entreprises})`,
+        `Nouveaux inscrits sur la période : ${report.membres.nouveaux_periode}`,
+      ]);
+
+      drawSection('5. Impayés (Montants dus en attente)', [
+        `Total impayés : ${report.impayes.total.toFixed(3)} DT (${report.impayes.count} dossier(s) en attente)`,
+        ...report.impayes.liste.slice(0, 8).map((p) => `• ${p.profiles?.prenom || ''} ${p.profiles?.nom || p.profiles?.email || 'Client'} : ${parseFloat(p.montant || 0).toFixed(3)} DT (${p.reference_externe || 'À encaisser'})`),
+      ]);
+
+      drawSection('6. Formations', [
+        `Total formations : ${report.formations.total} · Total inscrits : ${report.formations.total_inscrits}`,
+        ...report.formations.liste.slice(0, 8).map((f) => `• ${f.titre} : ${f.inscrits}/${f.capacite || 'illimité'} inscrit(s) (${f.taux_remplissage}%), CA estimé ${f.ca_estime.toFixed(3)} DT`),
+      ]);
+
+      doc.end();
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="DeskyWork-Rapport-${new Date().toISOString().slice(0, 10)}.pdf"`);
+    res.setHeader('Content-Length', buf.length);
+    res.send(buf);
+  } catch (err) {
+    console.error('Erreur PDF report:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { getAdminReport, getSuperAdminReport, getDetailedReport, downloadAdminReportPdf };

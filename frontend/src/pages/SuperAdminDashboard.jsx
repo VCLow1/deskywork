@@ -135,7 +135,7 @@ export default function SuperAdminDashboard({ session }) {
 
   const load = useCallback(async (p) => {
     const silent = !firstLoadRef.current;
-    if (!silent && !stats) setLoading(true);
+    if (firstLoadRef.current) setLoading(true);
     try {
       const [s, auditRes, fRes, ptRes, cwRes] = await Promise.all([
         superAdminApi.getStats({ period: p }).catch(() => null),
@@ -152,7 +152,7 @@ export default function SuperAdminDashboard({ session }) {
       firstLoadRef.current = false;
     } catch (e) { /* silencieux */ }
     finally { setLoading(false); }
-  }, [stats]);
+  }, []);
 
   // ── Rapport intelligent (IA) selon la période active ─────────────────────
   const loadReport = useCallback(async (silent = false) => {

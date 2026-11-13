@@ -105,7 +105,7 @@ export const MEMBER_NAV = [
     group: 'Comptes & Finance',
     items: [
       { id: 'abonnement', label: 'Abonnement & tarifs', icon: 'payments', to: '/dashboard/abonnement' },
-      { id: 'member_payments', label: 'Mes factures', icon: 'receipt_long', to: '/member/payments' },
+      { id: 'member_payments', label: 'Mes reçus', icon: 'receipt_long', to: '/member/payments' },
     ],
   },
   {
@@ -129,6 +129,8 @@ export const ADMIN_NAV = [
     group: 'Pilotage',
     items: [
       { id: 'admin_dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/admin/dashboard' },
+      { id: 'admin_rapports', label: 'Rapports', icon: 'analytics', to: '/admin/rapports' },
+      { id: 'admin_statistiques', label: 'Statistiques', icon: 'monitoring', to: '/admin/statistiques', badge: 'Premium' },
     ],
   },
   {
@@ -136,6 +138,7 @@ export const ADMIN_NAV = [
     items: [
       { id: 'admin_agenda', label: 'Agenda & Check-in', icon: 'calendar_month', to: '/admin/agenda' },
       { id: 'admin_reservations', label: 'Réservations', icon: 'event_available', to: '/admin/reservations' },
+      { id: 'admin_clients', label: 'Membres & Clients', icon: 'people', to: '/admin/clients' },
     ],
   },
   {
@@ -154,21 +157,25 @@ export const ADMIN_NAV = [
   {
     group: 'Organisation',
     items: [
-      { id: 'admin_sites', label: 'Multi-sites', icon: 'location_city', to: '/admin/sites' },
+      { id: 'admin_profile_coworking', label: 'Profil & Activité', icon: 'tune', to: '/admin/profile-coworking' },
+      { id: 'admin_team', label: 'Équipe (Staff)', icon: 'badge', to: '/admin/team' },
+      { id: 'admin_subscription', label: 'Mon Abonnement', icon: 'workspace_premium', to: '/admin/subscription' },
+      { id: 'admin_sites', label: 'Multi-sites', icon: 'location_city', to: '/admin/sites', locked: true, badge: 'Phase 2 / Option' },
       { id: 'admin_cancellation', label: 'Politique annulation', icon: 'gavel', to: '/admin/cancellation-policy' },
     ],
   },
   {
     group: 'Formations',
     items: [
-      { id: 'admin_formations', label: 'Formations & Workshops', icon: 'school', to: '/admin/formations' },
-      { id: 'admin_formateurs', label: 'Formateurs & Candidatures', icon: 'groups', to: '/admin/formateurs' },
+      { id: 'admin_formations', label: 'Formations & Apprenants', icon: 'school', to: '/admin/formations' },
+      { id: 'admin_formateurs', label: 'Formateurs & Payouts', icon: 'groups', to: '/admin/formateurs' },
     ],
   },
   {
     group: 'Communication',
     items: [
       { id: 'admin_messages', label: 'Messagerie', icon: 'chat', to: '/admin/messages' },
+      { id: 'admin_notifications_support', label: 'Notifications & Support', icon: 'support_agent', to: '/admin/notifications-support' },
     ],
   },
 ];
@@ -180,6 +187,8 @@ export const STAFF_NAV = [
     items: [
       { id: 'staff_dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/admin/dashboard' },
       { id: 'staff_agenda', label: 'Agenda & Check-in', icon: 'calendar_month', to: '/admin/agenda' },
+      { id: 'staff_reservations', label: 'Réservations', icon: 'event_available', to: '/admin/reservations' },
+      { id: 'staff_clients', label: 'Membres & Clients', icon: 'people', to: '/admin/clients' },
       { id: 'staff_payments', label: 'Paiements du jour', icon: 'point_of_sale', to: '/admin/payments' },
     ],
   },
@@ -187,6 +196,7 @@ export const STAFF_NAV = [
     group: 'Communication',
     items: [
       { id: 'staff_messages', label: 'Messagerie', icon: 'chat', to: '/admin/messages' },
+      { id: 'staff_notifications_support', label: 'Notifications & Support', icon: 'support_agent', to: '/admin/notifications-support' },
     ],
   },
 ];
@@ -215,7 +225,7 @@ export const FORMATEUR_NAV = [
   {
     group: 'Finance',
     items: [
-      { id: 'trainer_payments', label: 'Mes factures', icon: 'receipt_long', to: '/trainer/payments' },
+      { id: 'trainer_payments', label: 'Mes reçus', icon: 'receipt_long', to: '/trainer/payments' },
     ],
   },
   {
@@ -272,6 +282,19 @@ export const SUPER_ADMIN_NAV = [
 ];
 
 // Aplatit les sections (Menu/Sous-menu) en une liste de liens (recherche header, breadcrumb)
+/**
+ * Filtre la navigation Admin selon le type d'activité configuré par l'établissement (CDC v3.0 D5) :
+ * - 'coworking'        : masque les menus Formations / Apprenants / Formateurs
+ * - 'centre_formation' : met l'accent sur Formations, Salles, Apprenants et Formateurs
+ * - 'mixte' (défaut)   : tous les menus actifs
+ */
+export function getAdminNav(activite = 'mixte') {
+  if (activite === 'coworking') {
+    return ADMIN_NAV.filter((section) => section.group !== 'Formations');
+  }
+  return ADMIN_NAV;
+}
+
 export function flattenNav(sections) {
   return (sections || []).flatMap((section) => section.items || []);
 }

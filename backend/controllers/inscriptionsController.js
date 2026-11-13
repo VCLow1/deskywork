@@ -1,6 +1,7 @@
 // controllers/inscriptionsController.js — MODULE G : Inscriptions Formations
 const { supabaseAdmin } = require('../config/supabase');
 const { notifyInscriptionFormation } = require('../services/notificationService');
+const { generateEmargementPDF } = require('../utils/generateEmargement');
 
 async function resolveFormationReservationId(formation) {
   if (formation?.espace_id) {
@@ -35,8 +36,8 @@ async function resolveFormationReservationId(formation) {
 
 async function createInscription(req, res) {
   const formationId = req.params.id;
-  const rawMode = req.body?.mode || 'sur_place';
-  const paymentMode = (rawMode === 'sur_place' || rawMode === 'cash' || rawMode === 'on_site') ? 'cash' : 'online';
+  // CDC v3.0 D1 : règlement 100 % sur place en v1
+  const paymentMode = 'cash';
 
   try {
     const { data: formation, error: fErr } = await supabaseAdmin
@@ -116,7 +117,7 @@ async function createInscription(req, res) {
     } catch (notifErr) { console.warn('⚠️ Notif inscription formation:', notifErr.message); }
 
     const confirmMsg = formation.prix_inscription > 0
-      ? (paymentMode === 'cash' ? 'Inscription confirmée ! Le règlement s\'effectuera sur place à l\'accueil.' : 'Inscription confirmée ! Vous pouvez procéder au paiement en ligne.')
+      ? 'Inscription confirmée ! Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.'
       : 'Inscription confirmée avec succès !';
 
     res.status(201).json({
@@ -132,8 +133,7 @@ async function createInscription(req, res) {
 
 async function createInscriptionPayment(req, res) {
   const formationId = req.params.id;
-  const rawMode = req.body?.mode || 'online';
-  const paymentMode = (rawMode === 'sur_place' || rawMode === 'cash' || rawMode === 'on_site') ? 'cash' : 'online';
+  const paymentMode = 'cash'; // CDC v3.0 D1 : sur place uniquement
 
   try {
     const { data: inscription, error: insErr } = await supabaseAdmin
@@ -249,7 +249,7 @@ async function cancelInscription(req, res) {
             reservation_id: reservationId,
             abonnement_id: null,
             montant: parseFloat(payment.prix_inscription),
-            mode: 'online',
+            mode: 'cash',
             statut: 'pending',
             tenant_id: payment.tenant_id || null,
           })
@@ -323,7 +323,7 @@ async function getEmargement(req, res) {
     const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile.role);
     const { data: formation } = await supabaseAdmin
       .from('formations')
-      .select('*, profiles!formateur_id (nom, prenom), espaces (nom)')
+      .select('*, profiles!fk_formations_formateur_profiles (nom, prenom), espaces (nom)')
       .eq('id', req.params.id).single();
     if (!formation) return res.status(404).json({ error: 'Formation introuvable.' });
 
@@ -334,26 +334,51 @@ async function getEmargement(req, res) {
       .from('inscriptions_formations')
       .select('*, profiles!user_id (nom, prenom, email, telephone)')
       .eq('formation_id', req.params.id)
-      .eq('statut', 'confirmee')
+      .in('statut', ['confirmee', 'en_attente'])
       .order('created_at', { ascending: true });
 
+    const confirmed = (inscrits || []).filter((i) => i.statut === 'confirmee');
+    const waitlist = (inscrits || []).filter((i) => i.statut === 'en_attente');
+
+    const formationMeta = {
+      titre: formation.titre,
+      date: new Date(formation.date_debut).toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis' }),
+      horaire: `${new Date(formation.date_debut).toLocaleTimeString('fr-FR', { timeZone: 'Africa/Tunis', hour: '2-digit', minute: '2-digit' })} – ${new Date(formation.date_fin).toLocaleTimeString('fr-FR', { timeZone: 'Africa/Tunis', hour: '2-digit', minute: '2-digit' })}`,
+      formateur: formation.profiles ? `${formation.profiles.prenom} ${formation.profiles.nom}` : '—',
+      salle: formation.espaces?.nom || '—',
+    };
+
+    const participants = confirmed.map((i, idx) => ({
+      numero: idx + 1,
+      nom: i.profiles?.nom || '—',
+      prenom: i.profiles?.prenom || '—',
+      email: i.profiles?.email || '—',
+      telephone: i.profiles?.telephone || '—',
+      present: i.present,
+      statut_paiement: i.statut_paiement,
+    }));
+
+    const waitlistList = waitlist.map((i, idx) => ({
+      numero: idx + 1,
+      nom: i.profiles?.nom || '—',
+      prenom: i.profiles?.prenom || '—',
+      email: i.profiles?.email || '—',
+    }));
+
+    // Format PDF pour le jour J (CDC v3.0 Chantier 5.3)
+    if (req.query.format === 'pdf') {
+      const pdfBuffer = await generateEmargementPDF(formationMeta, participants, waitlistList);
+      const slug = (formation.titre || 'formation').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="emargement-${slug}.pdf"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      return res.send(pdfBuffer);
+    }
+
     res.json({
-      formation: {
-        titre: formation.titre,
-        date: new Date(formation.date_debut).toLocaleDateString('fr-FR'),
-        horaire: `${new Date(formation.date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – ${new Date(formation.date_fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-        formateur: formation.profiles ? `${formation.profiles.prenom} ${formation.profiles.nom}` : '—',
-        salle: formation.espaces?.nom || '—',
-      },
-      participants: (inscrits || []).map((i, idx) => ({
-        numero: idx + 1,
-        nom: i.profiles?.nom || '—',
-        prenom: i.profiles?.prenom || '—',
-        email: i.profiles?.email || '—',
-        telephone: i.profiles?.telephone || '—',
-        present: i.present,
-        statut_paiement: i.statut_paiement,
-      })),
+      formation: formationMeta,
+      participants,
+      waitlist: waitlistList,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -94,9 +94,8 @@ export default function TrainerPlanning({ session }) {
 
   const downloadEmargement = async (formation) => {
     try {
-      const res = await formationApi.getEmargement(formation.id);
-      await exportEmargementToExcel(formation, res);
-    } catch (err) { alert('Erreur export : ' + err.message); }
+      await formationApi.downloadEmargementPdf(formation.id, formation.titre);
+    } catch (err) { alert("Erreur export feuille d'émargement PDF : " + err.message); }
   };
 
   const handleCancel = async (formation) => {
@@ -169,10 +168,10 @@ export default function TrainerPlanning({ session }) {
         {/* ── KPIs ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           {[
-            { label: 'Sessions assignées', value: totalCourses, icon: 'event_note', color: 'text-secondary bg-secondary/10' },
-            { label: 'Sessions terminées', value: doneCourses, icon: 'task_alt', color: 'text-emerald-600 bg-emerald-50' },
-            { label: 'Honoraires attendus', value: `${pendingRemu.toFixed(0)} DT`, icon: 'pending_actions', color: 'text-amber-600 bg-amber-50' },
-            { label: 'Honoraires reçus', value: `${paidRemu.toFixed(0)} DT`, icon: 'payments', color: 'text-sky-600 bg-sky-50' },
+            { label: 'Sessions de formation assignées', value: totalCourses, icon: 'event_note', color: 'text-secondary bg-secondary/10' },
+            { label: 'Sessions de formation terminées', value: doneCourses, icon: 'task_alt', color: 'text-emerald-600 bg-emerald-50' },
+            { label: 'Honoraires attendus', value: `${pendingRemu.toFixed(3)} DT`, icon: 'pending_actions', color: 'text-amber-600 bg-amber-50' },
+            { label: 'Honoraires reçus', value: `${paidRemu.toFixed(3)} DT`, icon: 'payments', color: 'text-sky-600 bg-sky-50' },
           ].map(({ label, value, icon, color }) => (
             <div key={label} className="bg-surface-container-lowest rounded-3xl sm:rounded-3xl p-4 sm:p-5 border border-outline-variant/20 shadow-sm flex items-center gap-3">
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${color}`}>
@@ -400,7 +399,7 @@ export default function TrainerPlanning({ session }) {
                         {r.statut === 'paye' ? 'Payé' : 'En attente'}
                       </span>
                     </div>
-                    <p className="font-sora font-bold text-emerald-700 text-lg mb-1">{parseFloat(r.montant).toFixed(2)} DT</p>
+                    <p className="font-sora font-bold text-emerald-700 text-lg mb-1">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
                     <p className="text-[10px] text-on-surface-variant">
                       {r.date_versement
                         ? `Versé le ${new Date(r.date_versement).toLocaleDateString('fr-FR')}`

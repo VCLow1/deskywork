@@ -170,14 +170,14 @@ export async function exportDashboardToExcel(kpis, chartData) {
   });
   row += caData.length + 1;
 
-  // ── Section Réservations & Sessions ──────────────────────────────────
-  row = addSectionHeader(sheetKPI, row, '📅  RÉSERVATIONS & SESSIONS', 5);
+  // ── Section Réservations & Sessions de travail ──────────────────────
+  row = addSectionHeader(sheetKPI, row, '📅  RÉSERVATIONS & SESSIONS DE TRAVAIL', 5);
   styleHeaderRow(sheetKPI.getRow(row), ['Indicateur', 'Valeur', 'Détail', '', '']);
   row++;
 
   const resData = [
     ['Réservations du jour',  kpis.reservationsDuJour, 'Confirmées + En attente'],
-    ['Sessions en cours',     kpis.sessionsEnCours.length, 'Sessions actives en ce moment'],
+    ['Sessions de travail en cours', kpis.sessionsEnCours.length, 'Sessions de travail actives en ce moment'],
     ['Formations du jour',    kpis.formationsDuJour,   'Sessions de formation planifiées'],
   ];
 
@@ -276,6 +276,8 @@ export async function exportDashboardToExcel(kpis, chartData) {
     meeting_room: 'Salle de réunion',
     training_room: 'Salle de formation',
     event_space: 'Espace événementiel',
+    hot_desk: 'Poste nomade (Hot Desk)',
+    dedicated_desk: 'Poste fixe (Dedicated Desk)',
   };
 
   kpis.tauxOccupation.forEach((esp, i) => {

@@ -4,7 +4,7 @@ const { SUBSCRIPTION_DURATIONS, MEMBER_TYPE_TO_PLAN, SUBSCRIPTION_LABELS } = req
 const { todayISO, findActiveTarif, findValidPromoCode, applyPromoDiscount, DEFAULT_TARIFS } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 
-const ESPACE_TYPES = ['open_space', 'private_office', 'meeting_room', 'training_room', 'event_space'];
+const ESPACE_TYPES = ['open_space', 'private_office', 'meeting_room', 'training_room', 'event_space', 'hot_desk', 'dedicated_desk'];
 
 function normalizeTypeEspace(value) {
   if (value == null || value === '') return null;

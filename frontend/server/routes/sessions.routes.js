@@ -17,7 +17,9 @@ router.get('/sessions/me/active', authenticate, ctrl.getMyActiveSessions);
 router.post('/sessions/check-in', authenticate, ctrl.checkIn);
 router.post('/sessions/check-out', authenticate, ctrl.checkOut);
 
-// Administration des sessions (Staff)
+// Administration des sessions de travail (Staff — CDC v3.0 D3 & D4)
+router.get('/sessions/live', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getLiveSessions);
+router.post('/sessions/:id/release', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.releaseSession);
 router.get('/sessions', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.listSessions);
 
 module.exports = router;

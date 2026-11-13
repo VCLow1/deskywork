@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
-import { bookingApi, paymentApi } from '../services/api';
+import { bookingApi, paymentApi, memberApi } from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
 import { getBookerNav } from '../utils/roles';
+import { formatDT } from '../utils/format';
+import { spaceTypeLabel } from '../constants/spaceTypes';
 
 export default function BookingStep3({ session }) {
   const { metadata } = useSessionUser(session);
@@ -20,7 +22,15 @@ export default function BookingStep3({ session }) {
   const [space, setSpace] = useState(null);
   const [durationHours, setDurationHours] = useState(0);
   const [totalPrice, setTotalPrice] = useState(0);
-  const [paymentMode, setPaymentMode] = useState('sur_place'); // 'sur_place' | 'online'
+  const [paymentMode] = useState('sur_place'); // CDC v3.0 D1 : 100 % sur place en v1
+  const [isEntreprise, setIsEntreprise] = useState(false);
+  const [entrepriseInfo, setEntrepriseInfo] = useState({
+    raison_sociale: '',
+    contact_nom: '',
+    telephone_pro: '',
+    email_facturation: '',
+    besoin_description: '',
+  });
   const [processing, setProcessing] = useState(false);
   const [submittedBooking, setSubmittedBooking] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -35,6 +45,17 @@ export default function BookingStep3({ session }) {
     }
     fetchSpace();
     calculatePrice();
+    memberApi.getMe().then(({ profile: prof }) => {
+      if (prof?.type_membre === 'entreprise') {
+        setIsEntreprise(true);
+        setEntrepriseInfo((prev) => ({
+          ...prev,
+          contact_nom: prev.contact_nom || `${prof.prenom || ''} ${prof.nom || ''}`.trim(),
+          telephone_pro: prev.telephone_pro || prof.telephone || '',
+          email_facturation: prev.email_facturation || prof.email || '',
+        }));
+      }
+    }).catch(() => {});
   }, [espaceId, date, start, end]);
 
   const fetchSpace = async () => {
@@ -79,8 +100,15 @@ export default function BookingStep3({ session }) {
   }, [space, date, start, end, espaceId]);
 
   const handleConfirmBooking = async () => {
-    setProcessing(true);
     setErrorMsg('');
+    if (isEntreprise) {
+      const { raison_sociale, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
+      if (!raison_sociale.trim() || !contact_nom.trim() || !telephone_pro.trim() || !email_facturation.trim() || !besoin_description.trim()) {
+        setErrorMsg('Pour une réservation Entreprise, veuillez remplir la raison sociale, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
+        return;
+      }
+    }
+    setProcessing(true);
     const startDateTime = new Date(`${date}T${start}:00`).toISOString();
     const endDateTime = new Date(`${date}T${end}:00`).toISOString();
 
@@ -100,7 +128,9 @@ export default function BookingStep3({ session }) {
         espace_id: espaceId,
         date_debut: startDateTime,
         date_fin: endDateTime,
-        mode: paymentMode,
+        mode: 'on_site',
+        client_type: isEntreprise ? 'entreprise' : 'particulier',
+        ...(isEntreprise ? { entreprise_info: entrepriseInfo } : {}),
       });
 
       const newBooking = res.reservation;
@@ -167,15 +197,7 @@ export default function BookingStep3({ session }) {
             </h1>
 
             <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: 1.6, marginBottom: '24px' }}>
-              {paymentMode === 'sur_place' ? (
-                <>
-                  Votre demande pour <strong>{space.nom}</strong> a été transmise à l'administrateur. Dès qu'il l'aura acceptée, votre créneau sera réservé et vous pourrez <strong>régler sur place à l'accueil</strong> le jour de votre séance.
-                </>
-              ) : (
-                <>
-                  Votre demande pour <strong>{space.nom}</strong> a été transmise à l'administrateur. Dès qu'il l'aura acceptée, vous pourrez <strong>payer en ligne par carte bancaire</strong> depuis vos factures.
-                </>
-              )}
+              Votre demande pour <strong>{space.nom}</strong> a bien été enregistrée. <strong>Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.</strong>
             </p>
 
             {/* Récapitulatif box */}
@@ -194,11 +216,11 @@ export default function BookingStep3({ session }) {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                 <span style={{ color: '#64748b' }}>Mode de paiement :</span>
-                <strong style={{ color: '#f95d00' }}>{paymentMode === 'sur_place' ? '💵 Sur place (à l\'accueil)' : '💳 En ligne (après validation)'}</strong>
+                <strong style={{ color: '#f95d00' }}>Sur place (espèces, chèque ou virement)</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '10px', marginTop: '8px' }}>
                 <span style={{ color: '#0f172a', fontWeight: 700 }}>Total :</span>
-                <strong style={{ color: '#f95d00', fontSize: '16px' }}>{totalPrice.toFixed(2)} DT</strong>
+                <strong style={{ color: '#f95d00', fontSize: '16px' }}>{formatDT(totalPrice)}</strong>
               </div>
             </div>
 
@@ -270,7 +292,7 @@ export default function BookingStep3({ session }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontSize: '16px', fontWeight: 700, color: '#100f0d' }}>{space.nom}</span>
               <span style={{ backgroundColor: '#ffedd8', color: '#f95d00', padding: '4px 12px', borderRadius: '99px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase' }}>
-                {space.type ? space.type.replace('_', ' ') : 'Espace'}
+                {spaceTypeLabel(space.type)}
               </span>
             </div>
 
@@ -285,7 +307,7 @@ export default function BookingStep3({ session }) {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Tarif horaire</span>
-                <strong style={{ color: '#000d23' }}>{parseFloat(space.tarif_horaire).toFixed(2)} DT / h</strong>
+                <strong style={{ color: '#000d23' }}>{formatDT(space.tarif_horaire)} / h</strong>
               </div>
               {occupancy && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -298,90 +320,54 @@ export default function BookingStep3({ session }) {
             </div>
           </div>
 
-          {/* SÉLECTION DU MODE DE PAIEMENT */}
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#334155', marginBottom: '12px' }}>
-              Mode de paiement souhaité *
+          {/* OPTION ENTREPRISE (auto-activée si compte Entreprise, CDC v3.0 Chantier 3.2) */}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, color: '#334155', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={isEntreprise}
+                onChange={(e) => setIsEntreprise(e.target.checked)}
+              />
+              Réservation professionnelle (Entreprise)
             </label>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
-              {/* Option 1 : Payer sur place */}
-              <div
-                onClick={() => setPaymentMode('sur_place')}
-                style={{
-                  border: paymentMode === 'sur_place' ? '2px solid #f95d00' : '1px solid #e2e8f0',
-                  backgroundColor: paymentMode === 'sur_place' ? '#fffaf5' : '#ffffff',
-                  borderRadius: '16px',
-                  padding: '16px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  position: 'relative',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: '22px', color: paymentMode === 'sur_place' ? '#f95d00' : '#64748b' }}>
-                    storefront
-                  </span>
-                  <span style={{ fontWeight: 700, fontSize: '14px', color: '#100f0d' }}>
-                    Sur place
-                  </span>
+            {isEntreprise && (
+              <div style={{ marginTop: '12px', padding: '16px', borderRadius: '14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'grid', gap: '10px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Raison sociale *</label>
+                  <input type="text" value={entrepriseInfo.raison_sociale} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, raison_sociale: e.target.value }))} placeholder="Ex: TechStart SARL" className="form-input" />
                 </div>
-                <p style={{ fontSize: '11px', color: '#64748b', margin: 0, lineHeight: 1.4 }}>
-                  À l'accueil le jour J (Espèces, chèque ou TPE).
-                </p>
-                {paymentMode === 'sur_place' && (
-                  <span style={{ position: 'absolute', top: '10px', right: '10px', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f95d00' }} />
-                )}
-              </div>
-
-              {/* Option 2 : Payer en ligne */}
-              <div
-                onClick={() => setPaymentMode('online')}
-                style={{
-                  border: paymentMode === 'online' ? '2px solid #f95d00' : '1px solid #e2e8f0',
-                  backgroundColor: paymentMode === 'online' ? '#fffaf5' : '#ffffff',
-                  borderRadius: '16px',
-                  padding: '16px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  position: 'relative',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: '22px', color: paymentMode === 'online' ? '#f95d00' : '#64748b' }}>
-                    credit_card
-                  </span>
-                  <span style={{ fontWeight: 700, fontSize: '14px', color: '#100f0d' }}>
-                    En ligne
-                  </span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Personne de contact *</label>
+                    <input type="text" value={entrepriseInfo.contact_nom} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, contact_nom: e.target.value }))} className="form-input" />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Téléphone professionnel *</label>
+                    <input type="tel" value={entrepriseInfo.telephone_pro} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: e.target.value }))} className="form-input" />
+                  </div>
                 </div>
-                <p style={{ fontSize: '11px', color: '#64748b', margin: 0, lineHeight: 1.4 }}>
-                  Par carte bancaire (dès acceptation de l'admin).
-                </p>
-                {paymentMode === 'online' && (
-                  <span style={{ position: 'absolute', top: '10px', right: '10px', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f95d00' }} />
-                )}
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Email de facturation *</label>
+                  <input type="email" value={entrepriseInfo.email_facturation} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, email_facturation: e.target.value }))} className="form-input" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Objet du besoin / Description *</label>
+                  <textarea rows={2} value={entrepriseInfo.besoin_description} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, besoin_description: e.target.value }))} placeholder="Séminaire, réunion client…" className="form-input" />
+                </div>
               </div>
-            </div>
+            )}
+          </div>
 
-            {/* Note explicative selon le mode choisi */}
-            <div style={{ marginTop: '12px', padding: '12px 14px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', lineHeight: 1.5 }}>
-              {paymentMode === 'sur_place' ? (
-                <>
-                  ℹ️ <strong>Processus :</strong> Votre réservation sera envoyée en attente. Une fois acceptée par l'administrateur, votre espace est garanti et vous réglerez à votre arrivée.
-                </>
-              ) : (
-                <>
-                  ℹ️ <strong>Processus :</strong> Votre réservation sera envoyée en attente. Dès que l'administrateur l'aura acceptée, un bouton « Payer en ligne » apparaîtra dans votre espace membre pour régler par carte.
-                </>
-              )}
-            </div>
+          {/* RÈGLEMENT SUR PLACE UNIQUEMENT (CDC v3.0 D1) */}
+          <div style={{ marginBottom: '24px', padding: '14px 16px', borderRadius: '14px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', fontSize: '13px', color: '#78350f', lineHeight: 1.55 }}>
+            <strong>Règlement à effectuer sur place</strong> (espèces, chèque ou virement) lors de votre arrivée à l'établissement. Un reçu PDF numéroté vous sera remis après encaissement.
           </div>
 
           {/* Total Price */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderTop: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0', marginBottom: '24px' }}>
             <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '18px', fontWeight: 700, color: '#100f0d' }}>Estimation Total</span>
-            <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '24px', fontWeight: 800, color: '#f95d00' }}>{totalPrice.toFixed(2)} DT</span>
+            <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '24px', fontWeight: 800, color: '#f95d00' }}>{formatDT(totalPrice)}</span>
           </div>
 
           <button
@@ -402,7 +388,7 @@ export default function BookingStep3({ session }) {
               transition: 'all 0.15s ease',
             }}
           >
-            {processing ? 'Enregistrement de la demande...' : `Envoyer la demande de réservation (${totalPrice.toFixed(2)} DT)`}
+            {processing ? 'Enregistrement de la demande...' : `Envoyer la demande de réservation (${formatDT(totalPrice)})`}
           </button>
 
         </div>

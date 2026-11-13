@@ -131,8 +131,11 @@ async function sendNotification(supabase, options) {
   const whatsappBody = generateWhatsAppMessage(type, data, config);
 
   // 3. Déterminer les canaux d'envoi réels
-  const shouldSendEmail = targetChannel === 'email' || targetChannel === 'both' || targetChannel === 'Email';
-  const shouldSendWhatsApp = (targetChannel === 'whatsapp' || targetChannel === 'both' || targetChannel === 'WhatsApp') && targetPhone;
+  // CDC v3.0 — D2 : canaux restreints à l'e-mail + notification in-app (enregistrée en base).
+  // WhatsApp / SMS sont reportés en phase 2 quelle que soit la préférence stockée.
+  targetChannel = 'email';
+  const shouldSendEmail = true;
+  const shouldSendWhatsApp = false;
 
   let canalRecorded = 'Email';
   if (shouldSendEmail && shouldSendWhatsApp) {

@@ -1,14 +1,16 @@
-// routes/payments.routes.js — Routes Paiements & Stripe Checkout
+// routes/payments.routes.js — Routes Paiements (encaissement sur place, reçus PDF)
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
 const ctrl = require('../controllers/paymentsController');
 
-// Routes Stripe membres (Stripe checkout session)
-router.post('/stripe/pay', authenticate, ctrl.stripePay);
-router.post('/stripe/verify', authenticate, ctrl.stripeVerify);
-router.post('/stripe/webhook', express.raw({ type: 'application/json' }), ctrl.stripeWebhookHandler);
+// CDC v3.0 — D1 : paiement 100 % sur place en v1. Toutes les passerelles en ligne
+// (Stripe, Flouci, CB) sont désactivées ; l'API répond 410 Gone.
+router.use('/stripe', (_req, res) => res.status(410).json({
+  error: "Le paiement en ligne n'est pas disponible. Le règlement s'effectue sur place (espèces, chèque ou virement).",
+  code: 'ONLINE_PAYMENT_DISABLED',
+}));
 
 // Téléchargement du reçu PDF
 router.get('/payments/:id/receipt', authenticate, ctrl.getPaymentReceipt);
@@ -16,6 +18,12 @@ router.get('/payments/:id/receipt', authenticate, ctrl.getPaymentReceipt);
 // Routes paiement membre
 router.post('/payments/self', authenticate, ctrl.createPaymentSelf);
 router.get('/payments/member/:memberId', authenticate, ctrl.getMemberPayments);
+
+// Entité « Montant dû » & Encaissement sur place (CDC v3.0 Chantier 4.2)
+router.get('/montant-du/me', authenticate, ctrl.getMontantDu);
+router.get('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getMontantDu);
+router.post('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createMontantDu);
+router.post('/payments/:id/collect', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.collectPayment);
 
 // Routes paiement administration (Super Admin, Admin, Staff)
 router.post('/payments', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createPayment);

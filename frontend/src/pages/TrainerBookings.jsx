@@ -9,9 +9,13 @@ import Pagination from '../components/Pagination';
 const ITEMS_PER_PAGE = 10;
 
 const STATUS_CONFIG = {
-  confirmed: { label: 'Confirmée',  color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', dot: 'bg-emerald-500' },
-  pending:   { label: 'En attente', color: 'bg-amber-50   text-amber-700   ring-amber-600/20',   dot: 'bg-amber-500'   },
-  cancelled: { label: 'Annulée',    color: 'bg-red-50     text-red-700     ring-red-600/20',     dot: 'bg-red-500'     },
+  confirmed:  { label: 'Confirmée',          color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', dot: 'bg-emerald-500' },
+  pending:    { label: 'En attente',         color: 'bg-amber-50   text-amber-700   ring-amber-600/20',   dot: 'bg-amber-500'   },
+  refused:    { label: 'Refusée',            color: 'bg-rose-50    text-rose-700    ring-rose-600/20',    dot: 'bg-rose-500'    },
+  completed:  { label: 'Terminée',           color: 'bg-slate-100  text-slate-600   ring-slate-500/20',   dot: 'bg-slate-400'   },
+  no_show:    { label: 'Absent (no-show)',   color: 'bg-orange-50  text-orange-700  ring-orange-600/20',  dot: 'bg-orange-500'  },
+  waitlisted: { label: "En liste d'attente", color: 'bg-violet-50  text-violet-700  ring-violet-600/20',  dot: 'bg-violet-500'  },
+  cancelled:  { label: 'Annulée',            color: 'bg-red-50     text-red-700     ring-red-600/20',     dot: 'bg-red-500'     },
 };
 
 function formatDate(d) {
@@ -23,7 +27,7 @@ function formatTime(d) {
   return new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 function formatCurrency(v) {
-  return `${parseFloat(v || 0).toFixed(2)} DT`;
+  return `${parseFloat(v || 0).toFixed(3)} DT`;
 }
 
 export default function TrainerBookings({ session }) {
@@ -57,32 +61,6 @@ export default function TrainerBookings({ session }) {
   useEffect(() => {
     if (success) { const t = setTimeout(() => setSuccess(''), 3500); return () => clearTimeout(t); }
   }, [success]);
-
-  const handlePayOnline = async (b) => {
-    setPayingId(b.id);
-    setError('');
-    try {
-      // Récupérer ou créer le paiement associé
-      let paymentId = b.paiements?.[0]?.id;
-      if (!paymentId) {
-        const res = await paymentApi.createSelf({
-          reservation_id: b.id,
-          montant: b.montant_total || (parseFloat(b.espaces?.tarif_horaire || 0) * Math.max(1, (new Date(b.date_fin) - new Date(b.date_debut)) / 3600000)),
-          mode: 'online',
-          statut: 'pending',
-        });
-        paymentId = res.payment?.id;
-      }
-      if (!paymentId) throw new Error("Impossible d'initier le paiement.");
-      const stripeRes = await paymentApi.payWithStripe(paymentId);
-      if (stripeRes.link) {
-        window.location.href = stripeRes.link;
-      } else {
-        throw new Error('Lien de paiement non disponible.');
-      }
-    } catch (e) { setError(e.message || 'Erreur lors du paiement.'); }
-    finally { setPayingId(null); }
-  };
 
   const handleCancel = async (id) => {
     setCancelId(id);
@@ -158,9 +136,7 @@ export default function TrainerBookings({ session }) {
             {bookings.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map((b) => {
               const st = STATUS_CONFIG[b.statut] || STATUS_CONFIG.pending;
               const canCancel = ['confirmed', 'pending'].includes(b.statut);
-              const canPayOnline = b.statut === 'confirmed' && b.mode === 'online' && b.paiements?.[0]?.statut !== 'paid';
-              const isPaidOnline = b.statut === 'confirmed' && b.mode === 'online' && b.paiements?.[0]?.statut === 'paid';
-              const isOnSite = b.mode === 'sur_place' || b.mode === 'cash' || b.mode === 'on_site';
+              const isPaid = b.paiements?.[0]?.statut === 'paid';
 
               return (
                 <div key={b.id} className="bg-white rounded-2xl border border-outline-variant/15 p-5 shadow-sm hover:shadow-md transition">
@@ -180,7 +156,7 @@ export default function TrainerBookings({ session }) {
                             {st.label}
                           </span>
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
-                            {(b.mode === 'sur_place' || b.mode === 'cash' || b.mode === 'on_site') ? '💵 Sur place' : '💳 En ligne'}
+                            Sur place
                           </span>
                         </div>
                         <p className="text-xs text-on-surface-variant mt-0.5">
@@ -190,14 +166,10 @@ export default function TrainerBookings({ session }) {
                         {b.statut === 'pending' && (
                           <p className="text-[11px] text-amber-600 font-medium mt-0.5">⏳ En attente de validation par l'admin</p>
                         )}
-                        {b.statut === 'confirmed' && isOnSite && (
-                          <p className="text-[11px] text-emerald-600 font-medium mt-0.5">✅ Confirmée · Paiement à l'accueil le jour J</p>
-                        )}
-                        {canPayOnline && (
-                          <p className="text-[11px] text-secondary font-semibold mt-0.5">✨ Confirmée — Vous pouvez maintenant payer en ligne</p>
-                        )}
-                        {isPaidOnline && (
-                          <p className="text-[11px] text-emerald-600 font-bold mt-0.5">✅ Confirmée · Paiement en ligne validé</p>
+                        {b.statut === 'confirmed' && (
+                          <p className="text-[11px] text-emerald-600 font-medium mt-0.5">
+                            {isPaid ? 'Confirmée · Encaissement validé' : 'Confirmée · Règlement sur place à votre arrivée'}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -210,14 +182,6 @@ export default function TrainerBookings({ session }) {
                           {formatCurrency(b.montant_total || (parseFloat(b.espaces?.tarif_horaire || 0) * Math.max(1, (new Date(b.date_fin) - new Date(b.date_debut)) / 3600000)))}
                         </span>
                       </div>
-
-                      {canPayOnline && (
-                        <button onClick={() => handlePayOnline(b)} disabled={payingId === b.id}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50 flex items-center gap-1.5">
-                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>credit_card</span>
-                          {payingId === b.id ? 'Connexion...' : 'Payer en ligne'}
-                        </button>
-                      )}
 
                       {canCancel && (
                         <button onClick={() => setCancelModal(b)}

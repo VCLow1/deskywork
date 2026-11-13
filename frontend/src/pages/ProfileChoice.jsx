@@ -20,13 +20,7 @@ export default function ProfileChoice() {
   const [taxId, setTaxId] = useState('');
   const [companyCity, setCompanyCity] = useState('');
 
-  // Modal / vue OTP Téléphone (requis pour formateurs et gestionnaires d'espace)
-  const [showPhoneModal, setShowPhoneModal] = useState(false);
-  const [phone, setPhone] = useState('+216 ');
-  const [phoneChannel, setPhoneChannel] = useState('whatsapp');
-  const [phoneOtpCode, setPhoneOtpCode] = useState('');
-  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
-  const [phoneCountdown, setPhoneCountdown] = useState(60);
+  // Note CDC v3.0 — D2 : validation téléphone par SMS/WhatsApp reportée en phase 2
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -36,21 +30,10 @@ export default function ProfileChoice() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setSessionUser(session.user);
-        if (session.user.user_metadata?.telephone) {
-          setPhone(session.user.user_metadata.telephone);
-        }
+        // téléphone stocké en metadata
       }
     });
   }, []);
-
-  // Compte à rebours OTP Téléphone
-  useEffect(() => {
-    if (!phoneOtpSent || phoneCountdown <= 0) return;
-    const timer = setInterval(() => {
-      setPhoneCountdown((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [phoneOtpSent, phoneCountdown]);
 
   const userId = sessionUser?.id || location.state?.userId;
 
@@ -79,15 +62,7 @@ export default function ProfileChoice() {
       return;
     }
 
-    // 3. Rôles qui publient (Formateur, Coworking, Centre) : exiger validation téléphone
-    // Vérifier si le téléphone de l'utilisateur est déjà vérifié
-    const isPhoneVerified = sessionUser?.user_metadata?.telephone_verifie || false;
-    if (!isPhoneVerified) {
-      setShowPhoneModal(true);
-      return;
-    }
-
-    // Si téléphone déjà vérifié, redirection directe vers l'onboarding correspondant
+    // 3. Formateur / Coworking / Centre : redirection directe vers l'onboarding (D2 : pas d'OTP SMS/WhatsApp en v1)
     proceedToRoleOnboarding(type);
   };
 
@@ -122,42 +97,6 @@ export default function ProfileChoice() {
         },
       });
       navigate('/dashboard', { replace: true });
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Envoi OTP Téléphone ────────────────────────────────────────────────────
-  const handleSendPhoneOtp = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      await authUnifiedApi.sendPhoneOtp({ phone: phone.trim(), channel: phoneChannel });
-      setPhoneOtpSent(true);
-      setPhoneCountdown(60);
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Vérification OTP Téléphone ─────────────────────────────────────────────
-  const handleVerifyPhoneOtp = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      await authUnifiedApi.verifyPhoneOtp({
-        phone: phone.trim(),
-        code: phoneOtpCode.trim(),
-        userId,
-      });
-
-      setShowPhoneModal(false);
-      proceedToRoleOnboarding(selectedType);
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -353,132 +292,6 @@ export default function ProfileChoice() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── MODAL : OTP TÉLÉPHONE (ROLES PUBLIEURS) ── */}
-      {showPhoneModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-card rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-5 bg-white text-center">
-            <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-100 flex items-center justify-center text-amber-700">
-              <span className="material-symbols-outlined text-[26px]">phone_iphone</span>
-            </div>
-
-            <div>
-              <h3 className="font-sora text-xl font-bold text-[#100f0d] mb-1">
-                {t('otp.phoneTitle')}
-              </h3>
-              <p className="text-xs text-on-surface-variant">
-                {t('otp.phoneDesc')}
-              </p>
-            </div>
-
-            {!phoneOtpSent ? (
-              <div className="space-y-4 text-left">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-on-surface">
-                    Numéro de téléphone
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="form-input"
-                    placeholder="+216 99 999 999"
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <label className={`flex-1 p-3 rounded-xl border flex items-center justify-center gap-2 cursor-pointer text-xs font-semibold ${
-                    phoneChannel === 'whatsapp' ? 'border-[#f95d00] bg-orange-50 text-orange-900' : 'border-outline-variant/30 text-on-surface-variant'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="channel"
-                      className="hidden"
-                      checked={phoneChannel === 'whatsapp'}
-                      onChange={() => setPhoneChannel('whatsapp')}
-                    />
-                    <span className="material-symbols-outlined text-[16px]">chat</span>
-                    WhatsApp
-                  </label>
-                  <label className={`flex-1 p-3 rounded-xl border flex items-center justify-center gap-2 cursor-pointer text-xs font-semibold ${
-                    phoneChannel === 'sms' ? 'border-[#f95d00] bg-orange-50 text-orange-900' : 'border-outline-variant/30 text-on-surface-variant'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="channel"
-                      className="hidden"
-                      checked={phoneChannel === 'sms'}
-                      onChange={() => setPhoneChannel('sms')}
-                    />
-                    <span className="material-symbols-outlined text-[16px]">sms</span>
-                    SMS
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={loading || !phone || phone.length < 8}
-                  onClick={handleSendPhoneOtp}
-                  className="btn-primary w-full py-3 rounded-xl font-semibold text-sm"
-                >
-                  {loading ? t('common.loading') : 'Recevoir mon code OTP'}
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleVerifyPhoneOtp} className="space-y-4">
-                <div>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    autoFocus
-                    required
-                    value={phoneOtpCode}
-                    onChange={(e) => setPhoneOtpCode(e.target.value.replace(/\D/g, ''))}
-                    placeholder="••••••"
-                    className="form-input text-center text-2xl tracking-[0.5em] font-mono py-3 font-bold"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading || phoneOtpCode.length < 6}
-                  className="btn-primary w-full py-3 rounded-xl font-semibold text-sm"
-                >
-                  {loading ? t('otp.verifying') : t('otp.verifyBtn')}
-                </button>
-
-                <div className="flex items-center justify-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    disabled={phoneCountdown > 0 || loading}
-                    onClick={handleSendPhoneOtp}
-                    className={`text-xs font-semibold ${phoneCountdown > 0 ? 'text-outline-variant' : 'text-secondary hover:underline'}`}
-                  >
-                    {phoneCountdown > 0 ? t('common.retryIn', { seconds: phoneCountdown }) : t('common.resend')}
-                  </button>
-                  <span className="text-outline-variant text-xs">•</span>
-                  <button
-                    type="button"
-                    onClick={() => setPhoneOtpSent(false)}
-                    className="text-xs text-on-surface-variant hover:underline"
-                  >
-                    Changer de numéro
-                  </button>
-                </div>
-              </form>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowPhoneModal(false)}
-              className="text-xs text-on-surface-variant hover:underline block mx-auto"
-            >
-              {t('common.cancel')}
-            </button>
           </div>
         </div>
       )}

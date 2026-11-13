@@ -34,6 +34,8 @@ const ESPACE_TYPE_LABELS = {
   meeting_room: 'Salle de réunion',
   training_room: 'Salle de formation',
   event_space: 'Espace événementiel',
+  hot_desk: 'Poste nomade (Hot Desk)',
+  dedicated_desk: 'Poste fixe (Dedicated Desk)',
 };
 
 export default function MemberSubscription({ session }) {
@@ -276,11 +278,11 @@ export default function MemberSubscription({ session }) {
                     </span>
                   </div>
                   <div className="flex items-center gap-4 text-sm">
-                    <span className="text-on-surface-variant line-through">{promoResult.prix_initial.toFixed(2)} DT</span>
+                    <span className="text-on-surface-variant line-through">{promoResult.prix_initial.toFixed(3)} DT</span>
                     <span className="text-on-surface-variant">→</span>
-                    <span className="font-bold text-[#1a7a5a]">{promoResult.prix_final.toFixed(2)} DT</span>
+                    <span className="font-bold text-[#1a7a5a]">{promoResult.prix_final.toFixed(3)} DT</span>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#2FBE8F]/15 text-[#1a7a5a]">
-                      −{promoResult.reduction.toFixed(2)} DT
+                      −{promoResult.reduction.toFixed(3)} DT
                     </span>
                   </div>
                 </div>
@@ -345,11 +347,11 @@ export default function MemberSubscription({ session }) {
                         <div className="mb-4">
                           {hasDiscount && (
                             <p className="text-xs text-on-surface-variant/50 line-through mb-0.5">
-                              {Number(tarif.prix).toFixed(2)} DT TTC
+                              {Number(tarif.prix).toFixed(3)} DT TTC
                             </p>
                           )}
                           <p className="text-xl font-bold text-secondary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                            {displayPrice.toFixed(2)} DT
+                            {displayPrice.toFixed(3)} DT
                             <span className="text-xs font-normal text-on-surface-variant ml-1">TTC</span>
                           </p>
                           <p className="text-xs text-on-surface-variant/50 mt-0.5">TVA {tarif.tva_pct}%</p>
@@ -426,10 +428,10 @@ export default function MemberSubscription({ session }) {
                       <div className="text-right">
                         {item.prix_initial !== item.prix_final && (
                           <p className="text-xs text-on-surface-variant/50 line-through">
-                            {Number(item.prix_initial).toFixed(2)} DT
+                            {Number(item.prix_initial).toFixed(3)} DT
                           </p>
                         )}
-                        <p className="text-sm font-bold text-secondary">{Number(item.prix_final).toFixed(2)} DT</p>
+                        <p className="text-sm font-bold text-secondary">{Number(item.prix_final).toFixed(3)} DT</p>
                       </div>
                     </div>
                   ))}
@@ -451,7 +453,7 @@ export default function MemberSubscription({ session }) {
                     <li>Saisissez un code promo (optionnel)</li>
                     <li>Cliquez « Vérifier le code » pour voir le prix réduit</li>
                     <li>Cliquez « Souscrire maintenant »</li>
-                    <li>Le paiement sera géré automatiquement</li>
+                    <li>Le règlement s&apos;effectue sur place à l&apos;accueil (espèces, chèque ou virement)</li>
                   </ol>
                 </div>
               </div>
@@ -501,10 +503,10 @@ export default function MemberSubscription({ session }) {
                   <>
                     <div className="flex justify-between items-center mb-1">
                       <span className="text-sm text-on-surface-variant">Réduction</span>
-                      <span className="text-sm font-semibold text-[#2FBE8F]">−{promoResult.reduction.toFixed(2)} DT</span>
+                      <span className="text-sm font-semibold text-[#2FBE8F]">−{promoResult.reduction.toFixed(3)} DT</span>
                     </div>
                     <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-on-surface-variant/50 line-through">{promoResult.prix_initial.toFixed(2)} DT</span>
+                      <span className="text-xs text-on-surface-variant/50 line-through">{promoResult.prix_initial.toFixed(3)} DT</span>
                       <span />
                     </div>
                   </>
@@ -512,7 +514,7 @@ export default function MemberSubscription({ session }) {
                 <div className="border-t border-outline-variant/15 pt-2 mt-2 flex justify-between items-center">
                   <span className="text-sm font-bold text-primary">Total</span>
                   <span className="text-lg font-bold text-secondary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    {confirmModal.price.toFixed(2)} DT
+                    {confirmModal.price.toFixed(3)} DT
                   </span>
                 </div>
               </div>

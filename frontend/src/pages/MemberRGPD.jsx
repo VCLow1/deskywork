@@ -115,7 +115,6 @@ export default function MemberRGPD({ session }) {
           <div className="space-y-4">
             {[
               { key: 'marketing_email', label: 'Emails commerciaux', sub: 'Offres, promotions, actualités du coworking.' },
-              { key: 'marketing_sms',   label: 'SMS commerciaux',    sub: 'Alertes et offres par SMS.' },
             ].map(({ key, label, sub }) => (
               <div key={key} className="flex items-center justify-between gap-4">
                 <div>

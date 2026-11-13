@@ -98,13 +98,13 @@ export default function QrCodeView({ session }) {
     if (navigator.share && qrData?.payload) {
       try {
         await navigator.share({
-          title: 'Mon Pass d\'Accès MarineSpace',
-          text: 'Voici mon QR code d\'accès pour les espaces MarineSpace.',
+          title: 'Mon Pass d\'Accès DeskyWork',
+          text: 'Voici mon QR code d\'accès pour les espaces DeskyWork.',
           url: window.location.href,
         });
       } catch { /* cancelled */ }
     } else {
-      const subject = encodeURIComponent('Mon Pass d\'Accès MarineSpace');
+      const subject = encodeURIComponent('Mon Pass d\'Accès DeskyWork');
       const body = encodeURIComponent(
         `Bonjour,\n\nVoici le lien vers mon QR code d'accès :\n${window.location.href}\n\nMerci de le présenter à l'accueil.`
       );
@@ -147,7 +147,7 @@ export default function QrCodeView({ session }) {
             Votre Pass d&apos;Accès
           </h2>
           <p className="text-on-surface-variant text-base leading-6 mt-1">
-            Scannez ce code aux bornes d&apos;entrée de nos espaces MarineSpace pour déverrouiller vos privilèges.
+            Scannez ce code aux bornes d&apos;entrée de nos espaces DeskyWork pour déverrouiller vos privilèges.
           </p>
         </div>
 

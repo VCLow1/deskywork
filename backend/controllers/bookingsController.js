@@ -1,8 +1,9 @@
 // controllers/bookingsController.js — MODULE B : Réservations
 const { supabaseAdmin } = require('../config/supabase');
-const { getBookingAvailability, getCancellationPolicy, getCancellationPolicyForEspace, buildCancellationInfo, todayISO } = require('../models/helpers');
+const { getBookingAvailability, getCancellationPolicy, getCancellationPolicyForEspace, buildCancellationInfo, todayISO, insertWithColumnFallback } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 const { notifyConfirmationReservation, notifyAnnulationReservation } = require('../services/notificationService');
+const { sendEmailUniversal } = require('../utils/sendEmail');
 
 async function getBookingsCalendar(req, res) {
   try {
@@ -17,7 +18,7 @@ async function getBookingsCalendar(req, res) {
 
     let query = supabaseAdmin
       .from('reservations')
-      .select('id, espace_id, user_id, date_debut, date_fin, statut, mode, tenant_id, espaces(nom, type, tenant_id), profiles(nom, prenom, email)')
+      .select('id, espace_id, user_id, date_debut, date_fin, statut, mode, tenant_id, espaces(nom, type, tenant_id), profiles!user_id(nom, prenom, email)')
       .eq('statut', 'confirmed')  // Le calendrier n'affiche que les réservations confirmées
       .lt('date_debut', to)
       .gt('date_fin', from)
@@ -81,7 +82,7 @@ async function getBookingsCalendar(req, res) {
 
 async function createBooking(req, res) {
   try {
-    const { espace_id, date_debut, date_fin, mode } = req.body;
+    const { espace_id, date_debut, date_fin, mode, client_type, entreprise_info } = req.body;
 
     if (!espace_id || !date_debut || !date_fin) {
       return res.status(400).json({ error: 'espace_id, date_debut et date_fin sont requis.' });
@@ -130,6 +131,8 @@ async function createBooking(req, res) {
         meeting_room: 'Salle de réunion',
         training_room: 'Salle de formation',
         event_space: 'Espace événementiel',
+        hot_desk: 'Poste nomade (Hot Desk)',
+        dedicated_desk: 'Poste fixe (Dedicated Desk)',
       };
       return res.status(400).json({
         error: `Votre formule d'abonnement est limitée aux espaces de type « ${typeLabels[activeSub.type_espace] || activeSub.type_espace} ». Cet espace est de type « ${typeLabels[espData.type] || espData.type} ».`,
@@ -138,33 +141,65 @@ async function createBooking(req, res) {
 
     const hours = Math.max(1, (new Date(date_fin) - new Date(date_debut)) / (1000 * 60 * 60));
     const tarif = parseFloat(espData?.tarif_horaire) || 0;
-    const computedMontant = parseFloat((hours * tarif).toFixed(2));
+    const computedMontant = parseFloat((hours * tarif).toFixed(3));
 
     const bookingTenantId = req.tenantId || espData?.tenant_id || null;
 
-    // Normalisation du mode pour respecter la contrainte CHECK (mode IN ('online', 'on_site', 'phone'))
-    let dbMode = 'online';
-    if (mode === 'sur_place' || mode === 'on_site') {
-      dbMode = 'on_site';
-    } else if (mode === 'phone') {
-      dbMode = 'phone';
-    } else {
-      dbMode = 'online';
+    // CDC v3.0 Chantier 3.2 : champs obligatoires si compte Entreprise
+    const isEntreprise = req.profile?.type_membre === 'entreprise' || client_type === 'entreprise';
+    let enterpriseNotes = null;
+    if (isEntreprise) {
+      const info = entreprise_info || {};
+      const missing = [];
+      if (!String(info.raison_sociale || '').trim()) missing.push('Raison sociale');
+      if (!String(info.contact_nom || '').trim()) missing.push('Personne de contact');
+      if (!String(info.telephone_pro || '').trim()) missing.push('Téléphone professionnel');
+      if (!String(info.email_facturation || '').trim()) missing.push('Email de facturation');
+      if (!String(info.besoin_description || '').trim()) missing.push('Objet du besoin');
+      if (missing.length > 0) {
+        return res.status(400).json({
+          error: `Champs Entreprise obligatoires manquants : ${missing.join(', ')}.`,
+        });
+      }
+      enterpriseNotes = JSON.stringify({
+        type_client: 'entreprise',
+        raison_sociale: info.raison_sociale.trim(),
+        contact_nom: info.contact_nom.trim(),
+        telephone_pro: info.telephone_pro.trim(),
+        email_facturation: info.email_facturation.trim(),
+        besoin_description: info.besoin_description.trim(),
+      });
     }
 
-    const { data, error } = await req.db
-      .from('reservations')
-      .insert({
+    // Statut : Event Space toujours soumis à validation manuelle ('pending') ; sinon selon réglage tenant
+    let initialStatut = 'pending';
+    if (bookingTenantId && espData?.type !== 'event_space') {
+      const { data: tenantCfg } = await supabaseAdmin.from('tenants').select('settings').eq('id', bookingTenantId).maybeSingle();
+      if (tenantCfg?.settings?.auto_confirmation === true) initialStatut = 'confirmed';
+    }
+
+    // Normalisation du mode pour respecter la contrainte CHECK (mode IN ('online', 'on_site', 'phone'))
+    // CDC v3.0 D1 : règlement 100 % sur place — « online » n'est plus proposé.
+    let dbMode = 'on_site';
+    if (mode === 'phone') {
+      dbMode = 'phone';
+    }
+
+    const { data, error } = await insertWithColumnFallback(
+      supabaseAdmin,
+      'reservations',
+      {
         tenant_id: bookingTenantId,
         user_id: req.user.id,
         espace_id,
         date_debut,
         date_fin,
-        statut: 'pending',
+        statut: initialStatut,
         mode: dbMode,
-      })
-      .select('*, espaces(nom, type, tarif_horaire)')
-      .single();
+        ...(enterpriseNotes ? { notes: enterpriseNotes } : {}),
+      },
+      { aliases: { user_id: 'membre_id' }, select: '*, espaces(nom, type, tarif_horaire)' }
+    );
 
     if (error) {
       return res.status(400).json({ error: error.message });
@@ -172,7 +207,7 @@ async function createBooking(req, res) {
 
     let payment = null;
     if (computedMontant > 0) {
-      const paymentMode = dbMode === 'online' ? 'online' : 'cash';
+      const paymentMode = 'cash'; // règlement sur place
       const { data: paymentRow, error: payErr } = await supabaseAdmin
         .from('paiements')
         .insert({
@@ -193,7 +228,7 @@ async function createBooking(req, res) {
       }
     }
 
-    // Notifier les admins/staff du tenant qu'une nouvelle réservation est en attente
+    // CDC v3.0 §4.2 : Notifications In-App + E-mail (Manager & Client) à la création de la réservation
     try {
       const targetTenantId = bookingTenantId || req.tenantId;
       let adminsQuery = supabaseAdmin
@@ -206,21 +241,51 @@ async function createBooking(req, res) {
       }
 
       const { data: admins } = await adminsQuery;
+      const memberProfile = req.profile;
+      const clientEmail = req.user.email || memberProfile?.email;
+      const espaceNom = data.espaces?.nom || espData?.nom || 'un espace';
+      const dateDebutStr = new Date(date_debut).toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis' }) + ' à ' + new Date(date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Tunis' });
+      const clientName = `${memberProfile?.prenom || ''} ${memberProfile?.nom || ''}`.trim() || 'Client';
 
+      // 1) Alerte Manager / Staff (In-App + Email)
       if (admins && admins.length > 0) {
-        const memberProfile = req.profile;
-        const modeLabel = (mode === 'sur_place' || mode === 'cash' || mode === 'on_site') ? 'Sur place' : 'En ligne';
         for (const admin of admins) {
           await supabaseAdmin.from('notifications').insert({
             user_id: admin.id,
             type: 'nouvelle_demande_reservation',
             canal: 'Dashboard',
-            message: `📋 Nouvelle demande de réservation de ${memberProfile?.prenom || ''} ${memberProfile?.nom || ''} pour ${data.espaces?.nom || 'un espace'} — Paiement : ${modeLabel}`,
+            message: `📋 Nouvelle réservation reçue de ${clientName} pour ${espaceNom} (${dateDebutStr}) — Règlement sur place.`,
           });
+
+          if (admin.email) {
+            sendEmailUniversal({
+              to: admin.email,
+              subject: `Nouvelle réservation reçue — ${espaceNom}`,
+              text: `Bonjour ${admin.prenom || ''},\n\nUne nouvelle réservation a été reçue de ${clientName} pour ${espaceNom} le ${dateDebutStr}.\nStatut : ${initialStatut === 'confirmed' ? 'Confirmée automatiquement' : 'En attente de validation'}.\nRèglement prévu sur place.\n`,
+              html: `<p>Bonjour <strong>${admin.prenom || ''}</strong>,</p><p>Une nouvelle réservation a été enregistrée :</p><ul><li><strong>Client :</strong> ${clientName}</li><li><strong>Espace :</strong> ${espaceNom}</li><li><strong>Date :</strong> ${dateDebutStr}</li><li><strong>Statut :</strong> ${initialStatut === 'confirmed' ? 'Confirmée automatiquement' : 'En attente de validation'}</li><li><strong>Règlement :</strong> Sur place à l'accueil</li></ul>`,
+            }).catch(() => {});
+          }
         }
       }
+
+      // 2) Confirmation au Client (In-App + Email)
+      await supabaseAdmin.from('notifications').insert({
+        user_id: req.user.id,
+        type: 'confirmation_demande_reservation',
+        canal: 'Dashboard',
+        message: `📋 Votre demande de réservation pour ${espaceNom} (${dateDebutStr}) a bien été enregistrée.`,
+      });
+
+      if (clientEmail) {
+        sendEmailUniversal({
+          to: clientEmail,
+          subject: `Confirmation de votre demande de réservation — ${espaceNom}`,
+          text: `Bonjour ${memberProfile?.prenom || ''},\n\nVotre réservation pour ${espaceNom} le ${dateDebutStr} a bien été enregistrée.\nStatut : ${initialStatut === 'confirmed' ? 'Confirmée' : 'En attente de validation'}.\nLe règlement se fera sur place à votre arrivée.\n`,
+          html: `<p>Bonjour <strong>${memberProfile?.prenom || ''}</strong>,</p><p>Votre réservation pour l'espace <strong>${espaceNom}</strong> le <strong>${dateDebutStr}</strong> a bien été enregistrée.</p><p>Statut : <strong>${initialStatut === 'confirmed' ? 'Confirmée' : 'En attente de validation'}</strong>.</p><p>Le règlement s'effectuera sur place à votre arrivée.</p>`,
+        }).catch(() => {});
+      }
     } catch (notifErr) {
-      console.error('⚠️ Notification admin nouvelle réservation:', notifErr.message);
+      console.error('⚠️ Notification admin/client nouvelle réservation:', notifErr.message);
     }
 
     res.status(201).json({ reservation: data, payment });
@@ -379,12 +444,19 @@ async function deleteBooking(req, res) {
         message: `❌ Votre réservation pour ${reservation.espaces?.nom || 'un espace'} a été annulée.`,
       });
 
-      // 3) Notification in-app pour les admins du tenant
-      const { data: admins } = await supabaseAdmin
+      // 3) Notification in-app + Email pour les admins du tenant (avec résolution fiable du tenantId)
+      const targetTenantId = reservation.tenant_id || req.tenantId;
+      let adminsQuery = supabaseAdmin
         .from('profiles')
-        .select('id')
-        .eq('tenant_id', req.tenantId)
+        .select('id, nom, prenom, email')
         .in('role', ['admin', 'staff']);
+
+      if (targetTenantId) {
+        adminsQuery = adminsQuery.eq('tenant_id', targetTenantId);
+      }
+
+      const { data: admins } = await adminsQuery;
+      const clientName = `${req.profile?.prenom || ''} ${req.profile?.nom || ''}`.trim() || 'Un client';
 
       if (admins && admins.length > 0) {
         for (const admin of admins) {
@@ -392,8 +464,17 @@ async function deleteBooking(req, res) {
             user_id: admin.id,
             type: 'annulation_reservation',
             canal: 'Dashboard',
-            message: `🚫 ${req.profile?.prenom || ''} ${req.profile?.nom || ''} a annulé sa réservation pour ${reservation.espaces?.nom || 'un espace'}.`,
+            message: `🚫 ${clientName} a annulé sa réservation pour ${reservation.espaces?.nom || 'un espace'}.`,
           });
+
+          if (admin.email) {
+            sendEmailUniversal({
+              to: admin.email,
+              subject: `Annulation de réservation — ${reservation.espaces?.nom || 'Espace'}`,
+              text: `Bonjour ${admin.prenom || ''},\n\n${clientName} a annulé sa réservation pour ${reservation.espaces?.nom || 'un espace'}.\n`,
+              html: `<p>Bonjour <strong>${admin.prenom || ''}</strong>,</p><p>Le client <strong>${clientName}</strong> a annulé sa réservation pour l'espace <strong>${reservation.espaces?.nom || 'un espace'}</strong>.</p>`,
+            }).catch(() => {});
+          }
         }
       }
     } catch (notifErr) {
@@ -456,7 +537,7 @@ async function listBookings(req, res) {
   try {
     let query = supabaseAdmin
       .from('reservations')
-      .select('*, espaces(nom, type, tarif_horaire, tenant_id), profiles(nom, prenom, email, telephone, role), guests(nom, prenom, email, telephone), paiements(id, statut, mode, montant)')
+      .select('*, espaces(nom, type, tarif_horaire, tenant_id), profiles!user_id(nom, prenom, email, telephone, role), guests(nom, prenom, email, telephone), paiements(id, statut, mode, montant)')
       .order('created_at', { ascending: false });
 
     if (isSuperAdmin) {
@@ -520,7 +601,7 @@ async function listBookings(req, res) {
     const reservations = (data || []).map((b) => {
       const hours = Math.max(0, (new Date(b.date_fin) - new Date(b.date_debut)) / (1000 * 60 * 60));
       const tarif = parseFloat(b.espaces?.tarif_horaire) || 0;
-      return { ...b, montant_total: parseFloat((hours * tarif).toFixed(2)) };
+      return { ...b, montant_total: parseFloat((hours * tarif).toFixed(3)) };
     });
 
     res.json({ reservations });
@@ -624,7 +705,16 @@ async function updateBooking(req, res) {
     if (date_debut) updates.date_debut = date_debut;
     if (date_fin) updates.date_fin = date_fin;
     if (statut && isStaff) {
-      if (!['pending', 'confirmed', 'cancelled'].includes(statut)) {
+      const VALID_BOOKING_STATUSES = [
+        'pending',
+        'confirmed',
+        'refused',
+        'cancelled',
+        'completed',
+        'no_show',
+        'waitlisted',
+      ];
+      if (!VALID_BOOKING_STATUSES.includes(statut)) {
         return res.status(400).json({ error: 'statut invalide.' });
       }
       updates.statut = statut;
@@ -659,7 +749,7 @@ async function updateBooking(req, res) {
         }
 
         if (memberProfile && memberEmail) {
-          const modeLabel = (data.mode === 'on_site' || data.mode === 'sur_place') ? '💵 sur place à l\'accueil' : '💳 en ligne depuis votre espace membre';
+          const modeLabel = 'sur place à l\'accueil (espèces, chèque ou virement)';
 
           // 1) Email de confirmation (enregistre aussi la notification en base avec canal: 'Email')
           await notifyConfirmationReservation(
@@ -725,6 +815,41 @@ async function updateBooking(req, res) {
         }
       } catch (notifErr) {
         console.error('⚠️ Échec notification annulation réservation (admin):', notifErr.message);
+      }
+    }
+
+    // Si l'admin refuse la réservation → notifier le membre in-app + Email (CDC v3.0)
+    if (updates.statut === 'refused' && data.user_id) {
+      try {
+        await supabaseAdmin.from('notifications').insert({
+          user_id: data.user_id,
+          type: 'refus_reservation',
+          canal: 'Dashboard',
+          message: `❌ Votre demande de réservation pour ${data.espaces?.nom || 'l\'espace'} a été refusée par l'établissement.`,
+        });
+
+        const { data: memberProfile } = await supabaseAdmin
+          .from('profiles')
+          .select('id, nom, prenom, email')
+          .eq('id', data.user_id)
+          .single();
+
+        let memberEmail = memberProfile?.email;
+        if (!memberEmail) {
+          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(data.user_id);
+          memberEmail = authUser?.user?.email;
+        }
+
+        if (memberEmail) {
+          sendEmailUniversal({
+            to: memberEmail,
+            subject: `Information sur votre demande de réservation — ${data.espaces?.nom || 'Espace'}`,
+            text: `Bonjour ${memberProfile?.prenom || ''},\n\nVotre demande de réservation pour l'espace ${data.espaces?.nom || 'un espace'} n'a malheureusement pas pu être acceptée par l'établissement.\n`,
+            html: `<p>Bonjour <strong>${memberProfile?.prenom || ''}</strong>,</p><p>Votre demande de réservation pour l'espace <strong>${data.espaces?.nom || 'un espace'}</strong> n'a pas pu être acceptée par l'établissement.</p><p>Nous vous invitons à consulter les disponibilités pour un autre créneau ou un autre espace.</p>`,
+          }).catch(() => {});
+        }
+      } catch (notifErr) {
+        console.error('⚠️ Échec notification refus réservation:', notifErr.message);
       }
     }
 

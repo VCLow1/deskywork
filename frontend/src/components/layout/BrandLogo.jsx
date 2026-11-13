@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
+import logoDark from '../../assets/images/logo-deskywork-dark.png';
+import logoLight from '../../assets/images/logo-deskywork-light.png';
 
 /**
  * BrandLogo — DeskyWork
@@ -10,12 +12,12 @@ import { useTheme } from '../../context/ThemeContext';
  *   light    — force variante claire (sur fonds sombres)
  *   height   — hauteur du logo en px (défaut: 36)
  */
-export default function BrandLogo({ to = '/', className = '', compact = false, light, height = 48 }) {
+export default function BrandLogo({ to = '/', className = '', compact = false, light, height = 56 }) {
   const { dark } = useTheme();
   const isDark = light !== undefined ? light : dark;
 
-  /* Logo PNG transparent : mode sombre = "logo 2.png", mode clair = "logo 1.png" */
-  const logoSrc = isDark ? '/logo 2.png' : '/logo 1.png';
+  /* Logo PNG importé directement via Vite */
+  const logoSrc = isDark ? logoLight : logoDark;
 
   return (
     <Link
@@ -27,16 +29,14 @@ export default function BrandLogo({ to = '/', className = '', compact = false, l
         src={logoSrc}
         alt="DeskyWork"
         style={{
-          height: compact ? height * 0.85 : height,
+          height: compact ? Math.round(height * 0.88) : height,
           width: 'auto',
-          maxHeight: 'none',
+          maxWidth: 'none',
           objectFit: 'contain',
-          transform: 'scale(2.2)',
-          transformOrigin: 'left center',
           transition: 'transform 0.2s ease, opacity 0.2s ease',
           display: 'block',
         }}
-        className="group-hover:scale-110"
+        className="group-hover:opacity-90"
       />
 
       {/* Nom textuel visible uniquement si compact=false ET logo non chargé (fallback) */}

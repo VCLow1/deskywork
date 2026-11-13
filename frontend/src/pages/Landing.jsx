@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { guestApi } from '../services/api';
 import { API_URL } from '../services/api';
 import Navbar from '../components/layout/Navbar';
@@ -364,6 +364,86 @@ function PromoModal({ tenant, onClose, dark }) {
   );
 }
 
+const STATIC_FALLBACK_TENANTS = [
+  {
+    id: 'thirty-three-space',
+    nom: 'Thirty Three Space',
+    slug: 'thirty-three-space',
+    ville: 'Tunis',
+    adresse: 'Les Berges du Lac 2, Tunis',
+    description: 'Espace de coworking moderne, bureaux privatifs et communauté innovante au Lac 2.',
+    cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
+    logo_url: partnerThirtyThree,
+    is_featured: true,
+    space_count: 6,
+    member_count: 54,
+    has_promo: true,
+  },
+  {
+    id: 'nero-coworking',
+    nom: 'Néro Coworking Space',
+    slug: 'nero-coworking',
+    ville: 'Tunis',
+    adresse: 'Avenue Hédi Nouira, Ennasr 2, Tunis',
+    description: 'Coworking premium, salles de réunion high-tech et flex office pour créatifs et équipes.',
+    cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
+    logo_url: partnerNero,
+    is_featured: true,
+    space_count: 8,
+    member_count: 68,
+    has_promo: true,
+  },
+  {
+    id: 'the-hive-coworking',
+    nom: 'The Hive Coworking Space',
+    slug: 'the-hive-coworking',
+    ville: 'Sousse',
+    adresse: 'Zone Touristique El Kantaoui, Sousse',
+    description: 'Espace stimulant au bord de mer avec postes nomades, formations et réseau d\'entrepreneurs.',
+    cover_url: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=600&fit=crop',
+    is_featured: true,
+    space_count: 5,
+    member_count: 35,
+    has_promo: false,
+  },
+];
+
+const STATIC_FALLBACK_ESPACES = [
+  {
+    id: 'esp-open-33',
+    tenant_id: 'thirty-three-space',
+    nom: 'Poste Nomade (Open Space)',
+    type: 'open_space',
+    capacite: 30,
+    tarif_horaire: 5,
+    photo_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
+    equipements: ['Wi-Fi Fibre', 'Climatisation', 'Café/Thé', 'Prises dédiées'],
+    tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
+  },
+  {
+    id: 'esp-bureau-nero',
+    tenant_id: 'nero-coworking',
+    nom: 'Bureau Privatif 4 Personnes',
+    type: 'private_office',
+    capacite: 4,
+    tarif_horaire: 22,
+    photo_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
+    equipements: ['Wi-Fi Fibre', 'Climatisation', 'Écran 4K', 'Tableau blanc'],
+    tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
+  },
+  {
+    id: 'esp-reunion-33',
+    tenant_id: 'thirty-three-space',
+    nom: 'Salle de Réunion Vision',
+    type: 'meeting_room',
+    capacite: 10,
+    tarif_horaire: 35,
+    photo_url: 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?w=800&h=600&fit=crop',
+    equipements: ['Wi-Fi Fibre', 'Visioconférence', 'Projecteur', 'Tableau blanc'],
+    tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
+  },
+];
+
 /* ═══════════════════════════════════════════════════════════════════════════
    PAGE PRINCIPALE — LANDING PAGE (CDC DeskyWork v3.0)
 ═══════════════════════════════════════════════════════════════════════════ */
@@ -371,8 +451,25 @@ export default function Landing({ session }) {
   const { dark } = useTheme();
   const { lang, t } = useLanguage();
   const EC = getThemeColors(dark);
+  const location = useLocation();
 
   const [isAtTop, setIsAtTop] = useState(true);
+
+  // Défilement fluide vers ancre hashée (ex: /#partenaires depuis menu ou autre page)
+  useEffect(() => {
+    if (location.hash) {
+      const hashId = location.hash.replace('#', '');
+      const el = document.getElementById(hashId) || (hashId === 'partenaires' ? document.getElementById('entreprises') : null);
+      if (el) {
+        const timer = setTimeout(() => {
+          const yOffset = -85;
+          const y = el.getBoundingClientRect().top + window.pageYOffset + yOffset;
+          window.scrollTo({ top: y, behavior: 'smooth' });
+        }, 120);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [location.hash]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -414,8 +511,8 @@ export default function Landing({ session }) {
     }
   };
 
-  const [tenants, setTenants] = useState([]);
-  const [publicEspaces, setPublicEspaces] = useState([]);
+  const [tenants, setTenants] = useState(STATIC_FALLBACK_TENANTS);
+  const [publicEspaces, setPublicEspaces] = useState(STATIC_FALLBACK_ESPACES);
   const [publicFormations, setPublicFormations] = useState([]);
   const [searchVille, setSearchVille] = useState('');
   const [searchType, setSearchType] = useState('');
@@ -466,96 +563,9 @@ export default function Landing({ session }) {
 
   const [slide, setSlide] = useState(0);
   const [hovering, setHovering] = useState(false);
-  const FALLBACK_PARTNER_TENANTS = useMemo(() => [
-    {
-      id: 'thirty-three-space',
-      nom: 'Thirty Three Space',
-      slug: 'thirty-three-space',
-      ville: 'Tunis',
-      adresse: 'Les Berges du Lac 2, Tunis',
-      description: 'Espace de coworking moderne, bureaux privatifs et communauté innovante au Lac 2.',
-      cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
-      logo_url: partnerThirtyThree,
-      is_featured: true,
-      space_count: 6,
-      member_count: 54,
-      has_promo: true,
-    },
-    {
-      id: 'nero-coworking',
-      nom: 'Néro Coworking Space',
-      slug: 'nero-coworking',
-      ville: 'Tunis',
-      adresse: 'Avenue Hédi Nouira, Ennasr 2, Tunis',
-      description: 'Coworking premium, salles de réunion high-tech et flex office pour créatifs et équipes.',
-      cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
-      logo_url: partnerNero,
-      is_featured: true,
-      space_count: 8,
-      member_count: 68,
-      has_promo: true,
-    },
-    {
-      id: 'the-hive-coworking',
-      nom: 'The Hive Coworking Space',
-      slug: 'the-hive-coworking',
-      ville: 'Sousse',
-      adresse: 'Zone Touristique El Kantaoui, Sousse',
-      description: 'Espace stimulant au bord de mer avec postes nomades, formations et réseau d\'entrepreneurs.',
-      cover_url: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=600&fit=crop',
-      is_featured: true,
-      space_count: 5,
-      member_count: 35,
-      has_promo: false,
-    },
-  ], []);
+  const FALLBACK_PARTNER_TENANTS = STATIC_FALLBACK_TENANTS;
 
-  const FALLBACK_PARTNER_ESPACES = useMemo(() => [
-    {
-      id: 'esp-open-33',
-      tenant_id: 'thirty-three-space',
-      nom: 'Poste Nomade (Open Space)',
-      type: 'open_space',
-      capacite: 30,
-      tarif_horaire: 5,
-      photo_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
-      equipements: ['Wi-Fi Fibre', 'Climatisation', 'Café/Thé', 'Prises dédiées'],
-      tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
-    },
-    {
-      id: 'esp-bureau-nero',
-      tenant_id: 'nero-coworking',
-      nom: 'Bureau Privatif 4 Personnes',
-      type: 'private_office',
-      capacite: 4,
-      tarif_horaire: 22,
-      photo_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
-      equipements: ['Wi-Fi Fibre', 'Climatisation', 'Écran 4K', 'Tableau blanc'],
-      tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
-    },
-    {
-      id: 'esp-reunion-33',
-      tenant_id: 'thirty-three-space',
-      nom: 'Salle de Réunion Vision',
-      type: 'meeting_room',
-      capacite: 10,
-      tarif_horaire: 35,
-      photo_url: 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?w=800&h=600&fit=crop',
-      equipements: ['Wi-Fi Fibre', 'Visioconférence', 'Projecteur', 'Tableau blanc'],
-      tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
-    },
-    {
-      id: 'esp-formation-nero',
-      tenant_id: 'nero-coworking',
-      nom: 'Salle de Formation Masterclass',
-      type: 'training_room',
-      capacite: 20,
-      tarif_horaire: 55,
-      photo_url: 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?w=800&h=600&fit=crop',
-      equipements: ['Wi-Fi Fibre', 'Projecteur', 'Microphone', 'Climatisation'],
-      tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
-    },
-  ], []);
+  const FALLBACK_PARTNER_ESPACES = STATIC_FALLBACK_ESPACES;
 
   const [hidden, setHidden] = useState(false);
   const [promoTenant, setPromoTenant] = useState(null);
@@ -1400,21 +1410,72 @@ export default function Landing({ session }) {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 96px;
-          height: 96px;
-          border-radius: 50%;
-          padding: 14px;
-          background: ${dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)'};
+          height: 64px;
+          min-width: 170px;
+          padding: 8px 24px;
+          border-radius: 18px;
+          background: ${dark ? 'rgba(255,255,255,0.06)' : '#ffffff'};
           border: 1.5px solid ${dark ? 'rgba(255,255,255,0.14)' : 'rgba(16,15,13,0.1)'};
-          backdrop-filter: blur(8px);
-          overflow: hidden;
+          backdrop-filter: blur(10px);
           transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
           text-decoration: none;
         }
         .trust-logo-card:hover {
-          transform: translateY(-3px) scale(1.06);
+          transform: translateY(-3px) scale(1.03);
           border-color: #f95d00;
           box-shadow: 0 8px 24px rgba(249,93,0,0.22);
+        }
+
+        /* PARTNER CARD (EXCLUSIVE PARTNERS NERO & THIRTY THREE) */
+        .partner-card {
+          position: relative;
+          background: ${EC.cardBg};
+          border: 1.5px solid ${EC.outline};
+          border-radius: 24px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease, border-color 0.28s ease;
+          box-shadow: ${dark ? '0 12px 32px rgba(0,0,0,0.4)' : '0 12px 32px rgba(15,23,42,0.06)'};
+        }
+        .partner-card:hover {
+          transform: translateY(-6px);
+          box-shadow: 0 22px 48px rgba(249,93,0,0.22);
+          border-color: rgba(249,93,0,0.5);
+        }
+        .partner-card .partner-visual {
+          width: 100%;
+          height: 192px; /* h-48 */
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          position: relative;
+          overflow: hidden;
+          padding: 24px;
+        }
+        .partner-card .partner-tag {
+          display: inline-block;
+          font-size: 0.78rem;
+          font-weight: 600;
+          padding: 5px 12px;
+          border-radius: 8px;
+          background: ${EC.bgLow};
+          color: ${EC.navy};
+          border: 1px solid ${EC.outline};
+        }
+        .btn-discover-partner {
+          transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+        .btn-discover-partner:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 28px rgba(249,93,0,0.36) !important;
+        }
+        .btn-discover-partner:hover .material-symbols-outlined {
+          transform: translateX(4px);
+        }
+        .btn-discover-partner .material-symbols-outlined {
+          transition: transform 0.2s ease;
         }
 
         /* KPI */
@@ -2053,7 +2114,7 @@ export default function Landing({ session }) {
           <p className="text-center mb-4" style={{ color: EC.cobalt, fontSize: '.76rem', fontWeight: 800, letterSpacing: '.18em', textTransform: 'uppercase' }}>
             {t('landing.trustText')}
           </p>
-          <div className="d-flex flex-wrap justify-content-center align-items-center gap-5">
+          <div className="d-flex flex-wrap justify-content-center align-items-center gap-4">
             <a
               href="https://thirtythreespace.com/"
               target="_blank"
@@ -2064,22 +2125,25 @@ export default function Landing({ session }) {
               <img
                 src={partnerThirtyThree}
                 alt="Thirty Three Space"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                style={{ height: 44, maxWidth: 150, objectFit: 'contain', display: 'block' }}
               />
             </a>
             <div
               title="Néro Coworking Space"
               className="trust-logo-card"
+              style={{
+                background: dark ? 'rgba(255,255,255,0.06)' : '#1e293b',
+                border: dark ? '1.5px solid rgba(255,255,255,0.14)' : '1.5px solid #334155',
+              }}
             >
               <img
                 src={partnerNero}
                 alt="Néro Coworking Space"
                 style={{
-                  width: '100%',
-                  height: '100%',
+                  height: 32,
+                  maxWidth: 140,
                   objectFit: 'contain',
                   display: 'block',
-                  filter: dark ? 'none' : 'brightness(0)',
                 }}
               />
             </div>
@@ -2418,57 +2482,240 @@ export default function Landing({ session }) {
       </section>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 5 — PARTENAIRES (#partenaires / #entreprises)
+          SECTION 5 — PARTENAIRES EXCLUSIFS (#partenaires)
       ══════════════════════════════════════════════════════════════════════ */}
-      <section id="partenaires" className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease' }}>
+      <section id="partenaires" className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease', scrollMarginTop: '90px' }}>
         <span id="entreprises" style={{ position: 'absolute', top: 0 }} />
         <div className="container py-4">
           <div className="text-center mb-5">
             <span className="sec-badge">{t('landing.partnersBadge')}</span>
-            <h2 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: 'clamp(1.6rem,2.6vw,2.1rem)' }}>
+            <h2 className="sora fw-bold mb-3" style={{ color: EC.navy, fontSize: 'clamp(1.7rem,2.8vw,2.3rem)' }}>
               {t('landing.partnersTitle')}
             </h2>
-            <p style={{ color: EC.muted, maxWidth: 640, margin: '0 auto', lineHeight: 1.8 }}>
+            <p style={{ color: EC.muted, maxWidth: 680, margin: '0 auto', lineHeight: 1.8, fontSize: '1.02rem' }}>
               {t('landing.partnersSubtitle')}
             </p>
           </div>
-          <div className="row g-4">
-            {[
-              {
-                icon: 'domain',
-                title: t('landing.partnerCard1Title'),
-                desc: t('landing.partnerCard1Desc'),
-                cta: t('landing.partnerCta'),
-                to: '/espaces-partenaires',
-              },
-              {
-                icon: 'school',
-                title: t('landing.partnerCard2Title'),
-                desc: t('landing.partnerCard2Desc'),
-                cta: t('landing.proposeTraining'),
-                to: '/devenir-formateur',
-              },
-              {
-                icon: 'business_center',
-                title: t('landing.partnerCard3Title'),
-                desc: t('landing.partnerCard3Desc'),
-                cta: 'Créer un compte Entreprise',
-                to: '/register?type=entreprise',
-              },
-            ].map((actor) => (
-              <div key={actor.title} className="col-md-4">
-                <div style={{ backgroundColor: EC.cardBg, borderRadius: 20, padding: '1.75rem', height: '100%', border: `1.5px solid ${EC.outline}`, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: EC.cobaltLight, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
-                    <span className="material-symbols-outlined" style={{ color: EC.cobalt, fontSize: 24 }}>{actor.icon}</span>
+
+          <div className="row justify-content-center g-4">
+            {/* 1. NERO COWORKING SPACE */}
+            <div className="col-lg-5 col-md-6 col-12">
+              <div className="partner-card">
+                <div
+                  className="partner-visual"
+                  style={{
+                    background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #1e293b 100%)',
+                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <img
+                    src={partnerNero}
+                    alt="Nero Coworking Space"
+                    style={{
+                      maxHeight: 52,
+                      maxWidth: '80%',
+                      objectFit: 'contain',
+                      display: 'block',
+                      filter: 'drop-shadow(0 4px 14px rgba(0,0,0,0.35))',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 14,
+                      right: 14,
+                      background: 'rgba(15,23,42,0.85)',
+                      border: '1px solid rgba(249,93,0,0.5)',
+                      color: '#ffb599',
+                      padding: '4px 10px',
+                      borderRadius: 999,
+                      fontSize: '.68rem',
+                      fontWeight: 800,
+                      letterSpacing: '.06em',
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      backdropFilter: 'blur(6px)',
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13, color: '#f95d00' }}>verified</span>
+                    {t('landing.officialPartnerBadge')}
                   </div>
-                  <h4 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.08rem' }}>{actor.title}</h4>
-                  <p style={{ color: EC.muted, fontSize: '.88rem', lineHeight: 1.7, flex: 1 }}>{actor.desc}</p>
-                  <Link to={actor.to} style={{ color: EC.cobalt, fontWeight: 700, textDecoration: 'none', fontSize: '.9rem', marginTop: 12 }}>
-                    {actor.cta} →
+                </div>
+
+                <div style={{ padding: '1.8rem', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div className="d-flex align-items-center gap-2 mb-2">
+                    <span
+                      style={{
+                        background: 'rgba(249,93,0,0.12)',
+                        border: '1px solid rgba(249,93,0,0.3)',
+                        color: '#f95d00',
+                        fontSize: '.72rem',
+                        fontWeight: 800,
+                        letterSpacing: '.06em',
+                        textTransform: 'uppercase',
+                        borderRadius: 999,
+                        padding: '3px 10px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+                      {t('landing.officialPartnerBadge')}
+                    </span>
+                  </div>
+
+                  <h3 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.35rem' }}>
+                    {t('landing.neroTitle')}
+                  </h3>
+
+                  <p style={{ color: EC.muted, fontSize: '.92rem', lineHeight: 1.75, marginBottom: '1.25rem', flex: 1 }}>
+                    {t('landing.neroDesc')}
+                  </p>
+
+                  <div className="d-flex flex-wrap gap-2 mb-4">
+                    <span className="partner-tag">{t('landing.neroTag1')}</span>
+                    <span className="partner-tag">{t('landing.neroTag2')}</span>
+                    <span className="partner-tag">{t('landing.neroTag3')}</span>
+                  </div>
+
+                  <Link
+                    to="/coworking/nero-coworking"
+                    className="btn-discover-partner"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '12px 20px',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #f95d00 0%, #ea580c 100%)',
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      fontSize: '.92rem',
+                      textDecoration: 'none',
+                      boxShadow: '0 8px 20px rgba(249,93,0,0.22)',
+                      transition: 'transform .2s ease, box-shadow .2s ease',
+                    }}
+                  >
+                    <span>{t('landing.discoverSpace')}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
                   </Link>
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* 2. THIRTY THREE SPACE */}
+            <div className="col-lg-5 col-md-6 col-12">
+              <div className="partner-card">
+                <div
+                  className="partner-visual"
+                  style={{
+                    background: '#ffffff',
+                    borderBottom: '1px solid rgba(0,0,0,0.06)',
+                  }}
+                >
+                  <img
+                    src={partnerThirtyThree}
+                    alt="Thirty Three Space"
+                    style={{
+                      maxHeight: 96,
+                      maxWidth: '80%',
+                      objectFit: 'contain',
+                      display: 'block',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 14,
+                      right: 14,
+                      background: 'rgba(255,255,255,0.92)',
+                      border: '1px solid rgba(249,93,0,0.4)',
+                      color: '#f95d00',
+                      padding: '4px 10px',
+                      borderRadius: 999,
+                      fontSize: '.68rem',
+                      fontWeight: 800,
+                      letterSpacing: '.06em',
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13, color: '#f95d00' }}>verified</span>
+                    {t('landing.officialPartnerBadge')}
+                  </div>
+                </div>
+
+                <div style={{ padding: '1.8rem', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div className="d-flex align-items-center gap-2 mb-2">
+                    <span
+                      style={{
+                        background: 'rgba(249,93,0,0.12)',
+                        border: '1px solid rgba(249,93,0,0.3)',
+                        color: '#f95d00',
+                        fontSize: '.72rem',
+                        fontWeight: 800,
+                        letterSpacing: '.06em',
+                        textTransform: 'uppercase',
+                        borderRadius: 999,
+                        padding: '3px 10px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+                      {t('landing.officialPartnerBadge')}
+                    </span>
+                  </div>
+
+                  <h3 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.35rem' }}>
+                    {t('landing.thirtyTitle')}
+                  </h3>
+
+                  <p style={{ color: EC.muted, fontSize: '.92rem', lineHeight: 1.75, marginBottom: '1.25rem', flex: 1 }}>
+                    {t('landing.thirtyDesc')}
+                  </p>
+
+                  <div className="d-flex flex-wrap gap-2 mb-4">
+                    <span className="partner-tag">{t('landing.thirtyTag1')}</span>
+                    <span className="partner-tag">{t('landing.thirtyTag2')}</span>
+                    <span className="partner-tag">{t('landing.thirtyTag3')}</span>
+                  </div>
+
+                  <Link
+                    to="/coworking/thirty-three-space"
+                    className="btn-discover-partner"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '12px 20px',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #f95d00 0%, #ea580c 100%)',
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      fontSize: '.92rem',
+                      textDecoration: 'none',
+                      boxShadow: '0 8px 20px rgba(249,93,0,0.22)',
+                      transition: 'transform .2s ease, box-shadow .2s ease',
+                    }}
+                  >
+                    <span>{t('landing.discoverSpace')}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
+                  </Link>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -2702,7 +2949,7 @@ export default function Landing({ session }) {
                 {t('landing.footerPartners')}
               </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><Link to="/espaces-partenaires" className="footer-link">{t('navbar.partners')}</Link></li>
+                <li><a href="#partenaires" className="footer-link">{t('navbar.partners')}</a></li>
                 <li><a href="#formations" className="footer-link">{t('navbar.formations')}</a></li>
                 <li><Link to="/devenir-formateur" className="footer-link">Devenir Formateur</Link></li>
                 <li><a href="#contact" className="footer-link">{t('navbar.contact')}</a></li>

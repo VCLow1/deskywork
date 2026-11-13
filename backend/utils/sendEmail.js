@@ -122,7 +122,7 @@ const MODE_LABELS = {
   cash: 'Espèces',
   bank_transfer: 'Virement bancaire',
   check: 'Chèque',
-  online: 'Paiement en ligne',
+  online: 'Règlement sur place',
 };
 
 const STATUT_COLORS = {

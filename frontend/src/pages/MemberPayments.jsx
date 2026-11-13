@@ -49,7 +49,7 @@ const PAYMENT_METHOD_ICONS = {
 
 function formatCurrency(amount) {
   const num = Number(amount) || 0;
-  return num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' DT';
+  return num.toLocaleString('fr-TN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' DT';
 }
 
 function formatDate(dateStr) {
@@ -105,22 +105,7 @@ export default function MemberPayments({ session }) {
     await supabase.auth.signOut();
   };
 
-  const handlePayStripe = async (paymentId) => {
-    try {
-      setPayingId(paymentId);
-      setErrorMsg('');
-      const res = await paymentApi.payWithStripe(paymentId);
-      if (res.link) {
-        window.location.href = res.link;
-      } else {
-        throw new Error('Lien de paiement non reçu.');
-      }
-    } catch (err) {
-      setErrorMsg(err.message || "Erreur lors de l'initialisation du paiement.");
-      setPayingId(null);
-    }
-  };
-
+  // CDC v3.0 D1 : encaissement 100 % sur place (reçus PDF disponibles après règlement)
   const handleDownload = async (id) => {
     try {
       await paymentApi.downloadReceipt(id);
@@ -211,10 +196,10 @@ export default function MemberPayments({ session }) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-8">
         <div className="space-y-1">
           <h1 className="font-[Sora] text-2xl md:text-[28px] leading-[36px] font-semibold text-[#000d23] tracking-[-0.01em]">
-            Mes Factures
+            Mes Reçus &amp; Montants dus
           </h1>
           <p className="text-[16px] leading-[24px] text-[#44474d]">
-            Gérez votre historique de facturation et téléchargez vos reçus.
+            Consultez vos montants dus à régler sur place et téléchargez vos reçus numérotés.
           </p>
         </div>
         <button
@@ -256,11 +241,11 @@ export default function MemberPayments({ session }) {
           </p>
         </div>
 
-        {/* Prochaine facture */}
+        {/* Prochain règlement */}
         <div className="bg-white p-6 rounded-2xl shadow-[0px_2px_4px_rgba(16,35,63,0.04)] border border-[#c5c6ce]/10">
           <div className="flex justify-between items-start mb-4">
             <span className="text-[#44474d] text-xs font-medium uppercase tracking-[0.08em]">
-              Prochaine facture
+              Prochain règlement
             </span>
             <span className="material-symbols-outlined text-[#10233f]">calendar_month</span>
           </div>
@@ -348,7 +333,7 @@ export default function MemberPayments({ session }) {
             <span className="material-symbols-outlined text-[48px] text-[#c5c6ce] mb-3 block">receipt_long</span>
             <p className="text-[#44474d] text-sm">
               {searchQuery || activeFilter !== 'all'
-                ? 'Aucune facture ne correspond à votre recherche.'
+                ? 'Aucun reçu ou montant dû ne correspond à votre recherche.'
                 : 'Aucun paiement trouvé sur votre compte.'}
             </p>
           </div>
@@ -372,9 +357,9 @@ export default function MemberPayments({ session }) {
                     const isPaid = p.statut === 'paid' || p.statut === 'refunded';
                     const isPending = p.statut === 'pending';
                     const isFailed = p.statut === 'failed';
-                    const methodKey = (p.mode_paiement || 'card').toLowerCase().replace(/\s+/g, '_');
-                    const methodIcon = PAYMENT_METHOD_ICONS[methodKey] || 'credit_card';
-                    const methodLabel = p.mode_paiement || 'Carte bancaire';
+                    const methodKey = (p.mode_paiement || 'cash').toLowerCase().replace(/\s+/g, '_');
+                    const methodIcon = PAYMENT_METHOD_ICONS[methodKey] || 'payments';
+                    const methodLabel = p.mode_paiement || 'Sur place (accueil)';
 
                     return (
                       <tr
@@ -421,18 +406,9 @@ export default function MemberPayments({ session }) {
                               </button>
                             )}
                             {isPending && (
-                              <button
-                                onClick={() => handlePayStripe(p.id)}
-                                disabled={payingId === p.id}
-                                className="px-4 py-1.5 text-sm font-semibold border border-[#FF6F59] text-[#FF6F59] rounded-lg hover:bg-[#FF6F59]/5 active:scale-[0.97] transition-all disabled:opacity-40 flex items-center gap-1.5"
-                              >
-                                {payingId === p.id ? (
-                                  <span className="material-symbols-outlined animate-spin" style={{ fontSize: 16 }}>sync</span>
-                                ) : (
-                                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>credit_card</span>
-                                )}
-                                Payer maintenant
-                              </button>
+                              <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                                À régler sur place
+                              </span>
                             )}
                           </div>
                         </td>
@@ -470,7 +446,7 @@ export default function MemberPayments({ session }) {
           </div>
           <div>
             <p className="font-[Sora] text-base font-semibold text-[#000d23]">
-              Besoin d'aide avec une facture ?
+              Besoin d&apos;aide avec un reçu ou un règlement ?
             </p>
             <p className="text-sm text-[#44474d] mt-0.5">
               Notre équipe support est disponible pour répondre à vos questions 7j/7.

@@ -15,7 +15,7 @@ async function listFormations(req, res) {
       .from('formations')
       .select(`
         *,
-        profiles!formateur_id (id, nom, prenom, specialite),
+        profiles!fk_formations_formateur_profiles (id, nom, prenom, specialite),
         espaces (id, nom, type),
         inscriptions_formations (count)
       `)
@@ -80,7 +80,7 @@ async function getFormation(req, res) {
   try {
     const { data, error } = await supabaseAdmin
       .from('formations')
-      .select(`*, profiles!formateur_id (id, nom, prenom, email, specialite, biographie), espaces (id, nom, type, capacite)`)
+      .select(`*, profiles!fk_formations_formateur_profiles (id, nom, prenom, email, specialite, biographie), espaces (id, nom, type, capacite)`)
       .eq('id', req.params.id)
       .single();
 
@@ -141,7 +141,7 @@ async function createFormation(req, res) {
         dateDebut: date_debut,
         dateFin: date_fin,
         tenantId: targetTenantId,
-        mode: mode || 'sur_place',
+        mode: 'on_site',
       });
       reservationId = reservation.id;
       if (bookingTenantId) targetTenantId = bookingTenantId;
@@ -157,7 +157,7 @@ async function createFormation(req, res) {
             user_id: admin.id,
             type: 'nouvelle_demande_reservation',
             canal: 'Dashboard',
-            message: `📋 Réservation (${mode === 'online' ? 'en ligne' : 'sur place'}) liée à la formation « ${titre} » — ${reservation.espaces?.nom || 'espace'} (en attente de confirmation).`,
+            message: `📋 Réservation (sur place) liée à la formation « ${titre} » — ${reservation.espaces?.nom || 'espace'} (en attente de confirmation).`,
           });
         }
       } catch (notifErr) {
@@ -185,7 +185,7 @@ async function createFormation(req, res) {
     let { data, error } = await supabaseAdmin
       .from('formations')
       .insert(insertPayload)
-      .select(`*, profiles!formateur_id (id, nom, prenom), espaces (id, nom, type)`)
+      .select(`*, profiles!fk_formations_formateur_profiles (id, nom, prenom), espaces (id, nom, type)`)
       .single();
 
     if (error && reservationId && /reservation_id/.test(error.message || '')) {
@@ -193,7 +193,7 @@ async function createFormation(req, res) {
       const retry = await supabaseAdmin
         .from('formations')
         .insert(insertPayload)
-        .select(`*, profiles!formateur_id (id, nom, prenom), espaces (id, nom, type)`)
+        .select(`*, profiles!fk_formations_formateur_profiles (id, nom, prenom), espaces (id, nom, type)`)
         .single();
       data = retry.data;
       error = retry.error;
@@ -279,7 +279,7 @@ async function updateFormation(req, res) {
           dateDebut: newDebut,
           dateFin: newFin,
           tenantId: existing.tenant_id || req.tenantId,
-          mode: 'online',
+          mode: 'on_site',
         });
         updates.reservation_id = reservation.id;
       }
@@ -296,7 +296,7 @@ async function updateFormation(req, res) {
 
     const { data, error } = await supabaseAdmin
       .from('formations').update(updates).eq('id', req.params.id)
-      .select(`*, profiles!formateur_id (id, nom, prenom), espaces (id, nom, type)`).single();
+      .select(`*, profiles!fk_formations_formateur_profiles (id, nom, prenom), espaces (id, nom, type)`).single();
 
     if (error) return res.status(400).json({ error: error.message });
     res.json({ formation: data });

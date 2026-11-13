@@ -1,63 +1,54 @@
-// services/api/authUnified.js — Client API pour la refonte authentification, onboarding et multi-tenant
+// services/api/authUnified.js — Client API pour l'inscription multi-rôles, vérification e-mail, OAuth et onboarding
 import { apiFetch, API_URL } from './_core';
 
+async function postPublicJson(path, payload) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(json.error || 'Une erreur est survenue.');
+    err.code = json.code;
+    err.retryAfter = json.retryAfter;
+    throw err;
+  }
+  return json;
+}
+
 export const authUnifiedApi = {
-  // Inscription Étape 1 & OTP
-  registerStep1: async (data) => {
-    const res = await fetch(`${API_URL}/api/auth/register-step1`, {
+  // Inscription Multi-Rôles Unifiée (/register)
+  register: (data) => postPublicJson('/api/auth/register', data),
+  registerStep1: (data) => postPublicJson('/api/auth/register', data),
+
+  verifyEmailOtp: ({ email, code, userId }) =>
+    postPublicJson('/api/auth/verify-email-otp', { email, code, userId }),
+
+  verifyEmailToken: (token) =>
+    postPublicJson('/api/auth/verify-email-token', { token }),
+
+  resendVerificationEmail: (email) =>
+    postPublicJson('/api/auth/resend-verification-email', { email }),
+
+  // Google OAuth Status & Complétion
+  checkOAuthStatus: ({ requestedRole } = {}) =>
+    apiFetch('/api/auth/oauth-status', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestedRole }),
+    }),
+
+  completeOAuthRegistration: (data) =>
+    apiFetch('/api/auth/complete-oauth-registration', {
+      method: 'POST',
       body: JSON.stringify(data),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erreur lors de l\'inscription.');
-    return json;
-  },
+    }),
 
-  verifyEmailOtp: async ({ email, code, userId }) => {
-    const res = await fetch(`${API_URL}/api/auth/verify-email-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, code, userId }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Code email invalide.');
-    return json;
-  },
+  // (CDC v3.0 — D2) OTP téléphone WhatsApp/SMS retirés : reportés en phase 2.
 
-  sendPhoneOtp: async ({ phone, channel = 'whatsapp' }) => {
-    const res = await fetch(`${API_URL}/api/auth/send-phone-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, channel }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erreur d\'envoi OTP téléphone.');
-    return json;
-  },
-
-  verifyPhoneOtp: async ({ phone, code, userId }) => {
-    const res = await fetch(`${API_URL}/api/auth/verify-phone-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, code, userId }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Code téléphone invalide.');
-    return json;
-  },
-
-  // Étape 2 : Profils et Onboarding
-  chooseProfileType: async ({ profileType, userId, entrepriseData }) => {
-    const res = await fetch(`${API_URL}/api/auth/onboarding/profile-type`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileType, userId, entrepriseData }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Erreur lors du choix du profil.');
-    return json;
-  },
+  // Étape 2 legacy : Profils et Onboarding
+  chooseProfileType: ({ profileType, userId, entrepriseData }) =>
+    postPublicJson('/api/auth/onboarding/profile-type', { profileType, userId, entrepriseData }),
 
   createSpaceOnboarding: (data) => {
     return apiFetch('/api/auth/onboarding/create-space', {
@@ -127,5 +118,11 @@ export const authUnifiedApi = {
       body: JSON.stringify({ action, notes }),
     });
   },
-};
 
+  validatePackUpgrade: (tenantId, requestId, { action, notes }) => {
+    return apiFetch(`/api/super-admin/tenants/${tenantId}/pack-upgrades/${requestId}`, {
+      method: 'POST',
+      body: JSON.stringify({ action, notes }),
+    });
+  },
+};

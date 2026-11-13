@@ -9,12 +9,19 @@ const ITEMS_PER_PAGE = 10;
 /* ─── Constants ─────────────────────────────────────────────────────────── */
 const STATUT_STYLES = {
   planifiee: 'bg-amber-50 text-amber-800 border border-amber-200',
+  publiee: 'bg-blue-50 text-blue-800 border border-blue-200',
+  complete: 'bg-purple-50 text-purple-800 border border-purple-200',
   en_cours: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
   terminee: 'bg-sky-50 text-sky-800 border border-sky-200',
   annulee: 'bg-red-50 text-red-800 border border-red-200',
 };
 const STATUT_LABELS = {
-  planifiee: 'Planifiée', en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée',
+  planifiee: 'Planifiée',
+  publiee: 'Publiée',
+  complete: 'Complète',
+  en_cours: 'En cours',
+  terminee: 'Terminée',
+  annulee: 'Annulée',
 };
 
 /* ─── Reusable Input ─────────────────────────────────────────────────────── */
@@ -135,6 +142,13 @@ export default function AdminFormations({ session }) {
   const [success, setSuccess] = useState('');
   const [pageFormations, setPageFormations] = useState(1);
   const [pageFormateurs, setPageFormateurs] = useState(1);
+
+  /* ─── Filters for Formations ─── */
+  const [filterSearch, setFilterSearch] = useState('');
+  const [filterStatut, setFilterStatut] = useState('all');
+  const [filterFormateur, setFilterFormateur] = useState('all');
+  const [filterDate, setFilterDate] = useState('');
+  const [filterDispo, setFilterDispo] = useState('all');
 
   /* ─── Modals ─── */
   const [showFormationDrawer, setShowFormationDrawer] = useState(false);
@@ -336,16 +350,44 @@ export default function AdminFormations({ session }) {
   };
   const exportEmargement = async (formation) => {
     try {
-      const res = await formationApi.getEmargement(formation.id);
-      const a = document.createElement('a');
-      a.href = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(res, null, 2));
-      a.download = `emargement-${formation.titre.replace(/\s+/g, '_')}.json`;
-      a.click();
-    } catch (err) { alert("Erreur export : " + err.message); }
+      await formationApi.downloadEmargementPdf(formation.id, formation.titre);
+    } catch (err) { alert("Erreur export feuille d'émargement PDF : " + err.message); }
   };
 
   /* ─── Salles fallback: if type filter returns empty, show all ─── */
   const sallesOptions = salles.length > 0 ? salles : [];
+
+  /* ─── Filtered Formations ─── */
+  const filteredFormations = useMemo(() => {
+    return formations.filter((f) => {
+      if (filterSearch) {
+        const q = filterSearch.toLowerCase().trim();
+        const titreMatch = f.titre?.toLowerCase().includes(q);
+        const descMatch = f.description?.toLowerCase().includes(q);
+        const formateurMatch = f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}`.toLowerCase().includes(q) : false;
+        const espaceMatch = f.espaces?.nom?.toLowerCase().includes(q);
+        if (!titreMatch && !descMatch && !formateurMatch && !espaceMatch) return false;
+      }
+      if (filterStatut !== 'all' && f.statut !== filterStatut) return false;
+      if (filterFormateur !== 'all' && f.formateur_id !== filterFormateur) return false;
+      if (filterDate) {
+        const d = new Date(f.date_debut).toISOString().slice(0, 10);
+        if (d !== filterDate) return false;
+      }
+      if (filterDispo === 'dispo') {
+        const cap = f.capacite_max || f.places_max || 0;
+        if (cap > 0 && (f.nb_inscrits || 0) >= cap) return false;
+      } else if (filterDispo === 'complet') {
+        const cap = f.capacite_max || f.places_max || 0;
+        if (cap > 0 && (f.nb_inscrits || 0) < cap) return false;
+      }
+      return true;
+    });
+  }, [formations, filterSearch, filterStatut, filterFormateur, filterDate, filterDispo]);
+
+  const totalPagesFormations = Math.max(1, Math.ceil(filteredFormations.length / ITEMS_PER_PAGE));
+  const safePageFormations = Math.min(pageFormations, totalPagesFormations);
+  const paginatedFormations = filteredFormations.slice((safePageFormations - 1) * ITEMS_PER_PAGE, safePageFormations * ITEMS_PER_PAGE);
 
   /* ─── KPIs ─── */
   const totalInscrits = formations.reduce((s, f) => s + (f.nb_inscrits || 0), 0);
@@ -455,13 +497,127 @@ export default function AdminFormations({ session }) {
         {/* ════════════════════════════ TAB: FORMATIONS ════════════════════════════ */}
         {activeTab === 'formations' && (
           <div>
-            {formations.length === 0 ? (
-              <EmptyState icon="event_note" title="Aucune formation planifiée" text="Les formations créées par les formateurs depuis leur espace apparaissent ici." />
+            {/* Filter Dock */}
+            <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-4 mb-6 shadow-sm space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {/* Search */}
+                <div className="relative lg:col-span-2">
+                  <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+                  <input
+                    type="text"
+                    value={filterSearch}
+                    onChange={(e) => { setFilterSearch(e.target.value); setPageFormations(1); }}
+                    placeholder="Titre, formateur, salle..."
+                    className="w-full pl-10 pr-4 py-2.5 bg-surface-container-low rounded-2xl border border-outline-variant/30 text-xs sm:text-sm text-primary placeholder-on-surface-variant/60 focus:outline-none focus:border-secondary"
+                  />
+                  {filterSearch && (
+                    <button
+                      onClick={() => { setFilterSearch(''); setPageFormations(1); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Statut */}
+                <div>
+                  <select
+                    value={filterStatut}
+                    onChange={(e) => { setFilterStatut(e.target.value); setPageFormations(1); }}
+                    className="w-full px-3 py-2.5 bg-surface-container-low rounded-2xl border border-outline-variant/30 text-xs sm:text-sm text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Tous les statuts</option>
+                    <option value="publiee">Publiée</option>
+                    <option value="planifiee">Planifiée</option>
+                    <option value="complete">Complète</option>
+                    <option value="en_cours">En cours</option>
+                    <option value="terminee">Terminée</option>
+                    <option value="annulee">Annulée</option>
+                  </select>
+                </div>
+
+                {/* Formateur */}
+                <div>
+                  <select
+                    value={filterFormateur}
+                    onChange={(e) => { setFilterFormateur(e.target.value); setPageFormations(1); }}
+                    className="w-full px-3 py-2.5 bg-surface-container-low rounded-2xl border border-outline-variant/30 text-xs sm:text-sm text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Tous les formateurs</option>
+                    {formateurs.map((frm) => (
+                      <option key={frm.id} value={frm.id}>{frm.prenom} {frm.nom}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Disponibilité */}
+                <div>
+                  <select
+                    value={filterDispo}
+                    onChange={(e) => { setFilterDispo(e.target.value); setPageFormations(1); }}
+                    className="w-full px-3 py-2.5 bg-surface-container-low rounded-2xl border border-outline-variant/30 text-xs sm:text-sm text-primary focus:outline-none focus:border-secondary"
+                  >
+                    <option value="all">Toutes disponibilités</option>
+                    <option value="dispo">Places restantes</option>
+                    <option value="complet">Complète (0 place)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Second row: Date filter & Reset */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-outline-variant/10 text-xs text-on-surface-variant">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">calendar_today</span>
+                  <span>Date session :</span>
+                  <input
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => { setFilterDate(e.target.value); setPageFormations(1); }}
+                    className="px-2.5 py-1 bg-surface-container-low rounded-xl border border-outline-variant/30 text-xs text-primary focus:outline-none focus:border-secondary"
+                  />
+                  {filterDate && (
+                    <button onClick={() => { setFilterDate(''); setPageFormations(1); }} className="hover:text-primary">
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="font-medium text-primary">
+                    {filteredFormations.length} résultat{filteredFormations.length > 1 ? 's' : ''}
+                  </span>
+                  {(filterSearch || filterStatut !== 'all' || filterFormateur !== 'all' || filterDate || filterDispo !== 'all') && (
+                    <button
+                      onClick={() => {
+                        setFilterSearch('');
+                        setFilterStatut('all');
+                        setFilterFormateur('all');
+                        setFilterDate('');
+                        setFilterDispo('all');
+                        setPageFormations(1);
+                      }}
+                      className="text-secondary font-semibold hover:underline flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">refresh</span>
+                      Réinitialiser filtres
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {filteredFormations.length === 0 ? (
+              <EmptyState
+                icon="event_note"
+                title={formations.length === 0 ? "Aucune formation planifiée" : "Aucun résultat trouvé"}
+                text={formations.length === 0 ? "Les formations créées par les formateurs depuis leur espace apparaissent ici." : "Aucune formation ne correspond à vos filtres actuels."}
+              />
             ) : (
               <>
                 {/* Mobile Cards */}
                 <div className="sm:hidden space-y-3">
-                  {formations.slice((pageFormations - 1) * ITEMS_PER_PAGE, pageFormations * ITEMS_PER_PAGE).map((f) => (
+                  {paginatedFormations.map((f) => (
                     <div key={f.id} className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-4 shadow-sm">
                       <div className="flex justify-between items-start gap-2 mb-3">
                         <h3 className="font-sora font-bold text-primary text-sm leading-snug">{f.titre}</h3>
@@ -486,7 +642,7 @@ export default function AdminFormations({ session }) {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>
-                          {f.prix_inscription > 0 ? `${f.prix_inscription.toFixed(2)} DT` : 'Gratuit'}
+                          {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
                         </div>
                       </div>
                       <div className="flex gap-2 pt-2 border-t border-outline-variant/10">
@@ -521,7 +677,7 @@ export default function AdminFormations({ session }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-outline-variant/10">
-                        {formations.slice((pageFormations - 1) * ITEMS_PER_PAGE, pageFormations * ITEMS_PER_PAGE).map((f) => (
+                        {paginatedFormations.map((f) => (
                           <tr key={f.id} className="hover:bg-surface-container-lowest transition-colors group">
                             <td className="p-4 font-semibold text-primary max-w-[360px] whitespace-normal break-words">
                               <div className="whitespace-normal break-words text-sm leading-snug line-clamp-2">{f.titre}</div>
@@ -547,7 +703,7 @@ export default function AdminFormations({ session }) {
                               </div>
                             </td>
                             <td className="p-4 font-semibold text-primary text-xs">
-                              {f.prix_inscription > 0 ? `${f.prix_inscription.toFixed(2)} DT` : <span className="text-emerald-600">Gratuit</span>}
+                              {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : <span className="text-emerald-600">Gratuit</span>}
                             </td>
                             <td className="p-4">
                               <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUT_STYLES[f.statut] || ''}`}>
@@ -577,7 +733,7 @@ export default function AdminFormations({ session }) {
 
                 <Pagination
                   currentPage={pageFormations}
-                  totalItems={formations.length}
+                  totalItems={filteredFormations.length}
                   itemsPerPage={ITEMS_PER_PAGE}
                   onPageChange={setPageFormations}
                   label="formations"
@@ -715,7 +871,7 @@ export default function AdminFormations({ session }) {
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant mb-1">{r.formations?.titre || 'Honoraires'}</p>
-                      <p className="font-bold text-emerald-700 text-base mb-3">{parseFloat(r.montant).toFixed(2)} DT</p>
+                      <p className="font-bold text-emerald-700 text-base mb-3">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
                       {r.statut === 'en_attente' && (
                         <button onClick={() => markRemunerationPaid(r.id)} className="w-full py-2 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700">
                           Marquer comme payé
@@ -745,7 +901,7 @@ export default function AdminFormations({ session }) {
                           <tr key={r.id} className="hover:bg-surface-container-lowest transition-colors group">
                             <td className="p-4 font-semibold text-primary">{r.profiles?.prenom} {r.profiles?.nom}</td>
                             <td className="p-4 text-on-surface-variant text-xs">{r.formations?.titre || '—'}</td>
-                            <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant).toFixed(2)} DT</td>
+                            <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</td>
                             <td className="p-4">
                               <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${r.statut === 'paye' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
                                 {r.statut === 'paye' ? 'Payé' : 'En attente'}

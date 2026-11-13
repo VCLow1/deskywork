@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { pricingApi, bookingApi } from '../services/api';
+import { pricingApi, bookingApi, tenantAdminApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 
@@ -28,6 +28,8 @@ const ESPACE_TYPE_LABELS = {
   meeting_room: 'Salle de réunion',
   training_room: 'Salle de formation',
   event_space: 'Espace événementiel',
+  hot_desk: 'Poste nomade (Hot Desk)',
+  dedicated_desk: 'Poste fixe (Dedicated Desk)',
 };
 
 export default function AdminPricing({ session }) {
@@ -42,6 +44,10 @@ export default function AdminPricing({ session }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('tarifs');
+  const [espacesList, setEspacesList] = useState([]);
+  const [typeRates, setTypeRates] = useState({});
+  const [savingTypeRate, setSavingTypeRate] = useState(null);
+  const [rateSuccess, setRateSuccess] = useState('');
   const navigate = useNavigate();
 
   const [newTarif, setNewTarif] = useState({
@@ -80,12 +86,21 @@ export default function AdminPricing({ session }) {
       }
       setProfile(prof);
 
-      const [tarifsData, promoData] = await Promise.all([
+      const [tarifsData, promoData, espData] = await Promise.all([
         pricingApi.getAllPlans(),
         pricingApi.getPromoCodes(),
+        tenantAdminApi.getEspaces().catch(() => ({ espaces: [] })),
       ]);
       setTarifs(tarifsData.tarifs || []);
       setPromoCodes(promoData.promoCodes || []);
+      const espArr = espData.espaces || [];
+      setEspacesList(espArr);
+      const rateDraft = {};
+      Object.keys(ESPACE_TYPE_LABELS).forEach((t) => {
+        const matching = espArr.filter((e) => e.type === t);
+        rateDraft[t] = matching.length > 0 && matching[0].tarif_horaire != null ? String(matching[0].tarif_horaire) : '';
+      });
+      setTypeRates(rateDraft);
 
       const from = new Date();
       from.setDate(from.getDate() - 7);
@@ -182,10 +197,17 @@ export default function AdminPricing({ session }) {
           {error}
         </div>
       )}
+      {rateSuccess && (
+        <div className="mb-md p-sm bg-emerald-50 border border-emerald-200 text-emerald-800 text-body-sm rounded-xl flex items-center justify-between">
+          <span>{rateSuccess}</span>
+          <button type="button" onClick={() => setRateSuccess('')} className="text-xs underline">Fermer</button>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 overflow-x-auto pb-2 mb-6 scrollbar-none">
         {[
-          { id: 'tarifs', label: 'Tarifs abonnements' },
+          { id: 'tarifs', label: 'Abonnements membres' },
+          { id: 'types_espaces', label: 'Tarifs des 7 types d\'espaces' },
           { id: 'promo', label: 'Codes promo' },
           { id: 'occupation', label: 'Rapport occupation' },
         ].map((t) => (
@@ -204,6 +226,65 @@ export default function AdminPricing({ session }) {
           </button>
         ))}
       </div>
+
+      {tab === 'types_espaces' && (
+        <div className="bg-white rounded-2xl p-5 sm:p-6 custom-shadow border border-outline-variant/10 space-y-4">
+          <div>
+            <h2 className="font-sora font-bold text-base text-primary">Grille tarifaire horaire par type d'espace (7 catégories CDC v3.0)</h2>
+            <p className="text-xs text-on-surface-variant mt-0.5">
+              Définissez le tarif horaire de référence pour chaque type d'espace et appliquez-le à vos salles existantes en un clic.
+            </p>
+          </div>
+          <div className="divide-y divide-outline-variant/15">
+            {Object.entries(ESPACE_TYPE_LABELS).map(([typeKey, label]) => {
+              const matching = espacesList.filter((e) => e.type === typeKey);
+              return (
+                <div key={typeKey} className="py-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-sm text-primary">{label}</p>
+                    <p className="text-xs text-on-surface-variant">
+                      {matching.length} espace(s) configuré(s){matching.length > 0 ? ` : ${matching.map((e) => e.nom).join(', ')}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.001"
+                      min="0"
+                      placeholder="Tarif DT / h"
+                      value={typeRates[typeKey] ?? ''}
+                      onChange={(e) => setTypeRates((prev) => ({ ...prev, [typeKey]: e.target.value }))}
+                      className="w-32 border border-outline-variant/30 rounded-xl px-3 py-1.5 text-sm font-mono font-bold"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingTypeRate === typeKey || matching.length === 0 || !typeRates[typeKey]}
+                      onClick={async () => {
+                        const rate = Number(typeRates[typeKey]);
+                        if (!Number.isFinite(rate) || rate < 0) return;
+                        setSavingTypeRate(typeKey);
+                        setError('');
+                        try {
+                          await Promise.all(matching.map((esp) => tenantAdminApi.updateEspace(esp.id, { tarif_horaire: rate })));
+                          setRateSuccess(`Tarif horaire (${rate.toFixed(3)} DT/h) appliqué à ${matching.length} espace(s) "${label}".`);
+                          await loadData();
+                        } catch (err) {
+                          setError(err.message);
+                        } finally {
+                          setSavingTypeRate(null);
+                        }
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] disabled:opacity-45"
+                    >
+                      {savingTypeRate === typeKey ? 'Application…' : 'Appliquer'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {tab === 'tarifs' && (
         <div className="space-y-4">
@@ -296,7 +377,7 @@ export default function AdminPricing({ session }) {
                         ? (ESPACE_TYPE_LABELS[t.type_espace] || t.type_espace)
                         : 'Tous les espaces'}
                     </td>
-                    <td className="p-sm font-semibold">{Number(t.prix).toFixed(2)} DT</td>
+                    <td className="p-sm font-semibold">{Number(t.prix).toFixed(3)} DT</td>
                     <td className="p-sm">{t.tva_pct}%</td>
                     <td className="p-sm">
                       <span className={`px-2 py-0.5 rounded-full text-label-sm ${t.actif ? 'bg-secondary-fixed' : 'bg-surface-container-high'}`}>

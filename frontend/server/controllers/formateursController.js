@@ -90,10 +90,22 @@ async function createFormateur(req, res) {
       return res.status(400).json({ error: 'nom, prenom et email sont requis.' });
     }
 
+    const cleanEmail = String(email).trim().toLowerCase();
+    const { data: existingProf } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .ilike('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingProf?.id) {
+      return res.status(409).json({ error: 'Un compte existe déjà avec cette adresse e-mail.' });
+    }
+
     const temporaryPassword = crypto.randomUUID().slice(0, 12) + 'Aa1!';
 
     const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
+      email: cleanEmail,
       password: temporaryPassword,
       email_confirm: true,
       user_metadata: { nom, prenom, role: 'formateur', telephone: telephone || '' },

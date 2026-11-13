@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { superAdminApi } from '../services/superAdminApi';
@@ -17,6 +17,8 @@ const TYPE_META = {
   training_room: { label: 'Salle de formation', icon: 'school' },
   espace_evenement: { label: 'Évènement', icon: 'celebration' },
   event_space: { label: 'Évènement', icon: 'celebration' },
+  hot_desk: { label: 'Hot Desk', icon: 'laptop_mac' },
+  dedicated_desk: { label: 'Dedicated Desk', icon: 'push_pin' },
   coworking: { label: 'Coworking', icon: 'desk' },
 };
 
@@ -58,6 +60,8 @@ export default function SuperAdminEspaces({ session }) {
   const [notice, setNotice] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
 
+  const tenantsLoadedRef = useRef(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -68,7 +72,7 @@ export default function SuperAdminEspaces({ session }) {
 
       const [espData, tenantsData] = await Promise.all([
         superAdminApi.getAllEspaces(params),
-        tenants.length === 0 ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
+        !tenantsLoadedRef.current ? superAdminApi.getTenants({ limit: 100 }).catch(() => ({ tenants: [] })) : Promise.resolve(null),
       ]);
 
       let rows = espData?.espaces || [];
@@ -80,6 +84,7 @@ export default function SuperAdminEspaces({ session }) {
       setTotal(espData?.pagination?.total || 0);
 
       if (tenantsData?.tenants) {
+        tenantsLoadedRef.current = true;
         setTenants(tenantsData.tenants);
       }
     } catch (e) {
@@ -88,7 +93,7 @@ export default function SuperAdminEspaces({ session }) {
     } finally {
       setLoading(false);
     }
-  }, [page, filterTenant, filterType, filterActif, search, tenants.length]);
+  }, [page, filterTenant, filterType, filterActif, search]);
 
   useEffect(() => {
     if (!userId) { navigate('/login'); return; }

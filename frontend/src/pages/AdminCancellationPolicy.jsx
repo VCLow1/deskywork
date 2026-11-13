@@ -11,6 +11,8 @@ const SPACE_TYPES = [
   { key: 'meeting_room',        label: 'Salle de réunion' },
   { key: 'training_room',       label: 'Salle de formation' },
   { key: 'event_space',         label: 'Espace événementiel' },
+  { key: 'hot_desk',            label: 'Poste nomade (Hot Desk)' },
+  { key: 'dedicated_desk',      label: 'Poste fixe (Dedicated Desk)' },
 ];
 
 function Toggle({ checked, onChange, label, sub }) {

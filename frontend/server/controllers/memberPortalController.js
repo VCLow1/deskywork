@@ -11,7 +11,7 @@ async function bookingsHistory(req, res) {
     .select(`
       *,
       espaces (id, nom, type, tarif_horaire),
-      profiles (nom, prenom, email),
+      profiles!user_id (nom, prenom, email),
       paiements (id, statut, mode, montant)
     `, { count: 'exact' })
     .eq('user_id', req.user.id)
@@ -48,7 +48,7 @@ async function bookingsHistory(req, res) {
       hours = Math.max(0, (new Date(b.date_fin) - new Date(b.date_debut)) / (1000 * 60 * 60));
     }
     const tarif = parseFloat(b.espaces?.tarif_horaire) || 0;
-    const computedCost = parseFloat((hours * tarif).toFixed(2));
+    const computedCost = parseFloat((hours * tarif).toFixed(3));
     return {
       ...b,
       montant_total: computedCost,
@@ -62,7 +62,7 @@ async function bookingsHistory(req, res) {
     cancelled: allBookings?.filter(b => b.statut === 'cancelled').length || 0,
     completed: allBookings?.filter(b => b.statut === 'completed').length || 0,
     totalHours: totalHours.toFixed(1),
-    totalSpent: totalSpent.toFixed(2),
+    totalSpent: totalSpent.toFixed(3),
   };
 
   res.json({
@@ -106,7 +106,7 @@ async function memberStats(req, res) {
       confirmed: bookings.filter(b => b.statut === 'confirmed').length,
       completed: bookings.filter(b => b.statut === 'completed').length,
       cancelled: bookings.filter(b => b.statut === 'cancelled').length,
-      totalSpent: totalSpent.toFixed(2),
+      totalSpent: totalSpent.toFixed(3),
     },
     subscription: activeSub
       ? { type: activeSub.type_abonnement, active: true, date_fin: activeSub.date_fin, daysLeft: Math.max(0, Math.ceil((new Date(activeSub.date_fin) - new Date()) / (1000 * 60 * 60 * 24))) }
@@ -115,7 +115,7 @@ async function memberStats(req, res) {
       total: payments.length,
       paid: payments.filter(p => p.statut === 'paid').length,
       pending: payments.filter(p => p.statut === 'pending').length,
-      totalAmount: payments.filter(p => p.statut === 'paid').reduce((a, p) => a + (parseFloat(p.montant) || 0), 0).toFixed(2),
+      totalAmount: payments.filter(p => p.statut === 'paid').reduce((a, p) => a + (parseFloat(p.montant) || 0), 0).toFixed(3),
     },
     totalHours: totalHours.toFixed(1),
     memberSince: subs.length > 0 ? subs.sort((a, b) => new Date(a.date_debut) - new Date(b.date_debut))[0].date_debut : null,

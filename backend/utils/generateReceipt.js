@@ -25,7 +25,7 @@ const MODE_LABELS = {
   cash:          'Espèces',
   bank_transfer: 'Virement bancaire',
   check:         'Chèque',
-  online:        'Paiement en ligne',
+  online:        'Règlement sur place',
 };
 
 // ── Statuts lisibles ─────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ function generateReceiptPDF(payment, options = {}) {
       doc.fillColor(COLORS.secondary)
          .font('Helvetica-Bold')
          .fontSize(9)
-         .text('REÇU OFFICIEL DE PAIEMENT', margin + 15, yAfterHeader + 10);
+         .text('REÇU DE PAIEMENT (Hors Facture)', margin + 15, yAfterHeader + 10);
 
       doc.fillColor(COLORS.primary)
          .font('Helvetica-Bold')
@@ -217,7 +217,7 @@ function generateReceiptPDF(payment, options = {}) {
       doc.fillColor(COLORS.primary)
          .font('Helvetica-Bold')
          .fontSize(11)
-         .text('DÉTAIL DE LA FACTURATION', margin, yDetail);
+         .text('DÉTAIL DU RÈGLEMENT (REÇU)', margin, yDetail);
 
       doc.moveTo(margin, yDetail + 16)
          .lineTo(margin + contentW, yDetail + 16)

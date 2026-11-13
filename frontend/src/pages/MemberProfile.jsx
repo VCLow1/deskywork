@@ -106,6 +106,7 @@ export default function MemberProfile({ session }) {
 
   const photoInputRef = useRef(null);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const docFileRef = useRef(null);
   const [uploadingDocFile, setUploadingDocFile] = useState(false);
 
@@ -178,11 +179,30 @@ export default function MemberProfile({ session }) {
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Validation format & taille
+    const validMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    if (!validMimes.includes(file.type.toLowerCase())) {
+      setError('Format d\'image non valide (JPEG, PNG, WEBP ou GIF uniquement).');
+      setTimeout(() => setError(''), 4000);
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('La photo ne doit pas dépasser 5 Mo.');
+      setTimeout(() => setError(''), 4000);
+      return;
+    }
+
+    // Aperçu immédiat
+    const previewUrl = URL.createObjectURL(file);
+    setPhotoPreview(previewUrl);
     setPhotoUploading(true);
+    setError('');
+
     try {
       let publicUrl = null;
 
-      // 1. Essayer l'upload sécurisé via le Backend (service role, contourne RLS)
+      // 1. Essayer l'upload sécurisé via le Backend
       try {
         const reader = new FileReader();
         const base64Promise = new Promise((resolve, reject) => {
@@ -193,9 +213,7 @@ export default function MemberProfile({ session }) {
         const base64Data = await base64Promise;
 
         const token = (await supabase.auth.getSession()).data.session?.access_token;
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-        const res = await fetch(`${API_URL}/api/upload`, {
+        const res = await fetch('/api/upload', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -215,24 +233,38 @@ export default function MemberProfile({ session }) {
         }
       } catch (_) { }
 
-      // 2. Fallback vers le client Supabase direct si l'API backend n'est pas dispo
+      // 2. Fallback vers le client Supabase direct si l'API n'a pas répondu
       if (!publicUrl) {
-        const ext = file.name.split('.').pop();
-        const filePath = `${profile.id || 'current'}_${Date.now()}.${ext}`;
+        const ext = file.name.split('.').pop() || 'jpg';
+        const filePath = `${profile?.id || 'current'}_${Date.now()}.${ext}`;
         const { error: uploadError } = await supabase.storage
           .from('avatars')
           .upload(filePath, file, { upsert: true });
-        if (uploadError) throw uploadError;
-        const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filePath);
-        publicUrl = urlData.publicUrl;
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filePath);
+          publicUrl = urlData.publicUrl;
+        }
+      }
+
+      if (!publicUrl) {
+        throw new Error('Échec du téléversement de la photo.');
       }
 
       await memberApi.updateMe({ photo_url: publicUrl });
+      try {
+        await supabase.auth.updateUser({ data: { photo_url: publicUrl, avatar_url: publicUrl } });
+      } catch (_) {}
+
+      // Mettre à jour l'état local et notifier le layout / header en temps réel
       setProfile((p) => ({ ...p, photo_url: publicUrl }));
-      setSuccess('Photo de profil mise a jour.');
+      setPhotoPreview(publicUrl);
+      window.dispatchEvent(new CustomEvent('profile-updated', { detail: { photo_url: publicUrl } }));
+
+      setSuccess('Photo de profil mise à jour avec succès.');
       setTimeout(() => setSuccess(''), 3500);
     } catch (e) {
-      setError('Erreur lors de l\'upload : ' + e.message);
+      setError('Erreur lors de l\'enregistrement : ' + e.message);
+      setPhotoPreview(profile?.photo_url || null);
       setTimeout(() => setError(''), 3500);
     } finally {
       setPhotoUploading(false);
@@ -345,14 +377,14 @@ export default function MemberProfile({ session }) {
     }
   };
 
-  const handleCanalChange = async (newCanal) => {
-    setCanalNotification(newCanal);
+  const handleCanalChange = async () => {
+    setCanalNotification('email');
     try {
       await memberApi.updateMe({
-        canal_notification: newCanal,
-        notifications: { ...notifications, canal: newCanal },
+        canal_notification: 'email',
+        notifications: { ...notifications, canal: 'email' },
       });
-      setSuccess(`Canal de notification mis à jour : ${newCanal === 'both' ? 'Email + WhatsApp' : newCanal === 'whatsapp' ? 'WhatsApp' : 'Email'}`);
+      setSuccess('Canal de notification mis à jour : Email + In-App');
       setTimeout(() => setSuccess(''), 3000);
     } catch (e) {
       setError(e.message);
@@ -525,8 +557,8 @@ export default function MemberProfile({ session }) {
                   className="flex items-center justify-center rounded-3xl overflow-hidden border-2 border-outline-variant/15"
                   style={{ width: 110, height: 110 }}
                 >
-                  {profile?.photo_url ? (
-                    <img src={profile.photo_url} alt="Avatar" className="w-full h-full object-cover" />
+                  {photoPreview || profile?.photo_url ? (
+                    <img src={photoPreview || profile.photo_url} alt="Avatar" className="w-full h-full object-cover" />
                   ) : (
                     <div
                       className="w-full h-full flex items-center justify-center font-sora font-bold text-2xl"
@@ -590,22 +622,17 @@ export default function MemberProfile({ session }) {
               />
               <div>
                 <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
-                  Type de membre
+                  Rôle & Profil (figé)
                 </label>
-                <select
-                  value={form.type_membre}
-                  onChange={(e) => setForm((f) => ({ ...f, type_membre: e.target.value }))}
-                  className="w-full rounded-xl border border-outline-variant/20 bg-white px-4 py-2.5 text-sm font-medium text-on-surface outline-none transition-all duration-200 focus:border-secondary focus:ring-2 focus:ring-secondary/15 appearance-none cursor-pointer"
-                  style={{
-                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23667085' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 3.5L11.5 6'/%3E%3C/svg%3E")`,
-                    backgroundRepeat: 'no-repeat',
-                    backgroundPosition: 'right 14px center',
-                  }}
-                >
-                  <option value="individuel">{MEMBER_TYPE_LABELS.individuel}</option>
-                  <option value="entreprise">{MEMBER_TYPE_LABELS.entreprise}</option>
-                  <option value="etudiant">{MEMBER_TYPE_LABELS.etudiant}</option>
-                </select>
+                <div className="w-full rounded-xl border border-outline-variant/20 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-slate-500">lock</span>
+                    Membre ({MEMBER_TYPE_LABELS[profile?.type_membre] || 'Individuel'})
+                  </span>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                    Fixe
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -952,97 +979,33 @@ export default function MemberProfile({ session }) {
             )}
           </div>
 
-          {/* Notification preferences & Channels */}
+          {/* Notification preferences & Channels (CDC v3.0 — D2 : In-App & E-mail uniquement) */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">
-                Canal de notification
+                Canaux de notification actifs
               </p>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-secondary/10 text-secondary">
-                {canalNotification === 'both' ? 'Email + WhatsApp' : canalNotification === 'whatsapp' ? 'WhatsApp' : 'Email'}
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-secondary/10 text-secondary">
+                In-App &amp; E-mail
               </span>
             </div>
 
-            {/* 3 Channel Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-              {[
-                {
-                  id: 'email',
-                  label: 'Email',
-                  icon: 'mail',
-                  desc: 'Boîte de réception',
-                  activeColor: '#f95d00',
-                  bg: 'rgba(249,93,0,0.08)',
-                },
-                {
-                  id: 'whatsapp',
-                  label: 'WhatsApp',
-                  icon: 'chat',
-                  desc: 'Messages instantanés',
-                  activeColor: '#25D366',
-                  bg: 'rgba(37,211,102,0.12)',
-                },
-                {
-                  id: 'both',
-                  label: 'Les deux',
-                  icon: 'bolt',
-                  desc: 'Email + WhatsApp',
-                  activeColor: '#8b5cf6',
-                  bg: 'rgba(139,92,246,0.10)',
-                },
-              ].map((c) => {
-                const isSelected = canalNotification === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => handleCanalChange(c.id)}
-                    className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition-all duration-200 ${
-                      isSelected
-                        ? 'border-2 shadow-sm font-semibold'
-                        : 'border-outline-variant/15 hover:bg-surface-container-low/60 opacity-80'
-                    }`}
-                    style={
-                      isSelected
-                        ? { borderColor: c.activeColor, background: c.bg, color: c.activeColor }
-                        : {}
-                    }
-                  >
-                    <span className="material-symbols-outlined mb-1" style={{ fontSize: 22, color: isSelected ? c.activeColor : '#64748b' }}>
-                      {c.icon}
-                    </span>
-                    <span className="text-xs font-bold leading-tight text-primary">{c.label}</span>
-                    <span className="text-[9px] text-on-surface-variant leading-tight mt-0.5">{c.desc}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* WhatsApp Phone Alert if WhatsApp or Both selected */}
-            {(canalNotification === 'whatsapp' || canalNotification === 'both') && (
-              <div className="p-3.5 rounded-2xl border border-emerald-200/60 bg-emerald-50/50 mb-4">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 18 }}>phone_iphone</span>
-                    <span className="text-xs font-bold text-emerald-900">Numéro WhatsApp</span>
-                  </div>
-                  {form.telephone ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">Configuré</span>
-                  ) : (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-white">À renseigner</span>
-                  )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+              <div className="flex items-center gap-3 p-3 rounded-2xl border-2 border-[#f95d00]/50 bg-[#f95d00]/5">
+                <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 22 }}>mail</span>
+                <div>
+                  <p className="text-xs font-bold text-primary">E-mail</p>
+                  <p className="text-[10px] text-on-surface-variant">Confirmations, reçus PDF et rappels</p>
                 </div>
-                <p className="text-xs font-medium text-emerald-800">
-                  {form.telephone ? (
-                    <span>Vos notifications seront envoyées au <strong className="font-bold">{form.telephone}</strong></span>
-                  ) : (
-                    <span className="text-amber-800">Veuillez renseigner votre numéro de téléphone dans votre profil pour activer WhatsApp.</span>
-                  )}
-                </p>
               </div>
-            )}
-
-
+              <div className="flex items-center gap-3 p-3 rounded-2xl border-2 border-emerald-500/40 bg-emerald-50/60">
+                <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 22 }}>notifications</span>
+                <div>
+                  <p className="text-xs font-bold text-primary">Notifications In-App</p>
+                  <p className="text-[10px] text-on-surface-variant">Alertes en temps réel dans votre portail</p>
+                </div>
+              </div>
+            </div>
 
             {/* Catégories de notifications */}
             <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">

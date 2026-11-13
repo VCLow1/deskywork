@@ -44,6 +44,12 @@ async function updateMe(req, res) {
       return res.status(400).json({ error: 'type_membre invalide.' });
     }
 
+    // CDC v3.0 — D2 : seul le canal « email » (+ in-app) est supporté en v1.
+    if (updates.canal_notification !== undefined) updates.canal_notification = 'email';
+    if (updates.notifications && typeof updates.notifications === 'object') {
+      updates.notifications = { ...updates.notifications, canal: 'email' };
+    }
+
     updates.updated_at = new Date().toISOString();
 
     const { data, error } = await supabaseAdmin
@@ -316,7 +322,7 @@ async function testNotification(req, res) {
 
     if (error || !prof) return res.status(404).json({ error: 'Profil introuvable.' });
 
-    const chosenChannel = canal || prof.canal_notification || prof.notifications?.canal || 'email';
+    const chosenChannel = 'email'; // D2 : e-mail uniquement (WhatsApp/SMS en phase 2)
     const chosenPhone = telephone || prof.telephone;
 
     const sendRes = await sendNotification(supabaseAdmin, {

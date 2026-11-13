@@ -4,6 +4,7 @@ import { sitesApi, memberApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 
 export default function AdminMultiSites({ session }) {
+  const userId = session?.user?.id;
   const [profile,  setProfile]  = useState(null);
   const [sites,    setSites]    = useState([]);
   const [selected, setSelected] = useState(null); // site sélectionné pour détails
@@ -18,7 +19,7 @@ export default function AdminMultiSites({ session }) {
   const [editId,   setEditId]   = useState(null);
   const [search,   setSearch]   = useState('');
 
-  useEffect(() => { loadData(); }, [session]);
+  useEffect(() => { if (userId) loadData(); }, [userId]);
   useEffect(() => { if (success) { const t = setTimeout(() => setSuccess(''), 3500); return () => clearTimeout(t); } }, [success]);
   useEffect(() => { if (error)   { const t = setTimeout(() => setError(''),   3500); return () => clearTimeout(t); } }, [error]);
   useEffect(() => { if (selected) loadSiteMembers(selected.id); }, [selected]);
@@ -26,7 +27,7 @@ export default function AdminMultiSites({ session }) {
   const loadData = async () => {
     try {
       setLoading(true);
-      const { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+      const { data: prof } = await supabase.from('profiles').select('*').eq('id', userId).single();
       setProfile(prof);
       const { sites: s } = await sitesApi.getAll();
       setSites(s || []);
@@ -114,6 +115,12 @@ export default function AdminMultiSites({ session }) {
   return (
     <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
       <div className="max-w-5xl mx-auto p-4 sm:p-6">
+        <div className="mb-5 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3 text-sm">
+          <span className="material-symbols-outlined text-amber-700">lock_clock</span>
+          <div>
+            <strong>Option Phase 2 :</strong> Conformément au CDC DeskyWork v3.0, la gestion Multi-sites est réservée aux évolutions Phase 2. Votre établissement v1 fonctionne en mode mono-site.
+          </div>
+        </div>
 
         {/* Header */}
         <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
