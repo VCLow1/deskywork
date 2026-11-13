@@ -420,7 +420,8 @@ export default function CoworkingDetail() {
         ) : (
           <div className="row g-4">
             {c.espaces.map((esp) => {
-              const img = esp.photo_url || (Array.isArray(esp.photos_urls) && esp.photos_urls[0]) || c.cover_url || FALLBACK_IMG;
+              const img = esp.photo_url || (Array.isArray(esp.photos_urls) && esp.photos_urls[0]) || (Array.isArray(esp.photos) && esp.photos[0]) || c.cover_url || FALLBACK_IMG;
+              const tarifH = Number(esp.tarif_horaire ?? esp.tarif_heure ?? 0);
               return (
                 <div key={esp.id} className="col-md-6 col-lg-4">
                   <div style={{ background: EC.cardBg, borderRadius: 22, overflow: 'hidden', border: `1.5px solid ${EC.outline}`, boxShadow: dark ? '0 12px 28px rgba(0,0,0,0.4)' : '0 12px 28px rgba(15,23,42,0.06)', height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -432,9 +433,9 @@ export default function CoworkingDetail() {
                         <span style={{ background: dark ? 'rgba(249,93,0,0.2)' : '#e0f2fe', color: dark ? '#ffb599' : '#0f172a', padding: '4px 10px', borderRadius: 999, fontWeight: 800, fontSize: '.68rem', textTransform: 'uppercase', letterSpacing: '.5px' }}>
                           {SPACE_LABELS[esp.type] || esp.type}
                         </span>
-                        {esp.tarif_horaire > 0 && (
+                        {tarifH > 0 && (
                           <span style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.cobalt, fontSize: '1.1rem' }}>
-                            {formatDT(esp.tarif_horaire)} <span style={{ fontSize: 11, fontWeight: 700, color: EC.muted }}>/ h</span>
+                            {formatDT(tarifH)} <span style={{ fontSize: 11, fontWeight: 700, color: EC.muted }}>/ h</span>
                           </span>
                         )}
                       </div>

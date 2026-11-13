@@ -386,11 +386,26 @@ router.get('/public/coworkings', async (req, res) => {
 // GET /api/public/coworkings/:id — Détail d'un coworking actif (+ aperçu propriétaire / super admin)
 router.get('/public/coworkings/:id', async (req, res) => {
   try {
-    const { data: tenant } = await supabaseAdmin
+    const rawId = String(req.params.id || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+    let tenantQuery = supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at')
-      .eq('id', req.params.id)
-      .single();
+      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at');
+    
+    tenantQuery = isUuid ? tenantQuery.eq('id', rawId) : tenantQuery.eq('slug', rawId);
+    let { data: tenant } = await tenantQuery.maybeSingle();
+
+    if (!tenant && !isUuid) {
+      const slugSearch = rawId.toLowerCase();
+      const { data: fallbackTenant } = await supabaseAdmin
+        .from('tenants')
+        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at')
+        .or(`slug.ilike.%${slugSearch}%,nom.ilike.%${slugSearch.replace(/-/g, ' ')}%`)
+        .limit(1)
+        .maybeSingle();
+      if (fallbackTenant) tenant = fallbackTenant;
+    }
+
     if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
 
     if (tenant.statut !== 'actif') {
@@ -480,14 +495,26 @@ router.get('/public/coworkings/:id', async (req, res) => {
 });
 
 // POST /api/public/coworkings/:id/track — Suivi clics / interactions Marketplace (Pack Premium)
+// POST /api/public/coworkings/:id/track — Suivi clics / interactions Marketplace (Pack Premium)
 router.post('/public/coworkings/:id/track', async (req, res) => {
   try {
+    const rawId = String(req.params.id || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
     const action = req.body?.action === 'booking' ? 'booking' : 'click';
-    const { data: tenant } = await supabaseAdmin
-      .from('tenants')
-      .select('id, settings')
-      .eq('id', req.params.id)
-      .maybeSingle();
+    let query = supabaseAdmin.from('tenants').select('id, settings');
+    query = isUuid ? query.eq('id', rawId) : query.eq('slug', rawId);
+    let { data: tenant } = await query.maybeSingle();
+
+    if (!tenant && !isUuid) {
+      const slugSearch = rawId.toLowerCase();
+      const { data: fb } = await supabaseAdmin
+        .from('tenants')
+        .select('id, settings')
+        .or(`slug.ilike.%${slugSearch}%,nom.ilike.%${slugSearch.replace(/-/g, ' ')}%`)
+        .limit(1)
+        .maybeSingle();
+      if (fb) tenant = fb;
+    }
     if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
 
     const s = tenant.settings && typeof tenant.settings === 'object' ? tenant.settings : {};
@@ -507,22 +534,33 @@ router.post('/public/coworkings/:id/track', async (req, res) => {
 // GET /api/public/coworkings/:id/promos — Promos actives publiques d'un coworking
 router.get('/public/coworkings/:id/promos', async (req, res) => {
   try {
+    const rawId = String(req.params.id || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
     const today = new Date().toISOString().split('T')[0];
 
     // Vérifier que le coworking est actif
-    const { data: tenant } = await supabaseAdmin
-      .from('tenants')
-      .select('id, nom')
-      .eq('id', req.params.id)
-      .eq('statut', 'actif')
-      .single();
+    let query = supabaseAdmin.from('tenants').select('id, nom').eq('statut', 'actif');
+    query = isUuid ? query.eq('id', rawId) : query.eq('slug', rawId);
+    let { data: tenant } = await query.maybeSingle();
+
+    if (!tenant && !isUuid) {
+      const slugSearch = rawId.toLowerCase();
+      const { data: fb } = await supabaseAdmin
+        .from('tenants')
+        .select('id, nom')
+        .eq('statut', 'actif')
+        .or(`slug.ilike.%${slugSearch}%,nom.ilike.%${slugSearch.replace(/-/g, ' ')}%`)
+        .limit(1)
+        .maybeSingle();
+      if (fb) tenant = fb;
+    }
     if (!tenant) return res.status(404).json({ error: 'Coworking introuvable.' });
 
     // Récupérer les codes promo actifs (on expose code, valeur, type, date_fin — pas les usages internes)
     const { data: promos, error } = await supabaseAdmin
       .from('codes_promo')
       .select('id, code, type_reduction, valeur, date_debut, date_fin, utilisations_max, utilisations_count')
-      .eq('tenant_id', req.params.id)
+      .eq('tenant_id', tenant.id)
       .eq('actif', true)
       .lte('date_debut', today)
       .order('created_at', { ascending: false });

@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS public.tenants (
     latitude NUMERIC(9, 6),
     longitude NUMERIC(9, 6),
     statut TEXT NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif', 'suspendu', 'inactif')),
-    plan TEXT NOT NULL DEFAULT 'starter' CHECK (plan IN ('free', 'starter', 'pro', 'enterprise')),
+    plan TEXT NOT NULL DEFAULT 'starter' CHECK (plan IN ('free', 'starter', 'pro', 'enterprise', 'essentiel', 'standard', 'premium')),
     tier TEXT NOT NULL DEFAULT 'C' CHECK (tier IN ('A', 'B', 'C')),
     montant_mensuel NUMERIC(10, 2) NOT NULL DEFAULT 0,
     derniere_facture DATE,
@@ -513,26 +513,72 @@ BEGIN
     user_prenom := COALESCE(NEW.raw_user_meta_data->>'prenom', NEW.raw_user_meta_data->>'first_name', split_part(COALESCE(NEW.raw_user_meta_data->>'full_name', ''), ' ', 1), '');
     user_tel := COALESCE(NEW.raw_user_meta_data->>'telephone', NEW.raw_user_meta_data->>'phone', '');
 
-    INSERT INTO public.profiles (
-        id, email, nom, prenom, telephone, role, statut_compte,
-        email_verifie, is_super_admin, langue
-    )
-    VALUES (
-        NEW.id,
-        clean_email,
-        user_nom,
-        user_prenom,
-        user_tel,
-        CASE WHEN clean_email = 'contact@vclow.com' THEN 'super_admin' ELSE 'member' END,
-        'actif',
-        COALESCE((NEW.email_confirmed_at IS NOT NULL), FALSE),
-        CASE WHEN clean_email = 'contact@vclow.com' THEN TRUE ELSE FALSE END,
-        COALESCE(NEW.raw_user_meta_data->>'langue', 'fr')
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        email = EXCLUDED.email,
-        email_verifie = EXCLUDED.email_verifie,
-        updated_at = NOW();
+    -- Rôles et rattachements prédéfinis automatiques
+    IF clean_email = 'contact@vclow.com' THEN
+        INSERT INTO public.profiles (
+            id, email, nom, prenom, telephone, role, statut_compte,
+            email_verifie, is_super_admin, langue
+        )
+        VALUES (
+            NEW.id, clean_email, user_nom, user_prenom, user_tel, 'super_admin',
+            'actif', TRUE, TRUE, 'fr'
+        )
+        ON CONFLICT (id) DO UPDATE SET role = 'super_admin', is_super_admin = TRUE, statut_compte = 'actif';
+
+    ELSIF clean_email IN ('contact@nerocoworking.tn', 'admin@nerocoworking.tn') THEN
+        INSERT INTO public.profiles (
+            id, email, nom, prenom, telephone, role, statut_compte,
+            email_verifie, is_super_admin, tenant_id, langue
+        )
+        VALUES (
+            NEW.id, clean_email, COALESCE(NULLIF(user_nom, ''), 'Nero'), COALESCE(NULLIF(user_prenom, ''), 'Admin'),
+            COALESCE(NULLIF(user_tel, ''), '+216 71 888 999'), 'admin',
+            'actif', TRUE, FALSE, 'a1111111-1111-4111-8111-111111111111', 'fr'
+        )
+        ON CONFLICT (id) DO UPDATE SET role = 'admin', tenant_id = 'a1111111-1111-4111-8111-111111111111', statut_compte = 'actif';
+
+        INSERT INTO public.memberships (user_id, organization_id, role, statut)
+        VALUES (NEW.id, 'a1111111-1111-4111-8111-111111111111', 'admin', 'actif')
+        ON CONFLICT (user_id, organization_id) DO UPDATE SET role = 'admin', statut = 'actif';
+
+    ELSIF clean_email IN ('contact@thirtythreespace.com', 'admin@thirtythreespace.com') THEN
+        INSERT INTO public.profiles (
+            id, email, nom, prenom, telephone, role, statut_compte,
+            email_verifie, is_super_admin, tenant_id, langue
+        )
+        VALUES (
+            NEW.id, clean_email, COALESCE(NULLIF(user_nom, ''), 'Thirty Three'), COALESCE(NULLIF(user_prenom, ''), 'Admin'),
+            COALESCE(NULLIF(user_tel, ''), '+216 71 999 333'), 'admin',
+            'actif', TRUE, FALSE, 'a3333333-3333-4333-8333-333333333333', 'fr'
+        )
+        ON CONFLICT (id) DO UPDATE SET role = 'admin', tenant_id = 'a3333333-3333-4333-8333-333333333333', statut_compte = 'actif';
+
+        INSERT INTO public.memberships (user_id, organization_id, role, statut)
+        VALUES (NEW.id, 'a3333333-3333-4333-8333-333333333333', 'admin', 'actif')
+        ON CONFLICT (user_id, organization_id) DO UPDATE SET role = 'admin', statut = 'actif';
+
+    ELSE
+        INSERT INTO public.profiles (
+            id, email, nom, prenom, telephone, role, statut_compte,
+            email_verifie, is_super_admin, langue
+        )
+        VALUES (
+            NEW.id,
+            clean_email,
+            user_nom,
+            user_prenom,
+            user_tel,
+            'member',
+            'actif',
+            COALESCE((NEW.email_confirmed_at IS NOT NULL), FALSE),
+            FALSE,
+            COALESCE(NEW.raw_user_meta_data->>'langue', 'fr')
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            email_verifie = EXCLUDED.email_verifie,
+            updated_at = NOW();
+    END IF;
 
     -- Rattachement automatique de l'historique guest
     UPDATE public.reservations r
@@ -576,6 +622,21 @@ INSERT INTO public.tenants ("id", "nom", "slug", "description", "adresse", "vill
 INSERT INTO public.tenants ("id", "nom", "slug", "description", "adresse", "ville", "pays", "email", "telephone", "logo_url", "statut", "plan", "tier", "montant_mensuel", "limite_membres", "limite_espaces", "settings", "created_at", "updated_at") VALUES ('c76217e0-e27a-46e4-8eba-d9f75bbf4822', 'Coworking', 'coworking-58e60eab', NULL, NULL, NULL, 'Tunisie', 's6a-1788975773953@test.local', '', NULL, 'actif', 'starter', 'C', 0, 100, 10, '{"onboarding_completed":false}'::jsonb, '2026-10-06T08:38:35.03651+00:00', '2026-10-06T08:38:35.03651+00:00') ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.tenants ("id", "nom", "slug", "description", "adresse", "ville", "pays", "email", "telephone", "logo_url", "statut", "plan", "tier", "montant_mensuel", "limite_membres", "limite_espaces", "settings", "created_at", "updated_at") VALUES ('17ebce1c-2537-430d-a0b2-f2bb57ae6908', 'Ala Coworking', 'ala-coworking-8c56a23b', 'Un coworking-space trés spacieux avec des salles climatisées ', 'Rue de la révolution', 'Nabeul', 'Tunisie', 'alabendawed@gmail.com', '+21698115865', 'https://fgqwtbbxtgvnpxtmauua.supabase.co/storage/v1/object/public/coworking-images/logos/1788451095534-hiw5onk1zpp.png', 'actif', 'starter', 'C', 0, 100, 10, '{"onboarding_completed":true}'::jsonb, '2026-08-25T22:51:46.941284+00:00', '2026-09-07T11:01:33.371+00:00') ON CONFLICT (id) DO NOTHING;
 
+-- ── Partenaires Officiels Pré-définis (Nero Coworking Space & Thirty Three Space — Pack Premium) ──
+INSERT INTO public.tenants ("id", "nom", "slug", "description", "adresse", "ville", "pays", "email", "telephone", "site_web", "logo_url", "cover_url", "statut", "plan", "tier", "montant_mensuel", "limite_membres", "limite_espaces", "settings", "created_at", "updated_at") VALUES 
+('a1111111-1111-4111-8111-111111111111', 'Nero Coworking Space', 'nero-coworking', 'Espace de travail moderne et calme situé à Ennasr 2, pensé pour les freelances, startups et équipes en quête de productivité.', 'Avenue Hédi Nouira, Ennasr 2', 'Tunis', 'Tunisie', 'contact@nerocoworking.tn', '+216 71 888 999', 'https://nerocoworking.tn', 'https://deskywork-jet.vercel.app/partners/nero-logo.png', 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80', 'actif', 'premium', 'A', 220, NULL, NULL, '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb, NOW(), NOW())
+ON CONFLICT (id) DO UPDATE SET 
+  nom = EXCLUDED.nom, slug = EXCLUDED.slug, description = EXCLUDED.description, adresse = EXCLUDED.adresse, ville = EXCLUDED.ville,
+  email = EXCLUDED.email, telephone = EXCLUDED.telephone, statut = 'actif', plan = 'premium', tier = 'A', montant_mensuel = 220,
+  settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb;
+
+INSERT INTO public.tenants ("id", "nom", "slug", "description", "adresse", "ville", "pays", "email", "telephone", "site_web", "logo_url", "cover_url", "statut", "plan", "tier", "montant_mensuel", "limite_membres", "limite_espaces", "settings", "created_at", "updated_at") VALUES 
+('a3333333-3333-4333-8333-333333333333', 'Thirty Three Space', 'thirty-three-space', 'Lieu collaboratif d''exception conçu pour le coworking quotidien, les ateliers et les sessions de formation professionnelles.', 'Les Berges du Lac 2', 'Tunis', 'Tunisie', 'contact@thirtythreespace.com', '+216 71 999 333', 'https://thirtythreespace.com', 'https://deskywork-jet.vercel.app/partners/thirtythree-logo.png', 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?auto=format&fit=crop&w=1600&q=80', 'actif', 'premium', 'A', 220, NULL, NULL, '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb, NOW(), NOW())
+ON CONFLICT (id) DO UPDATE SET 
+  nom = EXCLUDED.nom, slug = EXCLUDED.slug, description = EXCLUDED.description, adresse = EXCLUDED.adresse, ville = EXCLUDED.ville,
+  email = EXCLUDED.email, telephone = EXCLUDED.telephone, statut = 'actif', plan = 'premium', tier = 'A', montant_mensuel = 220,
+  settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb;
+
 -- ── Restauration Organizations (synchronisées avec les 4 coworkings) ──
 INSERT INTO public.organizations (id, type, nom, slug, email, telephone, adresse, ville, description, statut, logo_url)
 SELECT
@@ -591,7 +652,16 @@ SELECT
     'valide',
     t.logo_url
 FROM public.tenants t
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    nom = EXCLUDED.nom,
+    slug = EXCLUDED.slug,
+    email = EXCLUDED.email,
+    telephone = EXCLUDED.telephone,
+    adresse = EXCLUDED.adresse,
+    ville = EXCLUDED.ville,
+    description = EXCLUDED.description,
+    statut = 'valide',
+    logo_url = EXCLUDED.logo_url;
 
 -- ── Catalog Data: espaces (10 rows) ──
 INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "created_at", "tenant_id") VALUES ('c3d3fffe-72a5-46dd-911b-940cf9d65889', 'espace 2', 'open_space', 30, 10, '2026-08-25T23:09:41.166351+00:00', '17ebce1c-2537-430d-a0b2-f2bb57ae6908') ON CONFLICT (id) DO NOTHING;
@@ -604,6 +674,32 @@ INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "c
 INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "created_at", "tenant_id") VALUES ('3bcfe671-0ef8-45dc-a1ce-42668a485083', 'TESTS6-OS-1788975688870', 'open_space', 10, 20, '2026-09-09T17:41:31.772342+00:00', '17ebce1c-2537-430d-a0b2-f2bb57ae6908') ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "created_at", "tenant_id") VALUES ('455219a4-0c57-4a05-9387-227b9ea3a769', 'TESTS6-BP-1788975688870', 'private_office', 1, 50, '2026-09-09T17:41:31.860793+00:00', '17ebce1c-2537-430d-a0b2-f2bb57ae6908') ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "created_at", "tenant_id") VALUES ('32610b97-4571-4c2c-97ea-8e1d6cd43566', 'espace 1', 'open_space', 10, 15, '2026-08-25T23:09:12.81289+00:00', '17ebce1c-2537-430d-a0b2-f2bb57ae6908') ON CONFLICT (id) DO NOTHING;
+
+-- ── Espaces officiels : Nero Coworking Space ──
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e1111111-1111-4111-8111-000000000001', 'Open Space Nomade', 'open_space', 30, 5.000, 25.000, 250.000, 'Poste de travail flexible en open space lumineux avec ambiance propice à la concentration.', 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?auto=format&fit=crop&w=900&q=80', ARRAY['Wi-Fi Fibre', 'Café & Thé inclus', 'Prises dédiées', 'Climatisation'], TRUE, NOW(), 'a1111111-1111-4111-8111-111111111111')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
+
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e1111111-1111-4111-8111-000000000002', 'Bureau Privé 4 Personnes', 'private_office', 4, 20.000, 90.000, 950.000, 'Bureau fermé haut standing, idéal pour une équipe projet ou une startup.', 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=900&q=80', ARRAY['Wi-Fi Fibre', 'Clé sécurisée', 'Écran de présentation', 'Tableau blanc', 'Climatisation'], TRUE, NOW(), 'a1111111-1111-4111-8111-111111111111')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
+
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e1111111-1111-4111-8111-000000000003', 'Salle de Réunion Prestige', 'meeting_room', 12, 30.000, 150.000, 0.000, 'Salle de réunion moderne équipée pour vos présentations clients et comités de direction.', 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=900&q=80', ARRAY['Visioconférence 4K', 'Grand écran TV', 'Tableau blanc interactif', 'Machine à café Nespresso'], TRUE, NOW(), 'a1111111-1111-4111-8111-111111111111')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
+
+-- ── Espaces officiels : Thirty Three Space ──
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e3333333-3333-4333-8333-000000000001', 'Espace Collaboratif Lac', 'open_space', 25, 6.000, 28.000, 280.000, 'Cadre d''exception au Lac 2 alliant design contemporain et productivité partagée.', 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=900&q=80', ARRAY['Wi-Fi Haute Performance', 'Espace Lounge & Détente', 'Boissons chaudes à volonté', 'Accès terrasse'], TRUE, NOW(), 'a3333333-3333-4333-8333-333333333333')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
+
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e3333333-3333-4333-8333-000000000002', 'Salle de Formation & Workshop', 'training_room', 18, 35.000, 180.000, 0.000, 'Espace pédagogique polyvalent conçu pour les formateurs professionnels et ateliers pratiques.', 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&w=900&q=80', ARRAY['Vidéoprojecteur HD', 'Disposition modulable en U ou classe', 'Système audio & micros', 'Paperboard'], TRUE, NOW(), 'a3333333-3333-4333-8333-333333333333')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
+
+INSERT INTO public.espaces ("id", "nom", "type", "capacite", "tarif_horaire", "tarif_journalier", "tarif_mensuel", "description", "photo_url", "equipements", "actif", "created_at", "tenant_id") VALUES 
+('e3333333-3333-4333-8333-000000000003', 'Espace Événementiel & Conférence', 'event_space', 50, 70.000, 350.000, 0.000, 'Grand espace privatisable pour vos meetups tech, lancements de produit et conférences d''entreprise.', 'https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=900&q=80', ARRAY['Sonorisation complète', 'Micro sans fil', 'Scène & pupitre', 'Écran géant', 'Service traiteur possible'], TRUE, NOW(), 'a3333333-3333-4333-8333-333333333333')
+ON CONFLICT (id) DO UPDATE SET nom = EXCLUDED.nom, type = EXCLUDED.type, capacite = EXCLUDED.capacite, tarif_horaire = EXCLUDED.tarif_horaire, tarif_journalier = EXCLUDED.tarif_journalier, tarif_mensuel = EXCLUDED.tarif_mensuel, description = EXCLUDED.description, photo_url = EXCLUDED.photo_url, equipements = EXCLUDED.equipements, actif = TRUE;
 
 -- ── Catalog Data: contacts (3 rows) ──
 INSERT INTO public.contacts ("id", "nom", "email", "sujet", "message", "statut", "created_at", "updated_at") VALUES ('6e5028e7-0bc4-461b-93b3-f597c1c1a2e7', 'test', 'test@g.com', 'Autre demande', 'test', 'nouveau', '2026-09-10T23:01:19.865424+00:00', '2026-09-10T23:03:46.649+00:00') ON CONFLICT (id) DO NOTHING;
