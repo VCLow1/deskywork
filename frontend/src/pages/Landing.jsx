@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { guestApi } from '../services/api';
 import { API_URL } from '../services/api';
 import Navbar from '../components/layout/Navbar';
+import BrandLogo from '../components/layout/BrandLogo';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SPACE_TYPES, SPACE_TYPE_LABELS, EQUIPMENTS } from '../constants/spaceTypes';
@@ -1499,6 +1500,72 @@ export default function Landing({ session }) {
           .hero-wrap { min-height:80vh; padding:80px 0 48px; }
           .btn-primary-hero, .btn-ghost-hero { padding:11px 20px; font-size:.9rem; }
         }
+
+        /* ══ FOOTER STYLES (Dynamic Light & Dark Modes) ══ */
+        .ec-footer {
+          background: ${dark ? '#0c0e12' : '#f8fafc'} !important;
+          border-top: 1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'} !important;
+          color: ${dark ? '#cbd5e1' : '#475569'};
+          transition: background .3s ease, border-color .3s ease, color .3s ease;
+        }
+        .ec-footer .footer-col-title {
+          font-family: 'Sora', sans-serif;
+          color: ${dark ? '#ffffff' : '#0f172a'} !important;
+          font-size: .82rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .08em;
+          margin-bottom: 1rem;
+        }
+        .ec-footer .footer-desc {
+          color: ${dark ? '#94a3b8' : '#475569'} !important;
+          font-size: .9rem;
+          line-height: 1.8;
+          max-width: 330px;
+          margin: 0;
+          font-weight: 500;
+        }
+        .ec-footer a.footer-link {
+          color: ${dark ? '#94a3b8' : '#475569'} !important;
+          font-weight: 500;
+          font-size: .88rem;
+          text-decoration: none !important;
+          transition: all .2s ease;
+          display: inline-block;
+        }
+        .ec-footer a.footer-link:hover {
+          color: #f95d00 !important;
+          transform: translateX(3px);
+        }
+        .ec-footer .soc-btn {
+          border: 1px solid ${dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.1)'} !important;
+          background: ${dark ? 'rgba(255,255,255,0.05)' : '#ffffff'} !important;
+          color: ${dark ? '#ffffff' : '#0f172a'} !important;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          text-decoration: none !important;
+          box-shadow: ${dark ? 'none' : '0 1px 3px rgba(0,0,0,0.05)'};
+          transition: all .2s ease;
+        }
+        .ec-footer .soc-btn:hover {
+          border-color: #f95d00 !important;
+          color: #f95d00 !important;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(249,93,0,0.2) !important;
+        }
+        .ec-footer .footer-divider {
+          border-color: ${dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'} !important;
+          margin: 0;
+        }
+        .ec-footer .footer-bottom-text {
+          color: ${dark ? '#888480' : '#64748b'} !important;
+          font-size: .85rem;
+          font-weight: 500;
+        }
       `}</style>
 
       {/* ══ NAVBAR ══ */}
@@ -2594,88 +2661,83 @@ export default function Landing({ session }) {
         </div>
       </section>
 
-      {/* ══ FOOTER ══ */}
-      <footer className="ec-footer pt-5 pb-4" style={{ background: '#0d1117', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* ══ FOOTER (Mode Clair / Sombre dynamique & contrasté) ══ */}
+      <footer className="ec-footer pt-5 pb-4">
         <div className="container">
           <div className="row g-4 mb-5 align-items-start">
             <div className="col-lg-4 col-md-6">
               <div style={{ marginBottom: '1.25rem' }}>
-                <img
-                  src={dark ? '/images/logo-deskywork-light.png' : '/images/logo-deskywork-dark.png'}
-                  alt="DeskyWork"
-                  className="ec-footer-logo"
-                  style={{ height: 48, width: 'auto', objectFit: 'contain' }}
-                />
+                <BrandLogo height={46} light={dark} />
               </div>
-              <p style={{ color: '#cfcac3', fontSize: '.9rem', lineHeight: 1.8, maxWidth: 330, margin: 0, fontWeight: 500 }}>
+              <p className="footer-desc">
                 {t('landing.footerDesc')}
               </p>
               <div className="mt-4 d-flex gap-3">
-                <a href="#contact" aria-label="Contact" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                <a href="#contact" aria-label="Contact" className="soc-btn" title="Site officiel">
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>public</span>
                 </a>
-                <a href="mailto:contact@deskywork.com" aria-label="Email" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                <a href="mailto:contact@deskywork.com" aria-label="Email" className="soc-btn" title="Nous contacter par e-mail">
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>alternate_email</span>
                 </a>
-                <a href="#contact" aria-label="Messagerie" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                <a href="#contact" aria-label="Messagerie" className="soc-btn" title="Messagerie & support">
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chat</span>
                 </a>
               </div>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+              <h6 className="footer-col-title">
                 {t('landing.footerNav')}
               </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="#search" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.findSpace')}</a></li>
-                <li><a href="#about" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.about')}</a></li>
-                <li><a href="#featured" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.featured')}</a></li>
-                <li><a href="#tarifs" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.pricing')}</a></li>
+                <li><a href="#search" className="footer-link">{t('navbar.findSpace')}</a></li>
+                <li><a href="#about" className="footer-link">{t('navbar.about')}</a></li>
+                <li><a href="#featured" className="footer-link">{t('navbar.featured')}</a></li>
+                <li><a href="#tarifs" className="footer-link">{t('navbar.pricing')}</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+              <h6 className="footer-col-title">
                 {t('landing.footerPartners')}
               </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><Link to="/espaces-partenaires" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.partners')}</Link></li>
-                <li><a href="#formations" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.formations')}</a></li>
-                <li><Link to="/devenir-formateur" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Devenir Formateur</Link></li>
-                <li><a href="#contact" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.contact')}</a></li>
+                <li><Link to="/espaces-partenaires" className="footer-link">{t('navbar.partners')}</Link></li>
+                <li><a href="#formations" className="footer-link">{t('navbar.formations')}</a></li>
+                <li><Link to="/devenir-formateur" className="footer-link">Devenir Formateur</Link></li>
+                <li><a href="#contact" className="footer-link">{t('navbar.contact')}</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+              <h6 className="footer-col-title">
                 {t('landing.footerLegal')}
               </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><Link to="/cgu" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('landing.footerCgu')}</Link></li>
-                <li><Link to="/confidentialite" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('landing.footerPrivacy')}</Link></li>
-                <li><a href="#top" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Haut de page ↑</a></li>
+                <li><Link to="/cgu" className="footer-link">{t('landing.footerCgu')}</Link></li>
+                <li><Link to="/confidentialite" className="footer-link">{t('landing.footerPrivacy')}</Link></li>
+                <li><a href="#top" className="footer-link">Haut de page ↑</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+              <h6 className="footer-col-title">
                 {t('navbar.contact')}
               </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="mailto:contact@deskywork.com" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>contact@deskywork.com</a></li>
-                <li><a href="#contact" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Tunis, Tunisie</a></li>
+                <li><a href="mailto:contact@deskywork.com" className="footer-link">contact@deskywork.com</a></li>
+                <li><span className="footer-desc" style={{ fontSize: '.88rem' }}>Tunis, Tunisie</span></li>
               </ul>
             </div>
           </div>
 
-          <hr style={{ borderColor: 'rgba(255,255,255,.12)', margin: 0 }} />
+          <hr className="footer-divider" />
           <div className="d-flex flex-column flex-md-row justify-content-between align-items-center pt-4 gap-2">
-            <p className="mb-0" style={{ color: '#888480', fontSize: '.85rem', fontWeight: 500 }}>
+            <p className="mb-0 footer-bottom-text">
               © {new Date().getFullYear()} {t('landing.footerCopyright')}
             </p>
-            <p className="mb-0" style={{ color: '#888480', fontSize: '.85rem', fontWeight: 500 }}>
-              Conçu avec <span style={{ color: EC.cobalt }}>♥</span> à Tunis
+            <p className="mb-0 footer-bottom-text">
+              Conçu avec <span style={{ color: '#f95d00' }}>♥</span> à Tunis
             </p>
           </div>
         </div>
