@@ -1,9 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { guestApi } from '../services/api';
 import { API_URL } from '../services/api';
 import Navbar from '../components/layout/Navbar';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
+import { SPACE_TYPES, SPACE_TYPE_LABELS, EQUIPMENTS } from '../constants/spaceTypes';
+import { SAAS_PACKS } from '../constants/saasPacks';
+import { formatDT, formatDateTunis, formatTimeTunis } from '../utils/format';
+import partnerThirtyThree from '../assets/partners/thirty-three-space.png';
+import partnerNero from '../assets/partners/nero-coworking.png';
+
+const EQUIPMENT_ICONS = {
+  'Wi-Fi': 'wifi',
+  'Projecteur': 'videocam',
+  'Visioconférence': 'video_camera_front',
+  'Tableau blanc': 'draw',
+  'Imprimante': 'print',
+  'Climatisation': 'ac_unit',
+  'Café / Thé': 'local_cafe',
+  'Parking': 'local_parking',
+  'Accès 24/7': 'schedule',
+};
 
 /* ─── Charte DeskyWork dynamique ─── */
 function getThemeColors(dark) {
@@ -89,7 +107,7 @@ function FeatureCard({ icon, title, desc, dark }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           marginBottom: '1.25rem', transition: 'background .3s',
         }}>
-          <span className="material-symbols-outlined" style={{ color: hov ? '#ffffff' : (dark ? '#ff8a3d' : '#1c1b18'), fontSize: 26 }}>{icon}</span>
+          <span className="material-symbols-outlined" style={{ color: hov ? '#ffffff' : (dark ? '#ff8a3d' : '#f95d00'), fontSize: 26 }}>{icon}</span>
         </div>
         <h5 style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: EC.navy, marginBottom: '.5rem' }}>{title}</h5>
         <p style={{ color: EC.muted, fontSize: '.9rem', lineHeight: 1.75, margin: 0 }}>{desc}</p>
@@ -127,7 +145,7 @@ function PricingCard({ badge, title, price, period, desc, features, highlighted,
           <div style={{
             position: 'absolute', top: 0, right: 0, width: 160, height: 160,
             background: `radial-gradient(circle, ${EC.cobalt}44 0%, transparent 70%)`,
-            borderRadius: '50%', transform: 'translate(30%,-30%)', pointerEvents: 'none'
+            borderRadius: '50%', transform: 'translate(30%,-30%)', pointerEvents: 'none',
           }} />
         )}
         {badge && (
@@ -143,7 +161,7 @@ function PricingCard({ badge, title, price, period, desc, features, highlighted,
         <p style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginBottom: '1.5rem' }}>{desc}</p>
         <div style={{ marginBottom: '1.5rem' }}>
           <span style={{ fontSize: '2.6rem', fontWeight: 800, fontFamily: 'Sora,sans-serif', color: highlighted ? '#fbffff' : EC.navy }}>{price}</span>
-          {period && <span style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginLeft: 4 }}>{period}</span>}
+          {period && <span style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginLeft: 6 }}>{period}</span>}
         </div>
         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1.75rem 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {features.map((f, i) => (
@@ -175,19 +193,28 @@ function TestiCard({ quote, name, role, initial, dark }) {
     <div className="col-md-4">
       <div style={{
         backgroundColor: EC.cardBg, borderRadius: 20, padding: '2rem', height: '100%',
-        border: `1.5px solid ${EC.outline}`, boxShadow: dark ? '0 4px 16px rgba(0,0,0,.4)' : '0 4px 16px rgba(0,13,35,.06)',
+        border: `1.5px solid ${EC.outline}`, display: 'flex', flexDirection: 'column',
+        boxShadow: dark ? '0 2px 10px rgba(0,0,0,.3)' : '0 2px 8px rgba(0,13,35,.04)',
       }}>
-        <div style={{ color: EC.cobalt, fontSize: '2.5rem', fontFamily: 'Georgia,serif', lineHeight: 1, marginBottom: '1rem' }}>"</div>
-        <p style={{ color: EC.muted, fontStyle: 'italic', lineHeight: 1.8, fontSize: '.95rem', marginBottom: '1.5rem' }}>{quote}</p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="d-flex align-items-center gap-1 mb-3">
+          {[...Array(5)].map((_, i) => (
+            <span key={i} className="material-symbols-outlined" style={{ color: '#f59e0b', fontSize: 18, fontVariationSettings: "'FILL' 1" }}>star</span>
+          ))}
+        </div>
+        <p style={{ color: EC.navy, fontSize: '.95rem', lineHeight: 1.75, flex: 1, marginBottom: '1.5rem', fontStyle: 'italic' }}>
+          "{quote}"
+        </p>
+        <div className="d-flex align-items-center gap-3">
           <div style={{
             width: 44, height: 44, borderRadius: '50%',
-            backgroundColor: EC.cobaltLight, color: dark ? '#ff8a3d' : EC.cobalt,
+            backgroundColor: EC.cobalt, color: '#ffffff',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 800, fontSize: '1rem', flexShrink: 0,
-          }}>{initial}</div>
+            fontWeight: 700, fontSize: '1.1rem', flexShrink: 0,
+          }}>
+            {initial}
+          </div>
           <div>
-            <div style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: EC.navy, fontSize: '.9rem' }}>{name}</div>
+            <div style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: EC.navy, fontSize: '.95rem' }}>{name}</div>
             <div style={{ color: EC.muted, fontSize: '.8rem' }}>{role}</div>
           </div>
         </div>
@@ -196,9 +223,7 @@ function TestiCard({ quote, name, role, initial, dark }) {
   );
 }
 
-/* ══════════════════════════════
-   HERO SLIDES DATA
-══════════════════════════════ */
+/* ─── Diaporama d'images en fond ─── */
 const HERO_SLIDES = [
   { src: '/images/coworking/space-1.jpg',   title: 'Open Space',         tag: 'Travail collaboratif' },
   { src: '/images/coworking/space-2.jpg',   title: 'Bureaux privatifs',  tag: 'Concentration totale' },
@@ -216,273 +241,157 @@ function PromoModal({ tenant, onClose, dark }) {
     if (!tenant) return;
     setLoading(true);
     fetch(`${API_URL}/api/public/coworkings/${tenant.id}/promos`)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, [tenant]);
 
   if (!tenant) return null;
 
-  const ESPACE_LABELS = {
-    open_space: 'Open Space',
-    private_office: 'Bureau privatif',
-    meeting_room: 'Salle de réunion',
-    training_room: 'Salle de formation',
-    event_space: 'Espace événementiel',
-  };
-
-  const ABONNEMENT_LABELS = {
-    day_pass: 'Pass Jour',
-    week_pass: 'Pass Semaine',
-    mensuel: 'Mensuel',
-    trimestriel: 'Trimestriel',
-    annuel: 'Annuel',
-    bureau_prive: 'Bureau privé',
-  };
-
-  function fmtDate(d) {
-    if (!d) return null;
-    return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
-
-  function daysLeft(dateStr) {
-    if (!dateStr) return null;
-    const diff = Math.ceil((new Date(dateStr) - new Date()) / 86400000);
-    return diff > 0 ? diff : 0;
-  }
-
   return (
     <div
-      onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(16,15,13,.76)', backdropFilter: 'blur(8px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '1rem',
+        background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
       }}
+      onClick={onClose}
     >
       <div
-        onClick={e => e.stopPropagation()}
         style={{
-          background: dark ? '#1b1a18' : '#ffffff',
+          background: dark ? '#181614' : '#ffffff',
           color: dark ? '#fbffff' : '#100f0d',
-          borderRadius: 24, width: '100%', maxWidth: 560,
-          maxHeight: '90vh', overflowY: 'auto',
-          border: dark ? '1px solid rgba(255,255,255,0.1)' : 'none',
-          boxShadow: '0 32px 80px rgba(0,0,0,.45)',
+          borderRadius: 24, maxWidth: 520, width: '100%', maxHeight: '85vh',
+          overflowY: 'auto', border: `1.5px solid ${dark ? 'rgba(255,255,255,0.12)' : 'rgba(16,15,13,0.1)'}`,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.4)',
         }}
+        onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div style={{
-          background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-          borderRadius: '24px 24px 0 0', padding: '1.5rem 1.75rem',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '1.25rem 1.5rem',
+          borderBottom: `1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.08)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'between',
         }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 26 }}>local_offer</span>
-              <h3 style={{ margin: 0, color: '#fff', fontFamily: 'Sora,sans-serif', fontWeight: 800, fontSize: '1.25rem' }}>
-                Promotions actives
-              </h3>
-            </div>
-            <p style={{ margin: '4px 0 0', color: 'rgba(255,255,255,.9)', fontSize: '.85rem' }}>
-              {tenant.nom}
-            </p>
+            <span style={{
+              fontSize: '.68rem', fontWeight: 800, textTransform: 'uppercase',
+              color: '#f95d00', letterSpacing: '.08em', display: 'block',
+            }}>
+              Offres Spéciales
+            </span>
+            <h3 className="sora fw-bold mb-0" style={{ fontSize: '1.2rem' }}>{tenant.nom}</h3>
           </div>
           <button
             onClick={onClose}
             style={{
-              background: 'rgba(255,255,255,.2)', border: 'none', borderRadius: '50%',
-              width: 36, height: 36, cursor: 'pointer', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', color: '#fff',
-              transition: 'background .2s',
+              background: 'transparent', border: 'none', color: dark ? '#cfcac3' : '#797570',
+              cursor: 'pointer', padding: 6, borderRadius: 8, marginLeft: 'auto',
             }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.35)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,.2)'}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 22 }}>close</span>
           </button>
         </div>
 
-        {/* Body */}
-        <div style={{ padding: '1.75rem' }}>
+        <div style={{ padding: '1.5rem' }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '3rem 0', color: dark ? '#cfcac3' : '#798bac' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 40, display: 'block', marginBottom: 12, opacity: .5 }}>hourglass_empty</span>
+            <div style={{ textAlign: 'center', padding: '2rem 0', color: dark ? '#cfcac3' : '#797570' }}>
               Chargement des promotions…
             </div>
-          ) : (!data?.promo_codes?.length && !data?.tarifs_limites?.length) ? (
-            <div style={{ textAlign: 'center', padding: '3rem 0', color: dark ? '#cfcac3' : '#798bac' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 40, display: 'block', marginBottom: 12, opacity: .4 }}>sentiment_neutral</span>
-              Aucune promotion active pour le moment.
+          ) : !data?.promos || data.promos.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem 0', color: dark ? '#cfcac3' : '#797570' }}>
+              Aucun code promo actif pour cet établissement pour le moment.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-
-              {/* Codes promo */}
-              {data?.promo_codes?.length > 0 && (
-                <div>
-                  <h5 style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: dark ? '#fbffff' : '#100f0d', fontSize: '.95rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="material-symbols-outlined" style={{ color: '#f95d00', fontSize: 20 }}>confirmation_number</span>
-                    Codes promotionnels
-                  </h5>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {data.promo_codes.map(p => {
-                      const days = daysLeft(p.date_fin);
-                      const urgent = days !== null && days <= 7;
-                      return (
-                        <div key={p.id} style={{
-                          border: `1.5px solid ${urgent ? '#f95d00' : (dark ? 'rgba(255,255,255,0.1)' : '#e5e7eb')}`,
-                          borderRadius: 14, padding: '1rem 1.25rem',
-                          background: urgent ? (dark ? '#2b1505' : '#fff8f5') : (dark ? '#242220' : '#fafafa'),
-                          display: 'flex', alignItems: 'center', gap: 14,
-                        }}>
-                          <div style={{
-                            background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                            borderRadius: 10, padding: '8px 14px',
-                            fontFamily: 'Sora,sans-serif', fontWeight: 800,
-                            color: '#fff', fontSize: '.9rem', letterSpacing: '.04em',
-                            flexShrink: 0,
-                          }}>
-                            {p.code}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, color: dark ? '#fbffff' : '#100f0d', fontSize: '.95rem' }}>
-                              {p.type_reduction === 'percent'
-                                ? `−${p.valeur}% de réduction`
-                                : `−${p.valeur} DT de réduction`}
-                            </div>
-                            {p.date_fin && (
-                              <div style={{ fontSize: '.78rem', color: urgent ? '#f95d00' : (dark ? '#cfcac3' : '#6b7280'), marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>schedule</span>
-                                {urgent
-                                  ? `Expire dans ${days} jour${days !== 1 ? 's' : ''} · ${fmtDate(p.date_fin)}`
-                                  : `Valide jusqu'au ${fmtDate(p.date_fin)}`}
-                              </div>
-                            )}
-                            {p.utilisations_max && (
-                              <div style={{ fontSize: '.78rem', color: dark ? '#cfcac3' : '#6b7280', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>group</span>
-                                {p.utilisations_count} / {p.utilisations_max} utilisations
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {data.promos.map((p) => {
+                const isPct = p.type === 'percentage';
+                const valStr = isPct ? `-${p.valeur}%` : `-${formatDT(p.valeur)}`;
+                return (
+                  <div
+                    key={p.id}
+                    style={{
+                      border: `1.5px dashed ${dark ? 'rgba(249,93,0,0.5)' : '#f95d00'}`,
+                      borderRadius: 16, padding: '1rem',
+                      background: dark ? 'rgba(249,93,0,0.06)' : '#fff8f2',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{
+                        fontFamily: 'monospace', fontWeight: 800, fontSize: '1.1rem',
+                        letterSpacing: '.08em', color: '#f95d00',
+                      }}>
+                        {p.code}
+                      </span>
+                      <span style={{
+                        background: '#f95d00', color: '#fff', borderRadius: 8,
+                        padding: '3px 10px', fontSize: '.78rem', fontWeight: 800,
+                      }}>
+                        {valStr}
+                      </span>
+                    </div>
+                    {p.description && (
+                      <p style={{ margin: '0 0 6px 0', fontSize: '.84rem', color: dark ? '#cfcac3' : '#44474d' }}>
+                        {p.description}
+                      </p>
+                    )}
+                    <div style={{ fontSize: '.72rem', color: dark ? '#a3a09b' : '#797570' }}>
+                      {p.valide_jusquau && `Valable jusqu'au ${new Date(p.valide_jusquau).toLocaleDateString('fr-FR')}`}
+                    </div>
                   </div>
-                </div>
-              )}
-
-              {/* Tarifs à durée limitée */}
-              {data?.tarifs_limites?.length > 0 && (
-                <div>
-                  <h5 style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: dark ? '#fbffff' : '#100f0d', fontSize: '.95rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="material-symbols-outlined" style={{ color: '#f95d00', fontSize: 20 }}>sell</span>
-                    Tarifs promotionnels limités
-                  </h5>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {data.tarifs_limites.map(t => {
-                      const days = daysLeft(t.date_fin);
-                      const urgent = days !== null && days <= 7;
-                      return (
-                        <div key={t.id} style={{
-                          border: `1.5px solid ${urgent ? '#f95d00' : (dark ? 'rgba(255,255,255,0.1)' : '#e5e7eb')}`,
-                          borderRadius: 14, padding: '1rem 1.25rem',
-                          background: urgent ? (dark ? '#2b1505' : '#fff8f5') : (dark ? '#242220' : '#fafafa'),
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-                        }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, color: dark ? '#fbffff' : '#100f0d', fontSize: '.95rem' }}>
-                              {ABONNEMENT_LABELS[t.type_abonnement] || t.type_abonnement}
-                              {t.type_espace && (
-                                <span style={{ fontWeight: 500, color: dark ? '#cfcac3' : '#6b7280', fontSize: '.85rem' }}>
-                                  {' '}· {ESPACE_LABELS[t.type_espace] || t.type_espace}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: '.78rem', color: dark ? '#cfcac3' : '#6b7280', marginTop: 2, textTransform: 'capitalize' }}>
-                              Plan {t.plan_tarifaire}
-                            </div>
-                            {t.date_fin && (
-                              <div style={{ fontSize: '.78rem', color: urgent ? '#f95d00' : (dark ? '#cfcac3' : '#6b7280'), marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>schedule</span>
-                                {urgent
-                                  ? `Expire dans ${days} jour${days !== 1 ? 's' : ''} · ${fmtDate(t.date_fin)}`
-                                  : `Jusqu'au ${fmtDate(t.date_fin)}`}
-                              </div>
-                            )}
-                          </div>
-                          <div style={{
-                            background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                            borderRadius: 12, padding: '8px 16px', textAlign: 'center', flexShrink: 0,
-                          }}>
-                            <div style={{ color: '#fff', fontFamily: 'Sora,sans-serif', fontWeight: 800, fontSize: '1.1rem', lineHeight: 1 }}>
-                              {t.prix} DT
-                            </div>
-                            <div style={{ color: 'rgba(255,255,255,.85)', fontSize: '.7rem', marginTop: 2 }}>TTC {t.tva_pct}%</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
+                );
+              })}
             </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <div style={{ padding: '1rem 1.75rem 1.75rem', borderTop: dark ? '1px solid rgba(255,255,255,0.08)' : '1px solid #f3f4f6' }}>
-          <Link
-            to={`/book-guest?tenantId=${tenant.id}`}
-            onClick={onClose}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-              color: '#fff', borderRadius: 12, padding: '13px 0', width: '100%',
-              fontWeight: 700, fontSize: '.95rem', textDecoration: 'none',
-              boxShadow: '0 6px 20px rgba(249,93,0,.35)',
-              transition: 'transform .2s, box-shadow .2s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(249,93,0,.45)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(249,93,0,.35)'; }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>event_available</span>
-            Réserver et profiter des promos
-          </Link>
+          <div style={{ marginTop: '1.5rem', display: 'flex', gap: 10 }}>
+            <Link
+              to={`/coworking/${tenant.id}`}
+              onClick={onClose}
+              style={{
+                flex: 1, textAlign: 'center', background: '#f95d00', color: '#fff',
+                borderRadius: 12, padding: '11px 0', fontWeight: 700, fontSize: '.9rem',
+                textDecoration: 'none',
+              }}
+            >
+              Voir l'établissement &amp; Réserver
+            </Link>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* ══════════════════════════════
-   COMPOSANT PRINCIPAL
-══════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGE PRINCIPALE — LANDING PAGE (CDC DeskyWork v3.0)
+═══════════════════════════════════════════════════════════════════════════ */
 export default function Landing({ session }) {
   const { dark } = useTheme();
+  const { lang, t } = useLanguage();
   const EC = getThemeColors(dark);
+
+  const [isAtTop, setIsAtTop] = useState(true);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsAtTop(window.scrollY < 300);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleScrollButton = () => {
+    if (isAtTop) {
+      const target = document.getElementById('about') || document.getElementById('avantages');
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const [contactForm, setContactForm] = useState({ nom: '', email: '', sujet: '', message: '' });
   const [contactStatus, setContactStatus] = useState({ type: '', text: '' });
   const [contactLoading, setContactLoading] = useState(false);
-  const [isAtTop, setIsAtTop] = useState(true);
-
-  useEffect(() => {
-    const updateScrollState = () => setIsAtTop(window.scrollY <= 24);
-    updateScrollState();
-    window.addEventListener('scroll', updateScrollState, { passive: true });
-    return () => window.removeEventListener('scroll', updateScrollState);
-  }, []);
-
-  const handleScrollButton = () => {
-    window.scrollTo({
-      top: isAtTop ? document.documentElement.scrollHeight : 0,
-      behavior: 'smooth',
-    });
-  };
 
   const handleContactSubmit = async (event) => {
     event.preventDefault();
@@ -495,7 +404,7 @@ export default function Landing({ session }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Impossible d’envoyer le message.');
       setContactForm({ nom: '', email: '', sujet: '', message: '' });
-      setContactStatus({ type: 'success', text: data.message });
+      setContactStatus({ type: 'success', text: t('landing.contactSuccess') });
     } catch (error) {
       setContactStatus({ type: 'error', text: error.message });
     } finally {
@@ -504,15 +413,224 @@ export default function Landing({ session }) {
   };
 
   const [tenants, setTenants] = useState([]);
+  const [publicEspaces, setPublicEspaces] = useState([]);
+  const [publicFormations, setPublicFormations] = useState([]);
+  const [searchVille, setSearchVille] = useState('');
+  const [searchType, setSearchType] = useState('');
+  const [searchCapacite, setSearchCapacite] = useState('');
+  const [searchDate, setSearchDate] = useState('');
+  const [searchHeureDebut, setSearchHeureDebut] = useState('09:00');
+  const [searchHeureFin, setSearchHeureFin] = useState('17:00');
+  const [searchEquipements, setSearchEquipements] = useState([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+
+  /* Onglets d'intention Hero (CDC v3.0 Premium) */
+  const [activeHeroTab, setActiveHeroTab] = useState('espaces'); // 'espaces' | 'formations' | 'b2b'
+  const [showFilterPopover, setShowFilterPopover] = useState(false);
+  const filterPopoverRef = useRef(null);
+
+  /* Recherche Formations */
+  const [searchFormationKeyword, setSearchFormationKeyword] = useState('');
+  const [searchFormationVille, setSearchFormationVille] = useState('');
+  const [searchFormationDate, setSearchFormationDate] = useState('');
+
+  /* Rotation dynamique de mot-clé H1 */
+  const rotatingWords = useMemo(() => {
+    return lang === 'en'
+      ? ['private office', 'meeting room', 'workshop', 'open space']
+      : ['bureau privé', 'salle de réunion', 'formation', 'open space'];
+  }, [lang]);
+  const [currentWordIdx, setCurrentWordIdx] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentWordIdx((prev) => (prev + 1) % rotatingWords.length);
+    }, 2800);
+    return () => clearInterval(timer);
+  }, [rotatingWords.length]);
+
+  // Fermer le popover filtres au clic extérieur
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (filterPopoverRef.current && !filterPopoverRef.current.contains(e.target)) {
+        setShowFilterPopover(false);
+      }
+    };
+    if (showFilterPopover) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showFilterPopover]);
+
   const [slide, setSlide] = useState(0);
   const [hovering, setHovering] = useState(false);
+  const FALLBACK_PARTNER_TENANTS = useMemo(() => [
+    {
+      id: 'thirty-three-space',
+      nom: 'Thirty Three Space',
+      slug: 'thirty-three-space',
+      ville: 'Tunis',
+      adresse: 'Les Berges du Lac 2, Tunis',
+      description: 'Espace de coworking moderne, bureaux privatifs et communauté innovante au Lac 2.',
+      cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
+      logo_url: partnerThirtyThree,
+      is_featured: true,
+      space_count: 6,
+      member_count: 54,
+      has_promo: true,
+    },
+    {
+      id: 'nero-coworking',
+      nom: 'Néro Coworking Space',
+      slug: 'nero-coworking',
+      ville: 'Tunis',
+      adresse: 'Avenue Hédi Nouira, Ennasr 2, Tunis',
+      description: 'Coworking premium, salles de réunion high-tech et flex office pour créatifs et équipes.',
+      cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
+      logo_url: partnerNero,
+      is_featured: true,
+      space_count: 8,
+      member_count: 68,
+      has_promo: true,
+    },
+    {
+      id: 'the-hive-coworking',
+      nom: 'The Hive Coworking Space',
+      slug: 'the-hive-coworking',
+      ville: 'Sousse',
+      adresse: 'Zone Touristique El Kantaoui, Sousse',
+      description: 'Espace stimulant au bord de mer avec postes nomades, formations et réseau d\'entrepreneurs.',
+      cover_url: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=600&fit=crop',
+      is_featured: true,
+      space_count: 5,
+      member_count: 35,
+      has_promo: false,
+    },
+  ], []);
+
+  const FALLBACK_PARTNER_ESPACES = useMemo(() => [
+    {
+      id: 'esp-open-33',
+      tenant_id: 'thirty-three-space',
+      nom: 'Poste Nomade (Open Space)',
+      type: 'open_space',
+      capacite: 30,
+      tarif_horaire: 5,
+      photo_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
+      equipements: ['Wi-Fi Fibre', 'Climatisation', 'Café/Thé', 'Prises dédiées'],
+      tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
+    },
+    {
+      id: 'esp-bureau-nero',
+      tenant_id: 'nero-coworking',
+      nom: 'Bureau Privatif 4 Personnes',
+      type: 'private_office',
+      capacite: 4,
+      tarif_horaire: 22,
+      photo_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
+      equipements: ['Wi-Fi Fibre', 'Climatisation', 'Écran 4K', 'Tableau blanc'],
+      tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
+    },
+    {
+      id: 'esp-reunion-33',
+      tenant_id: 'thirty-three-space',
+      nom: 'Salle de Réunion Vision',
+      type: 'meeting_room',
+      capacite: 10,
+      tarif_horaire: 35,
+      photo_url: 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?w=800&h=600&fit=crop',
+      equipements: ['Wi-Fi Fibre', 'Visioconférence', 'Projecteur', 'Tableau blanc'],
+      tenants: { nom: 'Thirty Three Space', ville: 'Tunis' },
+    },
+    {
+      id: 'esp-formation-nero',
+      tenant_id: 'nero-coworking',
+      nom: 'Salle de Formation Masterclass',
+      type: 'training_room',
+      capacite: 20,
+      tarif_horaire: 55,
+      photo_url: 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?w=800&h=600&fit=crop',
+      equipements: ['Wi-Fi Fibre', 'Projecteur', 'Microphone', 'Climatisation'],
+      tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
+    },
+  ], []);
+
   const [hidden, setHidden] = useState(false);
   const [promoTenant, setPromoTenant] = useState(null);
   const paused = hovering || hidden;
 
   useEffect(() => {
     fetchTenants();
+    fetchMarketplaceData();
   }, []);
+
+  const fetchTenants = async () => {
+    try {
+      const res = await guestApi.getCoworkings();
+      if (res?.coworkings && res.coworkings.length > 0) {
+        setTenants(res.coworkings);
+      } else {
+        setTenants(FALLBACK_PARTNER_TENANTS);
+      }
+    } catch (e) {
+      setTenants(FALLBACK_PARTNER_TENANTS);
+    }
+  };
+
+  const fetchMarketplaceData = async () => {
+    try {
+      const [espRes, formRes] = await Promise.all([
+        guestApi.getPublicEspaces().catch(() => ({ espaces: [] })),
+        guestApi.getPublicFormations(12).catch(() => ({ formations: [] })),
+      ]);
+      setPublicEspaces(espRes?.espaces && espRes.espaces.length > 0 ? espRes.espaces : FALLBACK_PARTNER_ESPACES);
+      setPublicFormations(formRes?.formations || []);
+    } catch (_) {
+      setPublicEspaces(FALLBACK_PARTNER_ESPACES);
+    }
+  };
+
+  const toggleEquipement = (eq) => {
+    setSearchEquipements((prev) =>
+      prev.includes(eq) ? prev.filter((item) => item !== eq) : [...prev, eq]
+    );
+  };
+
+  const villesDisponibles = Array.from(
+    new Set(
+      [
+        ...tenants.map((t) => t.ville),
+        ...publicEspaces.map((e) => e.tenants?.ville),
+      ].filter(Boolean)
+    )
+  ).sort();
+
+  const filteredEspaces = publicEspaces.filter((esp) => {
+    const villeEsp = esp.tenants?.ville || '';
+    if (searchVille && !villeEsp.toLowerCase().includes(searchVille.toLowerCase())) return false;
+    if (searchType && esp.type !== searchType) return false;
+    if (searchCapacite && Number(esp.capacite || 1) < Number(searchCapacite)) return false;
+    if (searchEquipements.length > 0) {
+      const espEq = Array.isArray(esp.equipements)
+        ? esp.equipements.map((x) => String(x).toLowerCase())
+        : [];
+      const hasAll = searchEquipements.every((wanted) =>
+        espEq.some((have) => have.includes(wanted.toLowerCase()))
+      );
+      if (!hasAll) return false;
+    }
+    return true;
+  });
+
+  const buildSearchBookingLink = (esp) => {
+    const tid = esp.tenant_id || '';
+    const params = new URLSearchParams({ tenantId: tid, espaceId: esp.id });
+    if (searchDate) {
+      params.set('debut', `${searchDate}T${searchHeureDebut || '09:00'}`);
+      params.set('fin', `${searchDate}T${searchHeureFin || '17:00'}`);
+    }
+    return `/book-guest?${params.toString()}`;
+  };
 
   useEffect(() => {
     const onVis = () => setHidden(document.hidden);
@@ -528,51 +646,90 @@ export default function Landing({ session }) {
 
   const goSlide = (dir) => setSlide((s) => (s + dir + HERO_SLIDES.length) % HERO_SLIDES.length);
 
-  const fetchTenants = async () => {
-    try {
-      const res = await guestApi.getCoworkings();
-      if (res.error) throw new Error(res.error);
-      setTenants(res.coworkings || []);
-    } catch (e) {
-      // silencieux
+  /* Rotation équitable des établissements mis en avant (pack Premium) à chaque chargement de page */
+  const rotatedTenants = useMemo(() => {
+    if (!tenants || tenants.length === 0) return [];
+    const featured = tenants.filter((t) => t.is_featured);
+    const others = tenants.filter((t) => !t.is_featured);
+    if (featured.length > 1) {
+      const offset = Math.floor(Math.random() * featured.length);
+      const shuffledFeatured = [...featured.slice(offset), ...featured.slice(0, offset)];
+      return [...shuffledFeatured, ...others];
     }
-  };
+    return tenants;
+  }, [tenants]);
 
-  /* données */
+  /* CDC v3.0 — 6 Atouts réels DeskyWork SaaS & Marketplace */
   const features = [
-    { icon: 'wifi_tethering', title: 'Wi-Fi Gigabit', desc: 'Fibre symétrique dédiée avec sécurité de niveau entreprise et zéro zone morte dans tous les espaces.' },
-    { icon: 'lock_open', title: 'Accès 24/7', desc: "Votre workflow ne s'arrête pas à 17h. Les membres profitent d'un accès biométrique en continu." },
-    { icon: 'concierge', title: 'Conciergerie', desc: 'Équipe sur place pour gérer vos livraisons, invités et besoins administratifs avec précision.' },
-    { icon: 'meeting_room', title: 'Salles de Réunion', desc: 'Salles équipées de projecteurs 4K, tableaux blancs interactifs et systèmes de visioconférence.' },
-    { icon: 'local_cafe', title: 'Café & Détente', desc: 'Espace lounge avec café de spécialité illimité, cuisine équipée et terrasse végétalisée.' },
-    { icon: 'print', title: 'Équipements Pros', desc: 'Imprimantes A3 couleur, scanners, casiers sécurisés et adresse postale professionnelle.' },
+    { icon: 'calendar_month', title: t('landing.adv1Title'), desc: t('landing.adv1Desc') },
+    { icon: 'timer', title: t('landing.adv2Title'), desc: t('landing.adv2Desc') },
+    { icon: 'dashboard', title: t('landing.adv3Title'), desc: t('landing.adv3Desc') },
+    { icon: 'receipt_long', title: t('landing.adv4Title'), desc: t('landing.adv4Desc') },
+    { icon: 'school', title: t('landing.adv5Title'), desc: t('landing.adv5Desc') },
+    { icon: 'public', title: t('landing.adv6Title'), desc: t('landing.adv6Desc') },
   ];
 
+  /* CDC v3.0 — 3 Packs SaaS B2B officiels pour les établissements */
   const plans = [
     {
-      badge: 'Journalier', title: 'Pass Jour', price: '25 DT', period: '/ jour',
-      desc: 'Idéal pour un besoin ponctuel ou pour découvrir l\'espace.',
-      features: ['Espace ouvert flex', 'Wi-Fi illimité', 'Café offert', 'Casier journalier', 'Impression 10 pages'],
-      cta: 'Réserver maintenant', ctaTo: '/register', highlighted: false,
+      badge: null,
+      title: t('landing.packEssentielName'),
+      price: `${t('landing.packEssentielPrice')} DT`,
+      period: t('landing.perMonth'),
+      desc: t('landing.packEssentielDesc'),
+      features: [
+        t('landing.packEssentielF1'),
+        t('landing.packEssentielF2'),
+        t('landing.packEssentielF3'),
+        t('landing.packEssentielF4'),
+        t('landing.packEssentielF5'),
+      ],
+      cta: `${t('landing.choosePlan')} ${t('landing.packEssentielName')}`,
+      ctaTo: '/register?type=coworking&pack=essentiel',
+      highlighted: false,
     },
     {
-      badge: '⭐ Le plus populaire', title: 'Abonnement Mensuel', price: '350 DT', period: '/ mois',
-      desc: 'La formule préférée de nos membres réguliers.',
-      features: ['Accès illimité 24/7', 'Bureau dédié ou flex', 'Salles de réunion 10h/mois', 'Adresse postale', 'Impression 100 pages', 'Café & snacks illimités'],
-      cta: 'Commencer aujourd\'hui', ctaTo: '/register', highlighted: true,
+      badge: t('landing.mostPopular'),
+      title: t('landing.packStandardName'),
+      price: `${t('landing.packStandardPrice')} DT`,
+      period: t('landing.perMonth'),
+      desc: t('landing.packStandardDesc'),
+      features: [
+        t('landing.packStandardF1'),
+        t('landing.packStandardF2'),
+        t('landing.packStandardF3'),
+        t('landing.packStandardF4'),
+        t('landing.packStandardF5'),
+        t('landing.packStandardF6'),
+      ],
+      cta: `${t('landing.choosePlan')} ${t('landing.packStandardName')}`,
+      ctaTo: '/register?type=coworking&pack=standard',
+      highlighted: true,
     },
     {
-      badge: 'Équipe', title: 'Plan Entreprise', price: 'Sur devis', period: '',
-      desc: 'Pour les équipes de 5 personnes et plus.',
-      features: ['Bureaux privatifs', 'Réunions illimitées', 'Support dédié', 'Facturation mensuelle', 'Multi-sites', 'Espace personnalisé'],
-      cta: 'Contactez-nous', ctaTo: '#contact', highlighted: false,
+      badge: t('landing.featuredBadgeTag'),
+      title: t('landing.packPremiumName'),
+      price: `${t('landing.packPremiumPrice')} DT`,
+      period: t('landing.perMonth'),
+      desc: t('landing.packPremiumDesc'),
+      features: [
+        t('landing.packPremiumF1'),
+        t('landing.packPremiumF2'),
+        t('landing.packPremiumF3'),
+        t('landing.packPremiumF4'),
+        t('landing.packPremiumF5'),
+        t('landing.packPremiumF6'),
+      ],
+      cta: `${t('landing.choosePlan')} ${t('landing.packPremiumName')}`,
+      ctaTo: '/register?type=coworking&pack=premium',
+      highlighted: false,
     },
   ];
 
   const testimonials = [
-    { quote: 'Travailler chez DeskyWork a transformé ma productivité. L\'ambiance, les équipements et l\'équipe sont au top. Je ne pourrais plus m\'en passer.', name: 'Sarra Ben Amor', role: 'CEO · TechStart Tunis', initial: 'S' },
-    { quote: 'La meilleure décision pour notre équipe. Espaces flexibles, accès 24/7 et une communauté de professionnels motivants au quotidien.', name: 'Mehdi Karoui', role: 'CTO · DevFactory', initial: 'M' },
-    { quote: 'Un coworking qui comprend vraiment les freelances. Tarifs clairs, atmosphère calme et un service client irréprochable.', name: 'Nadia Ferchichi', role: 'Designer UX · Freelance', initial: 'N' },
+    { quote: t('landing.testi1Text'), name: t('landing.testi1Name'), role: t('landing.testi1Role'), initial: 'T' },
+    { quote: t('landing.testi2Text'), name: t('landing.testi2Name'), role: t('landing.testi2Role'), initial: 'N' },
+    { quote: t('landing.testi3Text'), name: t('landing.testi3Name'), role: t('landing.testi3Role'), initial: 'M' },
   ];
 
   return (
@@ -588,203 +745,770 @@ export default function Landing({ session }) {
         }
         .sora { font-family:'Sora',sans-serif !important; }
 
-        /* HERO — Background plein écran + slideshow */
+        /* HERO — Background moderne & lumineux avec overlay subtil */
         .hero-wrap {
-          position:relative; min-height:92vh; display:flex; align-items:center; padding-top:90px; overflow:hidden; background:#100f0d;
+          position:relative; min-height:860px; display:flex; align-items:center;
+          padding:130px 0 110px;
+          background:${dark ? '#0c0b0a' : '#f7f5f0'};
+          transition:background .3s ease;
         }
-        .hero-bg { position:absolute; inset:0; z-index:0; }
-        .hero-bg-slide { position:absolute; inset:0; opacity:0; visibility:hidden; transition:opacity 1.4s cubic-bezier(.25,.46,.45,.94), visibility 1.4s; }
-        .hero-bg-slide.active { opacity:1; visibility:visible; }
-        .hero-bg-slide img { width:100%; height:100%; object-fit:cover; display:block; transform:scale(1.02); }
-        .hero-bg-slide.active img.kb-a { animation:kbA 9s ease-out forwards; }
-        .hero-bg-slide.active img.kb-b { animation:kbB 9s ease-out forwards; }
-        @keyframes kbA { from{transform:scale(1.02) translate(0,0)} to{transform:scale(1.2) translate(-1.8%,-1.3%)} }
-        @keyframes kbB { from{transform:scale(1.2) translate(-1.8%,-1.3%)} to{transform:scale(1.03) translate(.6%,.8%)} }
-        .hero-shade { position:absolute; inset:0; z-index:1; background:linear-gradient(105deg, rgba(16,15,13,.9) 30%, rgba(16,15,13,.55) 58%, rgba(16,15,13,.25) 100%); }
-        .hero-vignette { position:absolute; inset:0; z-index:2; background:radial-gradient(ellipse at 20% 60%, rgba(16,15,13,0) 0%, rgba(16,15,13,.45) 100%); }
-        .hero-content { position:relative; z-index:5; width:100%; }
-        .hero-cap-badge { display:inline-flex; align-items:center; gap:8px; background:rgba(251,255,255,.1); backdrop-filter:blur(10px); color:#fff; font-size:.72rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; padding:7px 16px; border-radius:100px; border:1px solid rgba(255,255,255,.18); }
-        .hero-cap-badge .live-dot { background:#2fbe8f; }
-        .hero-title { color:#fff; text-shadow:0 4px 30px rgba(16,15,13,.5); }
-        .hero-title .accent { color:#ff8a3d; }
-        .hero-rule { width:76px; height:4px; border-radius:4px; background:linear-gradient(90deg,#f95d00,#ffb285); margin:20px 0 26px; transform-origin:left center; opacity:0; animation:ruleGrow .9s cubic-bezier(.2,.7,.2,1) 1.05s forwards; box-shadow:0 2px 14px rgba(249,93,0,.5); }
-        @keyframes ruleGrow { from{transform:scaleX(0); opacity:0} to{transform:scaleX(1); opacity:1} }
-        .hero-sub { color:rgba(255,255,255,.82); text-shadow:0 2px 12px rgba(16,15,13,.4); }
-        .hero-meta { color:rgba(255,255,255,.86); }
-        .hero-meta strong { color:#fff; }
-        .hero-fly { animation:heroFly 1s cubic-bezier(.2,.7,.2,1) both; }
-        .hero-fly-1 { animation-delay:.15s; }
-        .hero-fly-2 { animation-delay:.3s; }
-        .hero-fly-3 { animation-delay:.45s; }
-        @keyframes heroFly { from{opacity:0; transform:translateY(26px); filter:blur(8px)} to{opacity:1; transform:translateY(0); filter:blur(0)} }
-        .hero-title .fl-word { display:inline-block; opacity:0; transform:translateY(40px) scale(.96); animation:wordUp .7s cubic-bezier(.2,.7,.2,1) forwards; }
-        .hero-title .fl-accent { display:inline-block; color:#ff8a3d; opacity:0; animation:wordUp .8s .85s cubic-bezier(.2,.7,.2,1) both, accentGlow 3.4s ease-in-out 2s infinite; text-shadow:0 0 18px rgba(255,138,61,.4); }
-        @keyframes wordUp { from{opacity:0; transform:translateY(40px) scale(.96); filter:blur(6px)} to{opacity:1; transform:translateY(0) scale(1); filter:blur(0)} }
-        @keyframes accentGlow { 0%,100%{text-shadow:0 0 14px rgba(255,138,61,.3)} 50%{text-shadow:0 0 34px rgba(255,138,61,.8)} }
-        .btn-primary-hero { background:#f95d00; color:#fff; border:none; border-radius:12px; padding:13px 30px; font-weight:700; font-size:1rem; transition:all .25s; display:inline-flex; align-items:center; gap:10px; box-shadow:0 10px 30px rgba(249,93,0,.4); }
-        .btn-primary-hero:hover { transform:translateY(-2px); box-shadow:0 14px 36px rgba(249,93,0,.5); }
-        .btn-ghost-hero { background:rgba(255,255,255,.06); color:#fff; border:2px solid rgba(255,255,255,.45); border-radius:12px; padding:12px 30px; font-weight:700; font-size:1rem; transition:all .25s; display:inline-flex; align-items:center; gap:10px; backdrop-filter:blur(6px); }
-        .btn-ghost-hero:hover { background:#fff; color:#100f0d; border-color:#fff; }
-        .font-sora { font-family:'Sora',sans-serif !important; }
-        .hero-arrow { position:absolute; top:50%; transform:translateY(-50%); z-index:6; width:40px; height:40px; border-radius:50%; border:1px solid rgba(255,255,255,.35); background:rgba(16,15,13,.32); color:#fff; backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:.8; transition:opacity .25s, background .25s, transform .25s; }
-        .hero-arrow.prev { left:16px; }
-        .hero-arrow.next { right:16px; }
-        .hero-arrow:hover { background:rgba(249,93,0,.85); border-color:transparent; opacity:1; transform:translateY(-50%) scale(1.08); }
-        .live-dot { width:10px; height:10px; border-radius:50%; background:#2fbe8f; animation:pulse 2s infinite; flex-shrink:0; }
-        @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(47,190,143,.45)} 50%{box-shadow:0 0 0 8px rgba(47,190,143,0)} }
+        .hero-bg { position:absolute; inset:0; z-index:0; overflow:hidden; }
+        .hero-bg-slide {
+          position:absolute; inset:0; opacity:0; transition:opacity 1.2s ease-in-out;
+        }
+        .hero-bg-slide.active { opacity:1; }
+        .hero-bg-slide img {
+          width:100%; height:100%; object-fit:cover; display:block;
+          filter:${dark ? 'brightness(0.70) saturate(1.15)' : 'brightness(0.94) saturate(1.08)'};
+          transition:filter .4s ease;
+        }
 
-        /* TRUST */
+        /* Effet Ken Burns lent */
+        @keyframes kbA {
+          0%   { transform: scale(1) translate(0, 0); }
+          50%  { transform: scale(1.06) translate(-1%, -1%); }
+          100% { transform: scale(1) translate(0, 0); }
+        }
+        @keyframes kbB {
+          0%   { transform: scale(1.06) translate(-1%, 0); }
+          50%  { transform: scale(1) translate(1%, -1%); }
+          100% { transform: scale(1.06) translate(-1%, 0); }
+        }
+        .hero-bg-slide.active img.kb-a { animation: kbA 20s ease-in-out infinite alternate; }
+        .hero-bg-slide.active img.kb-b { animation: kbB 20s ease-in-out infinite alternate; }
+
+        .hero-shade {
+          position:absolute; inset:0; z-index:1;
+          background:${dark
+            ? 'linear-gradient(180deg, rgba(12,11,10,0.72) 0%, rgba(12,11,10,0.58) 42%, rgba(12,11,10,0.94) 100%)'
+            : 'linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(255,255,255,0.58) 42%, rgba(255,255,255,0.95) 100%)'};
+          pointer-events:none;
+          transition:background .3s ease;
+        }
+        .hero-vignette {
+          position:absolute; inset:0; z-index:1;
+          background: radial-gradient(ellipse at 45% 25%, rgba(249,93,0,0.12) 0%, transparent 60%);
+          pointer-events:none;
+        }
+
+        .hero-content { position:relative; z-index:2; }
+
+        /* Animation Fly-in / stagger du hero */
+        @keyframes heroFlyIn {
+          0%   { opacity:0; transform:translateY(22px); filter:blur(4px); }
+          100% { opacity:1; transform:translateY(0); filter:blur(0); }
+        }
+        .hero-fly { animation: heroFlyIn .8s cubic-bezier(.16,1,.3,1) both; }
+        .hero-fly-1 { animation-delay:.15s; }
+        .hero-fly-2 { animation-delay:.35s; }
+        .hero-fly-3 { animation-delay:.5s; }
+
+        /* Badge live */
+        .hero-live-pill {
+          display:inline-flex; align-items:center; gap:9px;
+          background:${dark ? 'rgba(249,93,0,0.14)' : 'rgba(255,255,255,0.88)'};
+          border:1px solid ${dark ? 'rgba(249,93,0,0.35)' : 'rgba(249,93,0,0.3)'};
+          box-shadow:0 4px 14px rgba(0,0,0,0.06);
+          padding:6px 16px; border-radius:999px;
+          backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+        }
+        .live-pulse-dot {
+          width:8px; height:8px; border-radius:50%;
+          background:#10b981;
+          box-shadow:0 0 0 0 rgba(16,185,129,0.7);
+          animation:liveGreenPulse 2s infinite;
+        }
+        @keyframes liveGreenPulse {
+          0%   { box-shadow:0 0 0 0 rgba(16,185,129,0.7); }
+          70%  { box-shadow:0 0 0 8px rgba(16,185,129,0); }
+          100% { box-shadow:0 0 0 0 rgba(16,185,129,0); }
+        }
+        .live-pill-text {
+          font-size:.76rem; font-weight:700;
+          letter-spacing:.05em; text-transform:uppercase;
+          color:${dark ? '#ffb599' : '#c2410c'};
+        }
+
+        /* Titre rotatif H1 */
+        .hero-title-h1 {
+          font-family:'Sora',sans-serif;
+          font-weight:800;
+          color:${dark ? '#ffffff' : '#0f172a'};
+          font-size:clamp(2.1rem, 4.4vw, 3.5rem);
+          line-height:1.15;
+          letter-spacing:-.025em;
+          margin-top:.85rem;
+          margin-bottom:.85rem;
+          max-width:880px;
+        }
+        .rotating-word-container {
+          display:inline-block;
+          position:relative;
+          vertical-align:bottom;
+          overflow:hidden;
+          height:1.24em;
+          min-width:180px;
+        }
+        @media(min-width:640px) {
+          .rotating-word-container { min-width:270px; }
+        }
+        .rotating-word-active {
+          display:inline-block;
+          background:linear-gradient(135deg, #f95d00 0%, #ff8a3d 100%);
+          -webkit-background-clip:text;
+          -webkit-text-fill-color:transparent;
+          animation:wordSlideUp .45s cubic-bezier(.16,1,.3,1) both;
+          font-weight:900;
+        }
+        @keyframes wordSlideUp {
+          0%   { transform:translateY(100%); opacity:0; filter:blur(4px); }
+          100% { transform:translateY(0); opacity:1; filter:blur(0); }
+        }
+        .hero-sub-text {
+          color:${dark ? '#cbd5e1' : '#334155'};
+          font-size:1.05rem;
+          line-height:1.68;
+          max-width:680px;
+        }
+
+        /* Onglets d'intention (Segmented Tabs) */
+        .hero-tabs-wrapper { display:flex; align-items:center; }
+        .hero-tabs-dock {
+          display:inline-flex; align-items:center; padding:5px; gap:4px;
+          background:${dark ? 'rgba(30, 26, 23, 0.78)' : 'rgba(255, 255, 255, 0.92)'};
+          border:1px solid ${dark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(16, 15, 13, 0.12)'};
+          border-radius:999px;
+          backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+          box-shadow:0 8px 24px rgba(0, 0, 0, 0.14);
+        }
+        .hero-tab-btn {
+          display:inline-flex; align-items:center; gap:8px;
+          padding:9px 18px; border-radius:999px;
+          font-size:.86rem; font-weight:700;
+          border:none; background:transparent;
+          color:${dark ? '#cbd5e1' : '#475569'};
+          cursor:pointer;
+          transition:all .22s cubic-bezier(0.16, 1, 0.3, 1);
+          white-space:nowrap;
+        }
+        .hero-tab-btn:hover {
+          color:${dark ? '#ffffff' : '#0f172a'};
+          background:${dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)'};
+        }
+        .hero-tab-btn.active {
+          background:#f95d00 !important;
+          color:#ffffff !important;
+          box-shadow:0 4px 16px rgba(249, 93, 0, 0.4);
+        }
+        .hero-tab-badge {
+          font-size:.62rem; font-weight:800;
+          letter-spacing:.05em; padding:2px 7px;
+          border-radius:999px; background:rgba(255, 255, 255, 0.22);
+          color:#ffffff;
+        }
+
+        /* Moteur de recherche Hero — Dock Unifié & Élégant */
+        .hero-search-dock {
+          background:#ffffff;
+          border-radius:24px;
+          box-shadow:0 24px 60px -12px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.85);
+          transition:all .25s ease;
+          position:relative;
+          overflow:hidden;
+        }
+        .dark .hero-search-dock {
+          background:rgba(26,24,22,0.96);
+          box-shadow:0 24px 60px -12px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.12);
+        }
+
+        .hero-dock-fields {
+          display:grid;
+          grid-template-columns:1.35fr 1.6fr 1.15fr 0.95fr auto auto;
+          align-items:center;
+          padding:8px 12px;
+          gap:6px;
+        }
+        @media(max-width:1199px) {
+          .hero-dock-fields {
+            grid-template-columns:1fr 1fr;
+            gap:10px; padding:14px;
+          }
+        }
+        @media(max-width:640px) {
+          .hero-dock-fields {
+            grid-template-columns:1fr;
+            gap:10px; padding:14px;
+          }
+        }
+
+        .hero-dock-cell {
+          display:flex; align-items:center; gap:10px;
+          padding:10px 14px; height:58px;
+          border-radius:14px;
+          transition:background .18s ease;
+          position:relative;
+        }
+        .hero-dock-cell:hover, .hero-dock-cell:focus-within {
+          background:${dark ? 'rgba(255,255,255,0.06)' : 'rgba(249,93,0,0.04)'};
+        }
+        @media(min-width:1200px) {
+          .hero-dock-cell:not(:last-child):not(.no-divider)::after {
+            content:''; position:absolute; right:0; top:20%; height:60%; width:1px;
+            background:${dark ? 'rgba(255,255,255,0.1)' : 'rgba(16,15,13,0.08)'};
+          }
+        }
+        @media(max-width:1199px) {
+          .hero-dock-cell {
+            border:1px solid ${dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,13,35,0.08)'};
+          }
+        }
+
+        .hero-cell-icon {
+          width:36px; height:36px; border-radius:10px;
+          background:rgba(249,93,0,0.1); color:#f95d00;
+          display:flex; align-items:center; justify-content:center;
+          flex-shrink:0;
+        }
+        .hero-cell-meta { flex:1; min-width:0; }
+        .hero-cell-label {
+          font-size:.65rem; font-weight:800;
+          text-transform:uppercase; letter-spacing:.08em;
+          color:${dark ? '#94a3b8' : '#64748b'};
+          display:block; line-height:1.1; margin-bottom:2px;
+        }
+        .hero-cell-input, .hero-cell-select {
+          border:none !important; outline:none !important;
+          background:transparent !important; width:100%;
+          font-size:.9rem; font-weight:600;
+          color:${dark ? '#fbffff' : '#0f172a'};
+          padding:0;
+        }
+        .hero-cell-input::placeholder {
+          color:${dark ? '#64748b' : '#94a3b8'}; font-weight:500; font-size:.85rem;
+        }
+        .hero-cell-select {
+          cursor:pointer; appearance:none; -webkit-appearance:none;
+          padding-right:18px; font-size:.85rem;
+          background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23f95d00' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+          background-repeat:no-repeat; background-position:right center;
+        }
+
+        /* Bouton Filtres trigger */
+        .btn-filter-trigger {
+          height:52px; padding:0 18px;
+          border-radius:14px;
+          border:1.5px solid ${dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'};
+          background:${dark ? 'rgba(255,255,255,0.06)' : '#ffffff'};
+          color:${dark ? '#cbd5e1' : '#334155'};
+          font-weight:700; font-size:.88rem;
+          display:inline-flex; align-items:center; gap:8px;
+          cursor:pointer; transition:all .2s ease;
+          user-select:none;
+        }
+        .btn-filter-trigger:hover {
+          border-color:#f95d00; color:#f95d00;
+          background:${dark ? 'rgba(249,93,0,0.1)' : 'rgba(249,93,0,0.04)'};
+        }
+        .btn-filter-trigger.active {
+          border-color:#f95d00;
+          background:${dark ? 'rgba(249,93,0,0.18)' : '#fff7ed'};
+          color:#ea580c;
+        }
+        .filter-badge-count {
+          min-width:20px; height:20px; padding:0 6px; border-radius:10px;
+          background:#f95d00; color:#fff;
+          font-size:.72rem; font-weight:800;
+          display:inline-flex; align-items:center; justify-content:center;
+        }
+
+        /* CTA principal shimmer */
+        .btn-hero-cta {
+          height:52px; padding:0 24px;
+          border-radius:14px; border:none;
+          background:linear-gradient(135deg, #f95d00 0%, #ff7624 100%);
+          color:#ffffff !important; font-weight:700; font-size:.95rem;
+          cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+          gap:8px; box-shadow:0 8px 24px rgba(249,93,0,0.38);
+          transition:all .22s ease; position:relative; overflow:hidden;
+          white-space:nowrap;
+        }
+        .btn-hero-cta::before {
+          content:''; position:absolute; top:0; left:-100%; width:60%; height:100%;
+          background:linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+          transform:skewX(-25deg); transition:all .75s ease;
+        }
+        .btn-hero-cta:hover {
+          background:linear-gradient(135deg, #ff7624 0%, #f95d00 100%);
+          transform:translateY(-1px) scale(1.02);
+          box-shadow:0 12px 30px rgba(249,93,0,0.52);
+        }
+        .btn-hero-cta:hover::before { left:150%; }
+        .btn-hero-cta:hover .cta-arrow { transform:translateX(3px); }
+        .cta-arrow { transition:transform .2s ease; }
+
+        /* Tiroir de filtres intégrés dans le dock — Version Premium */
+        .hero-dock-expandable-filters {
+          padding: 22px 26px 20px;
+          border-top: 1.5px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(249,93,0,0.12)'};
+          background: ${dark ? 'linear-gradient(180deg, rgba(28,24,21,0.98) 0%, rgba(19,17,15,0.99) 100%)' : 'linear-gradient(180deg, #ffffff 0%, #faf8f5 100%)'};
+          border-bottom-left-radius: 24px;
+          border-bottom-right-radius: 24px;
+          animation: expandFilterTray .25s cubic-bezier(.16,1,.3,1) both;
+          box-shadow: ${dark ? '0 12px 32px rgba(0,0,0,0.45)' : '0 16px 36px rgba(0,0,0,0.06)'};
+        }
+        @keyframes expandFilterTray {
+          0% { opacity: 0; transform: translateY(-8px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+
+        .filter-drawer-header {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 18px;
+          padding-bottom: 14px;
+          border-bottom: 1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'};
+        }
+        .filter-drawer-title-group {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .filter-drawer-icon-box {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          background: ${dark ? 'rgba(249,93,0,0.18)' : '#fff3eb'};
+          color: #f95d00;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(249,93,0,0.2);
+          flex-shrink: 0;
+        }
+        .filter-drawer-title {
+          font-family: 'Sora', sans-serif;
+          font-size: .92rem;
+          font-weight: 800;
+          letter-spacing: .01em;
+          color: ${dark ? '#f8fafc' : '#0f172a'};
+          margin: 0 0 2px 0;
+        }
+        .filter-drawer-subtitle {
+          font-size: .78rem;
+          color: ${dark ? '#94a3b8' : '#64748b'};
+          margin: 0;
+        }
+
+        .btn-filter-reset {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: transparent;
+          border: none;
+          color: #f95d00;
+          font-size: .78rem;
+          font-weight: 700;
+          cursor: pointer;
+          padding: 6px 10px;
+          border-radius: 8px;
+          transition: all .2s;
+        }
+        .btn-filter-reset:hover {
+          background: rgba(249,93,0,0.1);
+        }
+        .btn-filter-close-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: ${dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'};
+          border: 1px solid ${dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'};
+          color: ${dark ? '#cbd5e1' : '#475569'};
+          font-size: .78rem;
+          font-weight: 700;
+          cursor: pointer;
+          padding: 6px 14px;
+          border-radius: 100px;
+          transition: all .2s;
+        }
+        .btn-filter-close-pill:hover {
+          color: #f95d00;
+          border-color: #f95d00;
+          background: rgba(249,93,0,0.06);
+        }
+
+        .filter-chips-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-bottom: 16px;
+        }
+        .filter-chip-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 9px;
+          padding: 9px 16px;
+          border-radius: 14px;
+          font-size: .86rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all .2s cubic-bezier(0.16, 1, 0.3, 1);
+          background: ${dark ? 'rgba(255,255,255,0.05)' : '#ffffff'};
+          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'};
+          color: ${dark ? '#cbd5e1' : '#334155'};
+          box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+          user-select: none;
+        }
+        .filter-chip-pill:hover {
+          border-color: #f95d00;
+          color: #f95d00;
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(249,93,0,0.14);
+        }
+        .filter-chip-pill .chip-icon {
+          font-size: 19px;
+          color: ${dark ? '#94a3b8' : '#64748b'};
+          transition: color .2s;
+        }
+        .filter-chip-pill:hover .chip-icon {
+          color: #f95d00;
+        }
+        .filter-chip-pill .chip-plus-badge {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'};
+          color: ${dark ? '#94a3b8' : '#64748b'};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-left: 2px;
+          transition: all .2s;
+        }
+        .filter-chip-pill:hover .chip-plus-badge {
+          background: rgba(249,93,0,0.15);
+          color: #f95d00;
+        }
+        .filter-chip-pill.active {
+          background: ${dark ? 'rgba(249,93,0,0.18)' : '#fff7ed'};
+          border-color: #f95d00;
+          color: #ea580c;
+          font-weight: 700;
+          box-shadow: 0 4px 14px rgba(249,93,0,0.2);
+          transform: translateY(-1px);
+        }
+        .filter-chip-pill.active .chip-icon {
+          color: #f95d00;
+        }
+        .filter-chip-pill.active .chip-check-badge {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #f95d00;
+          color: #ffffff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-left: 2px;
+        }
+
+        .filter-timeslot-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 12px;
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: ${dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'};
+          border: 1px dashed ${dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'};
+          margin-bottom: 14px;
+        }
+        .filter-timeslot-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-size: .82rem;
+          font-weight: 700;
+          color: ${dark ? '#cbd5e1' : '#334155'};
+        }
+        .filter-time-capsule {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: ${dark ? 'rgba(255,255,255,0.06)' : '#ffffff'};
+          border: 1px solid ${dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)'};
+          padding: 5px 10px;
+          border-radius: 8px;
+        }
+        .filter-time-input {
+          border: none;
+          background: transparent;
+          font-size: .82rem;
+          font-weight: 700;
+          color: ${dark ? '#f8fafc' : '#0f172a'};
+          outline: none;
+          cursor: pointer;
+        }
+
+        .filter-drawer-footer {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding-top: 14px;
+          border-top: 1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'};
+        }
+        .filter-counter-text {
+          font-size: .82rem;
+          font-weight: 600;
+          color: ${dark ? '#94a3b8' : '#64748b'};
+        }
+        .btn-apply-filter {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          height: 40px;
+          padding: 0 20px;
+          border-radius: 12px;
+          border: none;
+          background: linear-gradient(135deg, #f95d00 0%, #ff7624 100%);
+          color: #ffffff;
+          font-weight: 700;
+          font-size: .86rem;
+          cursor: pointer;
+          box-shadow: 0 4px 14px rgba(249,93,0,0.3);
+          transition: all .2s;
+        }
+        .btn-apply-filter:hover {
+          background: linear-gradient(135deg, #ff7624 0%, #f95d00 100%);
+          transform: translateY(-1px);
+          box-shadow: 0 6px 20px rgba(249,93,0,0.45);
+        }
+
+        /* Formations dock */
+        .formations-dock-fields {
+          display:grid;
+          grid-template-columns:1.5fr 1.2fr 1fr auto;
+          align-items:center;
+          padding:8px 12px;
+          gap:8px;
+        }
+        @media(max-width:991px) {
+          .formations-dock-fields { grid-template-columns:1fr; }
+        }
+
+        /* B2B Card */
+        .b2b-hero-card {
+          padding:28px 32px;
+          background:${dark ? 'rgba(26,24,22,0.96)' : '#ffffff'};
+          border-radius:24px;
+          box-shadow:0 24px 60px -12px rgba(0,0,0,0.35), 0 0 0 1px rgba(249,93,0,0.2);
+        }
+        .b2b-card-badge {
+          display:inline-flex; align-items:center; gap:6px;
+          background:rgba(249,93,0,0.12); color:#f95d00;
+          border:1px solid rgba(249,93,0,0.25);
+          font-size:.72rem; font-weight:800; text-transform:uppercase;
+          letter-spacing:.08em; padding:4px 12px; border-radius:999px;
+        }
+
+        /* Barre de réassurance Hero */
+        .hero-reassurance-bar {
+          display:flex; flex-wrap:wrap; align-items:center; gap:14px;
+          padding:10px 20px; border-radius:999px;
+          background:${dark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.78)'};
+          backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+          border:1px solid ${dark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(16, 15, 13, 0.08)'};
+          box-shadow:0 6px 18px rgba(0,0,0,0.06);
+          width:fit-content;
+        }
+        .reassurance-item {
+          display:inline-flex; align-items:center; gap:6px;
+          font-size:.78rem; font-weight:700;
+          color:${dark ? '#e2e8f0' : '#1e293b'};
+        }
+        .reassurance-separator {
+          width:4px; height:4px; border-radius:50%;
+          background:rgba(249, 93, 0, 0.6);
+        }
+        @media(max-width:640px) {
+          .hero-reassurance-bar {
+            border-radius:18px; flex-direction:column; align-items:flex-start;
+            gap:8px; padding:12px 18px;
+          }
+          .reassurance-separator { display:none; }
+        }
+
+        /* Boutons d'action B2B Hero */
+        .btn-primary-hero {
+          background:linear-gradient(135deg, #f95d00 0%, #ff7624 100%);
+          color:#ffffff !important; border:none; border-radius:14px;
+          padding:13px 26px; font-weight:700; font-size:.95rem;
+          text-decoration:none !important; transition:all .25s ease;
+          display:inline-flex; align-items:center; gap:8px;
+          box-shadow:0 8px 24px rgba(249,93,0,.45);
+        }
+        .btn-primary-hero:hover {
+          background:linear-gradient(135deg, #ff7624 0%, #f95d00 100%);
+          transform:translateY(-2px);
+          box-shadow:0 14px 32px rgba(249,93,0,.6);
+        }
+        .btn-ghost-hero {
+          background:${dark ? 'rgba(255,255,255,0.08)' : '#ffffff'};
+          color:${dark ? '#ffffff' : '#100f0d'} !important;
+          border:1.5px solid ${dark ? 'rgba(255,255,255,0.2)' : 'rgba(16,15,13,0.15)'};
+          border-radius:14px; padding:13px 24px; font-weight:700;
+          font-size:.95rem; text-decoration:none !important;
+          transition:all .25s ease; display:inline-flex;
+          align-items:center; gap:8px; box-shadow:0 6px 18px rgba(0,0,0,.08);
+        }
+        .btn-ghost-hero:hover {
+          border-color:#f95d00; color:#f95d00 !important;
+          transform:translateY(-2px);
+        }
+
+        /* Flèches slideshow */
+        .hero-arrow {
+          position:absolute; top:50%; transform:translateY(-50%); z-index:2;
+          width:44px; height:44px; border-radius:50%;
+          background:rgba(16,15,13,.45); border:1.5px solid rgba(255,255,255,.28);
+          color:#fff; display:flex; align-items:center; justify-content:center;
+          cursor:pointer; transition:all .2s; backdrop-filter:blur(8px);
+          -webkit-backdrop-filter:blur(8px);
+        }
+        .hero-arrow:hover {
+          background:#f95d00; border-color:#f95d00;
+          transform:translateY(-50%) scale(1.08);
+          box-shadow:0 8px 22px rgba(249,93,0,.45);
+        }
+        .hero-arrow.prev { left:24px; }
+        .hero-arrow.next { right:24px; }
+
+        /* TRUST BAR */
         .trust-bar {
           background: ${dark ? '#1a1612' : '#ffedd8'};
           border-top: 1px solid ${dark ? 'rgba(249,93,0,.2)' : 'rgba(249,93,0,.12)'};
           border-bottom: 1px solid ${dark ? 'rgba(249,93,0,.2)' : 'rgba(249,93,0,.12)'};
           transition: background .3s ease;
         }
-        .trust-name {
-          font-family:'Sora',sans-serif;
-          font-weight:700;
-          font-size:1.05rem;
-          color: ${dark ? '#ffdcd0' : '#100f0d'};
-          opacity:.6;
-          transition:opacity .2s;
-          cursor:default;
-          text-decoration:none;
+        .trust-logo-card {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 96px;
+          height: 96px;
+          border-radius: 50%;
+          padding: 8px;
+          background: transparent !important;
+          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.18)' : 'rgba(16,15,13,0.12)'};
+          overflow: hidden;
+          transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+          text-decoration: none;
         }
-        .trust-name:hover { opacity:1; }
+        .trust-logo-card:hover {
+          transform: translateY(-3px) scale(1.05);
+          border-color: #f95d00;
+          box-shadow: 0 8px 24px rgba(249,93,0,0.22);
+        }
 
         /* KPI */
         .kpi-strip { background:#100f0d; }
 
         /* SECTION BADGE */
         .sec-badge {
-          display:inline-block;
-          background: ${dark ? 'rgba(249,93,0,.2)' : '#ffedd8'};
-          color: ${dark ? '#ffb599' : '#100f0d'};
-          font-size:.7rem;
-          font-weight:700;
-          letter-spacing:.1em;
-          text-transform:uppercase;
-          padding:6px 18px;
-          border-radius:100px;
-          margin-bottom:1rem;
+          display:inline-block; font-size:.72rem; font-weight:800;
+          letter-spacing:.12em; text-transform:uppercase;
+          color:#f95d00; background:rgba(249,93,0,.12);
+          padding:5px 14px; border-radius:100px; margin-bottom:.75rem;
         }
-        .sec-badge.inv { background:rgba(249,93,0,.15); color:#f95d00; }
+        .sec-badge.inv {
+          background:rgba(249,93,0,.22); color:#ffb599; border:1px solid rgba(249,93,0,.45);
+        }
 
-        /* SPACES */
-        .space-card { position:relative; border-radius:20px; overflow:hidden; cursor:pointer; }
-        .space-card img { width:100%; height:100%; object-fit:cover; transition:transform .6s ease; display:block; }
-        .space-card:hover img { transform:scale(1.06); }
-        .space-overlay { position:absolute; inset:0; background:linear-gradient(to top,rgba(16,15,13,.92) 0%,transparent 65%); }
-        .space-body { position:absolute; bottom:0; left:0; right:0; padding:1.25rem; }
+        /* SPACE CARD */
+        .space-card {
+          position:relative; border-radius:24px; overflow:hidden;
+          border:1px solid rgba(255,255,255,.08);
+          box-shadow:0 8px 32px rgba(0,0,0,.35);
+          transition:transform .3s ease, box-shadow .3s ease;
+        }
+        .space-card:hover { transform:translateY(-6px); box-shadow:0 16px 48px rgba(249,93,0,.25); }
+        .space-card img { width:100%; height:100%; object-fit:cover; transition:transform .6s ease; }
+        .space-card:hover img { transform:scale(1.04); }
+        .space-overlay {
+          position:absolute; inset:0;
+          background:linear-gradient(180deg, rgba(16,15,13,.1) 0%, rgba(16,15,13,.75) 65%, #100f0d 100%);
+        }
+        .space-body { position:absolute; bottom:0; left:0; right:0; padding:1.5rem; z-index:3; }
 
         /* CTA SECTION */
-        .cta-sec { background:linear-gradient(135deg,#100f0d 0%,#26170a 100%); position:relative; overflow:hidden; }
-        .cta-grid { position:absolute; inset:0; background-image:radial-gradient(circle at 2px 2px,rgba(251,255,255,.05) 1px,transparent 0); background-size:40px 40px; }
+        .cta-sec {
+          background: linear-gradient(135deg, #100f0d 0%, #1f140a 100%);
+          position:relative; overflow:hidden;
+        }
+        .cta-grid {
+          position:absolute; inset:0;
+          background-image: linear-gradient(to right, rgba(249,93,0,.08) 1px, transparent 1px),
+                            linear-gradient(to bottom, rgba(249,93,0,.08) 1px, transparent 1px);
+          background-size:48px 48px; pointer-events:none;
+        }
 
-        /* CONTACT */
+        /* INPUT */
         .ec-input {
-          width:100%;
-          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.15)' : '#cfcac3'};
-          border-radius:12px;
-          padding:13px 16px;
-          font-size:.9rem;
-          font-family:'Inter',sans-serif;
-          background: ${dark ? '#100f0d' : '#ffffff'};
-          color: ${dark ? '#fbffff' : '#100f0d'};
-          transition:border-color .2s,box-shadow .2s,background .3s;
+          width:100%; padding:12px 16px; border-radius:12px;
+          border:1.5px solid ${EC.outline};
+          background:${EC.cardBg}; color:${EC.navy};
+          font-size:.9rem; font-family:'Inter',sans-serif;
+          transition:all .2s;
         }
         .ec-input:focus {
-          outline:none;
-          border-color:#f95d00;
-          box-shadow:0 0 0 4px rgba(249,93,0,.15);
+          outline:none; border-color:${EC.cobalt};
+          box-shadow:0 0 0 3px rgba(249,93,0,.15);
         }
-        .ec-input::placeholder { color: ${dark ? '#8e8a83' : '#8e8a83'}; }
-
-        /* FOOTER */
-        .ec-footer { background:#0d1117; }
-        .ec-footer a { color:#ffffff !important; text-decoration:none; font-size:.875rem; transition:color .2s; }
-        .ec-footer a:hover { color:#f95d00 !important; }
-        .ec-footer p { color:#ffffff !important; }
-        .ec-footer h6 { color:#ffffff !important; }
-        .soc-btn { width:38px; height:38px; border-radius:50%; background:rgba(251,255,255,.08); display:inline-flex; align-items:center; justify-content:center; color:#a3a09b; text-decoration:none; transition:all .2s; margin-right:8px; }
-        .soc-btn:hover { background:#f95d00; color:#fbffff; }
 
         /* BACK TO TOP */
         .back-to-top {
-          position:fixed;
-          bottom:24px;
-          right:24px;
-          z-index:90;
-          width:46px;
-          height:46px;
-          border-radius:50%;
-          background: ${dark ? '#2e2c29' : '#ffffff'};
-          color: ${dark ? '#fbffff' : '#100f0d'};
-          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'};
-          box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          cursor:pointer;
-          transition:all .25s ease;
+          position:fixed; bottom:28px; right:28px; z-index:99;
+          width:50px; height:50px; border-radius:50%;
+          background: #f95d00;
+          color:#ffffff; border:none; box-shadow:0 6px 20px rgba(249,93,0,.45);
+          display:flex; align-items:center; justify-content:center;
+          cursor:pointer; transition:all .25s ease;
         }
         .back-to-top:hover {
-          background:#f95d00;
-          color:#ffffff;
-          border-color:#f95d00;
-          transform:translateY(-3px);
+          background: #ff7624;
+          transform: translateY(-3px) scale(1.05);
+          box-shadow:0 10px 28px rgba(249,93,0,.6);
         }
 
-        /* ANIMATIONS */
-        @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-        .fa { animation:fadeUp .75s ease both; }
-        .fa-1 { animation-delay:.12s; }
-        .fa-2 { animation-delay:.24s; }
+        /* BADGE PROMO */
+        @keyframes promoPulse {
+          0%,100% { box-shadow:0 4px 14px rgba(249,93,0,.55); }
+          50%     { box-shadow:0 6px 22px rgba(249,93,0,.85); }
+        }
 
-        @media(max-width:767px) {
-          .hero-wrap { min-height:86vh; padding:90px 0 60px; }
-          .hero-bg-slide img.kb-a, .hero-bg-slide img.kb-b { animation:none; }
-          .hero-shade { background:linear-gradient(180deg, rgba(16,15,13,.82) 0%, rgba(16,15,13,.65) 100%); }
+        @media(max-width:991px) {
           .hero-arrow { display:none; }
         }
         @media(max-width:479px) {
           .hero-wrap { min-height:80vh; padding:80px 0 48px; }
           .btn-primary-hero, .btn-ghost-hero { padding:11px 20px; font-size:.9rem; }
         }
-        @media (prefers-reduced-motion: reduce) {
-          .hero-bg-slide.active img.kb-a, .hero-bg-slide.active img.kb-b { animation:none; }
-          .hero-bg-slide { transition:none; }
-          .hero-title .fl-word, .hero-title .fl-accent, .hero-fly { animation:none; opacity:1; transform:none; filter:none; }
-        }
-
-        /* BADGE PROMO */
-        @keyframes promoPulse {
-          0%,100% { box-shadow:0 4px 14px rgba(249,93,0,.55); }
-          50%      { box-shadow:0 4px 22px rgba(249,93,0,.9); }
-        }
-
-        /* FOOTER LOGO responsive */
-        @media (max-width: 575px) {
-          .ec-footer-logo { transform: scale(1.6) !important; }
-        }
-
-        /* CONTACT FORM cols on mobile */
-        @media (max-width: 575px) {
-          .ec-contact-grid { grid-template-columns: 1fr !important; }
-        }
-
-        /* Space card address/phone truncate on small screens */
-        @media (max-width: 479px) {
-          .space-body p { font-size:.82rem; }
-          .space-body h3 { font-size:1rem; }
-        }
       `}</style>
 
       {/* ══ NAVBAR ══ */}
       <Navbar session={session} />
 
-      {/* ══ HERO ══ */}
-      <section className="hero-wrap">
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 1 — HERO & TROUVER UN ESPACE (#search / #marketplace / #top)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="search" className="hero-wrap">
+        <span id="marketplace" style={{ position: 'absolute', top: 0 }} />
+        <span id="top" style={{ position: 'absolute', top: 0 }} />
+
         {/* Slideshow plein écran en arrière-plan */}
         <div className="hero-bg" onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}>
           {HERO_SLIDES.map((s, i) => (
@@ -802,46 +1526,444 @@ export default function Landing({ session }) {
         <div className="hero-vignette" />
 
         <div className="hero-content container">
-          <div className="row align-items-center g-5">
-            <div className="col-lg-7">
-              <span className="hero-cap-badge hero-fly hero-fly-1">
-                <span className="live-dot" /> Coworking Premium · Tunis
-              </span>
-
-              <h1 className="sora fw-bold hero-title mb-0" style={{ fontSize: 'clamp(2.4rem,5.4vw,4rem)', lineHeight: 1.12, letterSpacing: '-.025em', marginTop: '1.1rem' }}>
-                {'Réservez votre espace idéal en'.split(' ').map((w, wi) => (
-                  <span key={wi} className="fl-word" style={{ animationDelay: `${0.4 + wi * 0.08}s` }}>{w}&nbsp;</span>
-                ))}
-                <span className="fl-accent">3&nbsp;clics</span>
-              </h1>
-              <div className="hero-rule" />
-
-              <p className="hero-sub hero-fly hero-fly-2 mb-4" style={{ fontSize: '1.15rem', lineHeight: 1.8, maxWidth: 540 }}>
-                <span className="hero-fly hero-fly-2">DeskyWork offre des espaces de travail conçus pour les professionnels ambitieux.</span>
-                <br className="d-none d-md-block" />
-                <span className="hero-fly hero-fly-2" style={{ animationDelay: '.55s' }}>Rejoignez une communauté d'excellence au cœur de Tunis.</span>
-              </p>
-
-              <div className="d-flex align-items-center gap-3 mb-4 hero-fly hero-fly-2">
-                <div className="d-flex">
-                  {['S', 'M', 'N', 'K'].map((l, i) => (
-                    <div key={i} style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(255,255,255,.18)', border: '2px solid rgba(255,255,255,.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '.78rem', marginLeft: i > 0 ? -8 : 0 }}>{l}</div>
-                  ))}
-                </div>
-                <p className="hero-meta mb-0" style={{ fontSize: '.9rem' }}>
-                  <strong>+200 membres</strong> nous font confiance
-                </p>
+          <div className="row align-items-center g-4">
+            <div className="col-lg-12">
+              {/* Badge live temps réel */}
+              <div className="hero-live-pill mb-3 hero-fly hero-fly-1">
+                <span className="live-pulse-dot" />
+                <span className="live-pill-text">{t('landing.liveBadge')}</span>
               </div>
 
-              <div className="d-flex flex-wrap gap-3 hero-fly hero-fly-3">
-                <Link to={session ? '/dashboard' : '/book-guest'} className="btn-primary-hero">
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>event_available</span>
-                  {session ? 'Accéder au Portail' : 'Réserver sans compte'}
-                </Link>
-                <Link to="/register" className="btn-ghost-hero">
-                  Devenir membre
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
-                </Link>
+              {/* H1 avec rotation de mot-clé fluide */}
+              <h1 className="hero-title-h1 hero-fly hero-fly-1">
+                {t('landing.heroTitlePrefix')}&nbsp;
+                <span className="rotating-word-container">
+                  <span key={currentWordIdx} className="rotating-word-active">
+                    {rotatingWords[currentWordIdx]}
+                  </span>
+                </span>&nbsp;
+                {t('landing.heroTitleSuffix')}
+              </h1>
+
+              {/* Sous-titre bénéfice */}
+              <p className="hero-sub-text hero-fly hero-fly-2 mb-4">
+                {t('landing.heroSubtext')}
+              </p>
+
+              {/* ── SYSTÈME D'ONGLETS D'INTENTION (Segmented Tabs) ── */}
+              <div className="hero-tabs-wrapper mb-3 hero-fly hero-fly-2">
+                <div className="hero-tabs-dock">
+                  <button
+                    type="button"
+                    onClick={() => setActiveHeroTab('espaces')}
+                    className={`hero-tab-btn ${activeHeroTab === 'espaces' ? 'active' : ''}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>meeting_room</span>
+                    <span>{t('landing.tabSpaces')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveHeroTab('formations')}
+                    className={`hero-tab-btn ${activeHeroTab === 'formations' ? 'active' : ''}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>school</span>
+                    <span>{t('landing.tabWorkshops')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveHeroTab('b2b')}
+                    className={`hero-tab-btn ${activeHeroTab === 'b2b' ? 'active' : ''}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>domain</span>
+                    <span>{t('landing.tabB2B')}</span>
+                    <span className="hero-tab-badge">PRO</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* ── CONTENU DYNAMIQUE SELON L'ONGLET SÉLECTIONNÉ ── */}
+              {activeHeroTab === 'espaces' && (
+                <div className="hero-fly hero-fly-3" style={{ maxWidth: 1080 }}>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      setShowSearchResults(true);
+                      const el = document.getElementById('search-results') || document.getElementById('espaces') || document.getElementById('about');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="hero-search-dock"
+                  >
+                    <div className="hero-dock-fields">
+                      {/* 1. Ville */}
+                      <div className="hero-dock-cell">
+                        <div className="hero-cell-icon">
+                          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>location_on</span>
+                        </div>
+                        <div className="hero-cell-meta">
+                          <label className="hero-cell-label">{t('landing.city')}</label>
+                          <input
+                            list="deskywork-villes"
+                            value={searchVille}
+                            onChange={(e) => setSearchVille(e.target.value)}
+                            placeholder="Tunis, Sousse, Sfax..."
+                            className="hero-cell-input"
+                          />
+                          <datalist id="deskywork-villes">
+                            {villesDisponibles.map((v) => <option key={v} value={v} />)}
+                          </datalist>
+                        </div>
+                      </div>
+
+                      {/* 2. Typologie d'espace */}
+                      <div className="hero-dock-cell">
+                        <div className="hero-cell-icon">
+                          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>meeting_room</span>
+                        </div>
+                        <div className="hero-cell-meta">
+                          <label className="hero-cell-label">{t('landing.spaceType')}</label>
+                          <select
+                            value={searchType}
+                            onChange={(e) => setSearchType(e.target.value)}
+                            className="hero-cell-select"
+                          >
+                            <option value="">{t('landing.allTypes')}</option>
+                            {SPACE_TYPES.map((st) => (
+                              <option key={st.value} value={st.value}>
+                                {lang === 'en' ? (st.labelEn || st.label) : st.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* 3. Date */}
+                      <div className="hero-dock-cell">
+                        <div className="hero-cell-icon">
+                          <span className="material-symbols-outlined" style={{ fontSize: 19 }}>calendar_month</span>
+                        </div>
+                        <div className="hero-cell-meta">
+                          <label className="hero-cell-label">{t('landing.date')}</label>
+                          <input
+                            type="date"
+                            value={searchDate}
+                            onChange={(e) => setSearchDate(e.target.value)}
+                            className="hero-cell-input"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4. Capacité / Personnes */}
+                      <div className="hero-dock-cell no-divider">
+                        <div className="hero-cell-icon">
+                          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>group</span>
+                        </div>
+                        <div className="hero-cell-meta">
+                          <label className="hero-cell-label">{t('landing.capacity')}</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={searchCapacite}
+                            onChange={(e) => setSearchCapacite(e.target.value)}
+                            placeholder="2 pers."
+                            className="hero-cell-input"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 5. Bouton Filtres trigger */}
+                      <div style={{ padding: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowFilterPopover(!showFilterPopover)}
+                          className={`btn-filter-trigger ${showFilterPopover || searchEquipements.length > 0 ? 'active' : ''}`}
+                          title={(t('landing.filters') || 'Filtres').replace(':', '').trim()}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>tune</span>
+                          <span>{(t('landing.filters') || 'Filtres').replace(':', '').trim()}</span>
+                          {searchEquipements.length > 0 && (
+                            <span className="filter-badge-count">{searchEquipements.length}</span>
+                          )}
+                          <span
+                            className="material-symbols-outlined"
+                            style={{
+                              fontSize: 18,
+                              transition: 'transform .2s ease',
+                              transform: showFilterPopover ? 'rotate(180deg)' : 'none',
+                              opacity: 0.7,
+                            }}
+                          >
+                            expand_more
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* 6. CTA Principal Shimmer */}
+                      <div style={{ padding: '4px' }}>
+                        <button type="submit" className="btn-hero-cta">
+                          <span>{t('landing.ctaExploreSpaces')}</span>
+                          <span className="material-symbols-outlined cta-arrow" style={{ fontSize: 20 }}>arrow_forward</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Tiroir de filtres intégrés dans le dock — Version Premium */}
+                    {showFilterPopover && (
+                      <div className="hero-dock-expandable-filters">
+                        <div className="filter-drawer-header">
+                          <div className="filter-drawer-title-group">
+                            <div className="filter-drawer-icon-box">
+                              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>tune</span>
+                            </div>
+                            <div>
+                              <h6 className="filter-drawer-title">
+                                {(t('landing.filters') || 'Filtres').replace(':', '').trim()} & Équipements inclus
+                              </h6>
+                              <p className="filter-drawer-subtitle">
+                                Cochez les commodités indispensables pour vos séances de travail
+                              </p>
+                            </div>
+                          </div>
+                          <div className="d-flex align-items-center gap-2">
+                            {searchEquipements.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSearchEquipements([])}
+                                className="btn-filter-reset"
+                                title="Effacer tous les filtres"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>restart_alt</span>
+                                <span>{t('landing.resetFilters') || 'Réinitialiser'}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setShowFilterPopover(false)}
+                              className="btn-filter-close-pill"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                              <span>Fermer</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Grille des badges / pills d'équipements */}
+                        <div className="filter-chips-grid">
+                          {EQUIPMENTS.map((eq) => {
+                            const active = searchEquipements.includes(eq);
+                            const icon = EQUIPMENT_ICONS[eq] || 'check_circle';
+                            return (
+                              <button
+                                key={eq}
+                                type="button"
+                                onClick={() => toggleEquipement(eq)}
+                                className={`filter-chip-pill ${active ? 'active' : ''}`}
+                                aria-pressed={active}
+                              >
+                                <span className="material-symbols-outlined chip-icon">{icon}</span>
+                                <span className="chip-label">{eq}</span>
+                                {active ? (
+                                  <span className="chip-check-badge">
+                                    <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>check</span>
+                                  </span>
+                                ) : (
+                                  <span className="chip-plus-badge">
+                                    <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>add</span>
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Ligne de créneau horaire */}
+                        <div className="filter-timeslot-row">
+                          <div className="filter-timeslot-label">
+                            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>schedule</span>
+                            <span>Créneau horaire souhaité (fuseau Tunis) :</span>
+                          </div>
+                          <div className="d-flex align-items-center gap-2">
+                            <div className="filter-time-capsule">
+                              <span style={{ fontSize: '.74rem', color: dark ? '#94a3b8' : '#64748b', fontWeight: 600 }}>De</span>
+                              <input
+                                type="time"
+                                value={searchHeureDebut}
+                                onChange={(e) => setSearchHeureDebut(e.target.value)}
+                                className="filter-time-input"
+                              />
+                            </div>
+                            <span style={{ color: dark ? '#64748b' : '#94a3b8', fontWeight: 700 }}>→</span>
+                            <div className="filter-time-capsule">
+                              <span style={{ fontSize: '.74rem', color: dark ? '#94a3b8' : '#64748b', fontWeight: 600 }}>À</span>
+                              <input
+                                type="time"
+                                value={searchHeureFin}
+                                onChange={(e) => setSearchHeureFin(e.target.value)}
+                                className="filter-time-input"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Pied du tiroir avec actions */}
+                        <div className="filter-drawer-footer">
+                          <div className="filter-counter-text">
+                            {searchEquipements.length > 0 ? (
+                              <span className="d-flex align-items-center gap-1.5" style={{ color: '#f95d00' }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                                <strong>{searchEquipements.length}</strong> équipement{searchEquipements.length > 1 ? 's' : ''} sélectionné{searchEquipements.length > 1 ? 's' : ''}
+                              </span>
+                            ) : (
+                              <span>Tous les équipements acceptés (aucun filtre exclusif)</span>
+                            )}
+                          </div>
+                          <div className="d-flex align-items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowFilterPopover(false);
+                                const el = document.getElementById('search-results') || document.getElementById('featured');
+                                if (el) el.scrollIntoView({ behavior: 'smooth' });
+                              }}
+                              className="btn-apply-filter"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>done_all</span>
+                              <span>Appliquer les filtres</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </form>
+                </div>
+              )}
+
+              {activeHeroTab === 'formations' && (
+                <div className="hero-search-dock hero-fly hero-fly-3" style={{ maxWidth: 980 }}>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const el = document.getElementById('formations') || document.getElementById('search-results');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="formations-dock-fields"
+                  >
+                    {/* 1. Mot-clé / Thématique */}
+                    <div className="hero-dock-cell">
+                      <div className="hero-cell-icon">
+                        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>search</span>
+                      </div>
+                      <div className="hero-cell-meta">
+                        <label className="hero-cell-label">{t('landing.keywordLabel')}</label>
+                        <input
+                          type="text"
+                          value={searchFormationKeyword}
+                          onChange={(e) => setSearchFormationKeyword(e.target.value)}
+                          placeholder="React, Marketing, IA..."
+                          className="hero-cell-input"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 2. Ville */}
+                    <div className="hero-dock-cell">
+                      <div className="hero-cell-icon">
+                        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>location_on</span>
+                      </div>
+                      <div className="hero-cell-meta">
+                        <label className="hero-cell-label">{t('landing.city')}</label>
+                        <input
+                          list="deskywork-villes"
+                          value={searchFormationVille}
+                          onChange={(e) => setSearchFormationVille(e.target.value)}
+                          placeholder="Tunis, Sousse..."
+                          className="hero-cell-input"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 3. Date */}
+                    <div className="hero-dock-cell no-divider">
+                      <div className="hero-cell-icon">
+                        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>calendar_month</span>
+                      </div>
+                      <div className="hero-cell-meta">
+                        <label className="hero-cell-label">{t('landing.date')}</label>
+                        <input
+                          type="date"
+                          value={searchFormationDate}
+                          onChange={(e) => setSearchFormationDate(e.target.value)}
+                          className="hero-cell-input"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 4. CTA Formations */}
+                    <div style={{ padding: '4px' }}>
+                      <button type="submit" className="btn-hero-cta">
+                        <span>{t('landing.ctaExploreWorkshops')}</span>
+                        <span className="material-symbols-outlined cta-arrow" style={{ fontSize: 20 }}>arrow_forward</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {activeHeroTab === 'b2b' && (
+                <div className="b2b-hero-card hero-fly hero-fly-3" style={{ maxWidth: 860 }}>
+                  <div className="d-flex align-items-center gap-2 mb-2">
+                    <span className="b2b-card-badge">
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>domain</span>
+                      B2B Coworking & Formation
+                    </span>
+                  </div>
+                  <h3 className="sora fw-bold mb-2" style={{ fontSize: '1.28rem', color: dark ? '#ffffff' : '#0f172a' }}>
+                    {t('landing.b2bHeadline')}
+                  </h3>
+                  <p style={{ fontSize: '.95rem', lineHeight: 1.6, color: dark ? '#cbd5e1' : '#475569', marginBottom: '1.25rem', maxWidth: 680 }}>
+                    {t('landing.b2bSubtitle')}
+                  </p>
+                  <div className="d-flex flex-wrap align-items-center gap-3">
+                    <Link to="/register?role=coworking" className="btn-primary-hero">
+                      <span>{t('landing.b2bCtaRegister')}</span>
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
+                    </Link>
+                    <a
+                      href="#tarifs"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const el = document.getElementById('tarifs');
+                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      className="btn-ghost-hero"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>workspace_premium</span>
+                      <span>{t('landing.b2bCtaPricing')}</span>
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* ── BARRE DE RÉASSURANCE DISCRÈTE (SOCIAL PROOF) ── */}
+              <div className="hero-reassurance-bar hero-fly hero-fly-3">
+                <span className="reassurance-item">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 16 }}>verified</span>
+                  {t('landing.reassurance1')}
+                </span>
+                <span className="reassurance-separator" />
+                <span className="reassurance-item">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 16 }}>payments</span>
+                  {t('landing.reassurance2')}
+                </span>
+                <span className="reassurance-separator" />
+                <span className="reassurance-item">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 16 }}>receipt_long</span>
+                  {t('landing.reassurance3')}
+                </span>
+                <span className="reassurance-separator" />
+                <span className="reassurance-item">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 16 }}>account_circle</span>
+                  {t('landing.reassurance4')}
+                </span>
               </div>
             </div>
           </div>
@@ -856,15 +1978,43 @@ export default function Landing({ session }) {
         </button>
       </section>
 
-      {/* ══ TRUST BAR ══ */}
-      <section className="trust-bar py-4">
+      {/* ══ TRUST BAR (PARTENAIRES HISTORIQUES) ══ */}
+      <section id="partenaires-logos" className="trust-bar py-5" style={{ scrollMarginTop: '100px' }}>
         <div className="container">
-          <p className="text-center mb-3" style={{ color: EC.cobalt, fontSize: '.7rem', fontWeight: 700, letterSpacing: '.18em', textTransform: 'uppercase' }}>
-            Ils nous font confiance
+          <p className="text-center mb-4" style={{ color: EC.cobalt, fontSize: '.76rem', fontWeight: 800, letterSpacing: '.18em', textTransform: 'uppercase' }}>
+            {t('landing.trustText')}
           </p>
           <div className="d-flex flex-wrap justify-content-center align-items-center gap-5">
-            <a href="https://thirtythreespace.com/" target="_blank" rel="noopener noreferrer" className="trust-name">Thirty Three Space</a>
-            <span className="trust-name">néro coworking space</span>
+            <a
+              href="https://thirtythreespace.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Thirty Three Space"
+              className="trust-logo-card"
+            >
+              <img
+                src={partnerThirtyThree}
+                alt="Thirty Three Space"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: '50%' }}
+              />
+            </a>
+            <div
+              title="Néro Coworking Space"
+              className="trust-logo-card"
+            >
+              <img
+                src={partnerNero}
+                alt="Néro Coworking Space"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: 'block',
+                  borderRadius: '50%',
+                  filter: dark ? 'invert(1)' : 'none',
+                }}
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -873,7 +2023,12 @@ export default function Landing({ session }) {
       <section className="kpi-strip py-5">
         <div className="container">
           <div className="row g-4 justify-content-center">
-            {[{ value: 200, suffix: '+', label: 'Membres actifs' }, { value: 12, suffix: '', label: 'Espaces disponibles' }, { value: 98, suffix: '%', label: 'Taux de satisfaction' }, { value: 3, suffix: '+', label: "Années d'expérience" }].map((k, i) => (
+            {[
+              { value: 200, suffix: '+', label: t('landing.kpiMembers') },
+              { value: 12, suffix: '', label: t('landing.kpiSpaces') },
+              { value: 98, suffix: '%', label: t('landing.kpiSatisfaction') },
+              { value: 3, suffix: '+', label: t('landing.kpiExperience') },
+            ].map((k, i) => (
               <div key={i} className="col-6 col-md-3">
                 <KpiCounter {...k} dark={dark} />
               </div>
@@ -882,18 +2037,106 @@ export default function Landing({ session }) {
         </div>
       </section>
 
-      {/* ══ AVANTAGES ══ */}
-      <section id="avantages" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
+      {/* ══ RÉSULTATS RECHERCHE MULTI-CRITÈRES (SI RECHERCHE ACTIVE) ══ */}
+      {(showSearchResults || searchVille || searchType || searchCapacite || searchEquipements.length > 0) && (
+        <section id="search-results" className="py-5" style={{ backgroundColor: EC.bg, borderBottom: `1px solid ${EC.outline}` }}>
+          <div className="container py-2">
+            <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+              <div>
+                <span className="sec-badge">{t('landing.searchResultsBadge')}</span>
+                <h2 className="sora fw-bold mb-1" style={{ color: EC.navy, fontSize: 'clamp(1.4rem,2.4vw,1.9rem)' }}>
+                  {t('landing.searchResultsTitle', { count: filteredEspaces.length })}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchVille(''); setSearchType(''); setSearchCapacite('');
+                  setSearchDate(''); setSearchEquipements([]); setShowSearchResults(false);
+                }}
+                style={{
+                  background: 'transparent', border: `1.5px solid ${EC.outline}`,
+                  borderRadius: 10, padding: '8px 14px', fontSize: '.82rem', fontWeight: 600, color: EC.navy, cursor: 'pointer',
+                }}
+              >
+                {t('landing.resetFilters')}
+              </button>
+            </div>
+
+            {filteredEspaces.length === 0 ? (
+              <div className="text-center p-5" style={{ backgroundColor: EC.cardBg, borderRadius: 20, border: `1px solid ${EC.outline}` }}>
+                <p style={{ color: EC.muted, margin: 0 }}>{t('landing.noResults')}</p>
+              </div>
+            ) : (
+              <div className="row g-4">
+                {filteredEspaces.slice(0, 9).map((esp) => {
+                  const img = esp.photo_url || (Array.isArray(esp.photos_urls) && esp.photos_urls[0]) || esp.tenants?.cover_url || esp.tenants?.logo_url || '/images/coworking/space-1.jpg';
+                  return (
+                    <div key={esp.id} className="col-md-6 col-lg-4">
+                      <div style={{ backgroundColor: EC.cardBg, borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${EC.outline}`, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        <Link to={buildSearchBookingLink(esp)} className="d-block cursor-pointer overflow-hidden" title={`Réserver ${esp.nom}`}>
+                          <img src={img} alt={esp.nom} style={{ height: 170, width: '100%', objectFit: 'cover', display: 'block', transition: 'transform .3s ease' }} className="hover-scale" loading="lazy" />
+                        </Link>
+                        <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                          <div className="d-flex justify-content-between align-items-center mb-2">
+                            <span style={{ fontSize: '.7rem', fontWeight: 800, textTransform: 'uppercase', padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
+                              {SPACE_TYPE_LABELS[esp.type] || esp.type}
+                            </span>
+                            <span className="sora fw-bold" style={{ color: EC.cobalt, fontSize: '.95rem' }}>
+                              {formatDT(esp.tarif_horaire)} {t('landing.perHour')}
+                            </span>
+                          </div>
+                          <h4 className="sora fw-bold mb-1" style={{ color: EC.navy, fontSize: '1.05rem' }}>
+                            <Link to={buildSearchBookingLink(esp)} style={{ color: 'inherit', textDecoration: 'none' }} className="hover:underline">
+                              {esp.nom}
+                            </Link>
+                          </h4>
+                          <p style={{ color: EC.muted, fontSize: '.82rem', marginBottom: '0.75rem' }}>
+                            {esp.tenants?.nom || 'Établissement'} {esp.tenants?.ville ? `· ${esp.tenants.ville}` : ''} · {t('landing.capacityPers', { count: esp.capacite })}
+                          </p>
+                          <div className="mt-auto d-flex gap-2">
+                            <Link
+                              to={buildSearchBookingLink(esp)}
+                              className="btn flex-grow-1"
+                              style={{ backgroundColor: EC.cobalt, color: '#fff', borderRadius: 10, padding: '9px 12px', fontWeight: 700, fontSize: '.84rem', textDecoration: 'none', textAlign: 'center' }}
+                            >
+                              {t('landing.bookBtn')}
+                            </Link>
+                            {esp.tenant_id && (
+                              <Link
+                                to={`/coworking/${esp.tenant_id}`}
+                                className="btn"
+                                style={{ border: `1.5px solid ${EC.outline}`, color: EC.navy, borderRadius: 10, padding: '9px 12px', fontWeight: 600, fontSize: '.84rem', textDecoration: 'none' }}
+                              >
+                                {t('landing.viewCardBtn')}
+                              </Link>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 2 — À PROPOS (#about / #avantages)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="about" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
+        <span id="avantages" style={{ position: 'absolute', top: 0 }} />
         <div className="container py-4">
           <div className="row mb-5">
-            <div className="col-lg-7">
-              <span className="sec-badge">Nos atouts</span>
+            <div className="col-lg-9 col-xl-8">
+              <span className="sec-badge">{t('landing.aboutBadge')}</span>
               <h2 className="sora fw-bold mb-3" style={{ color: EC.navy, fontSize: 'clamp(1.8rem,3vw,2.4rem)', letterSpacing: '-.02em' }}>
-                Le Standard DeskyWork
+                {t('landing.aboutTitle')}
               </h2>
               <p style={{ color: EC.muted, fontSize: '1.05rem', lineHeight: 1.8 }}>
-                Nous avons éliminé tous les points de friction entre vous et votre meilleur travail.
-                Des équipements premium conçus pour maximiser votre concentration et créativité.
+                {t('landing.aboutSubtitle')}
               </p>
             </div>
           </div>
@@ -903,64 +2146,75 @@ export default function Landing({ session }) {
         </div>
       </section>
 
-      {/* ══ ESPACES ══ */}
-      <section id="espaces" className="py-5" style={{ backgroundColor: '#100f0d' }}>
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 3 — ÉTABLISSEMENTS MIS EN AVANT (#featured / #espaces)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="featured" className="py-5" style={{ backgroundColor: '#100f0d' }}>
+        <span id="espaces" style={{ position: 'absolute', top: 0 }} />
         <div className="container py-4">
           <div className="text-center mb-5">
-            <span className="sec-badge inv">Nos espaces</span>
+            <span className="sec-badge inv">{t('landing.featuredBadge')}</span>
             <h2 className="sora fw-bold text-white mb-3" style={{ fontSize: 'clamp(1.8rem,3vw,2.4rem)' }}>
-              Espaces de Coworking
+              {t('landing.featuredTitle')}
             </h2>
-            <p style={{ color: '#cfcac3', maxWidth: 560, margin: '0 auto', lineHeight: 1.8 }}>
-              Découvrez nos espaces de coworking disponibles et réservez votre place dès maintenant.
+            <p style={{ color: '#cfcac3', maxWidth: 600, margin: '0 auto', lineHeight: 1.8 }}>
+              {t('landing.featuredSubtitle')}
             </p>
           </div>
-          {tenants.length === 0 ? (
+          {rotatedTenants.length === 0 ? (
             <div className="text-center py-5">
-              <p style={{ color: '#cfcac3', fontSize: '1rem' }}>Aucun espace disponible pour le moment.</p>
+              <p style={{ color: '#cfcac3', fontSize: '1rem' }}>{t('landing.noEstablishments')}</p>
             </div>
           ) : (
             <div className="row g-4">
-              {tenants.map((tenant) => (
+              {rotatedTenants.map((tenant) => (
                 <div key={tenant.id} className="col-lg-4">
                   <div className="space-card" style={{ aspectRatio: '4/3', minHeight: 280 }}>
-                    <img
-                      src={tenant.cover_url || tenant.logo_url || "https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop"}
-                      alt={tenant.nom}
-                      loading="lazy"
-                      decoding="async"
-                    />
-                    <div className="space-overlay" />
+                    <Link
+                      to={`/coworking/${tenant.id}`}
+                      className="d-block w-100 h-100 cursor-pointer"
+                      title={`Voir la fiche de ${tenant.nom}`}
+                    >
+                      <img
+                        src={tenant.cover_url || tenant.logo_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop'}
+                        alt={tenant.nom}
+                        loading="lazy"
+                        decoding="async"
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <div className="space-overlay cursor-pointer" />
+                    </Link>
 
-                    {/* ── Badge PROMO ── */}
+                    {/* Badge Pack Premium « Mis en avant » (CDC v3.0 D6) */}
+                    {tenant.is_featured && (
+                      <div style={{
+                        position: 'absolute', top: 14, left: 14,
+                        background: '#100f0d', color: '#ffb599',
+                        border: '1px solid rgba(249,93,0,0.65)',
+                        borderRadius: 10, padding: '5px 11px',
+                        fontSize: '.68rem', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase',
+                        display: 'flex', alignItems: 'center', gap: 5, zIndex: 4,
+                      }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>workspace_premium</span>
+                        {t('landing.featuredBadgeTag')}
+                      </div>
+                    )}
+
+                    {/* Badge PROMO */}
                     {tenant.has_promo && (
                       <div style={{
                         position: 'absolute', top: 14, right: 14,
                         background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                        color: '#fff',
-                        borderRadius: 10,
-                        padding: '5px 12px',
-                        fontSize: '.7rem',
-                        fontWeight: 800,
-                        letterSpacing: '.1em',
-                        textTransform: 'uppercase',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 5,
-                        boxShadow: '0 4px 14px rgba(249,93,0,.55)',
-                        zIndex: 4,
+                        color: '#fff', borderRadius: 10, padding: '5px 12px',
+                        fontSize: '.7rem', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        boxShadow: '0 4px 14px rgba(249,93,0,.55)', zIndex: 4,
                         animation: 'promoPulse 2.4s ease-in-out infinite',
                       }}>
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>local_offer</span>
-                        PROMO
+                        {t('landing.promoTag')}
                         {tenant.promo_count > 1 && (
-                          <span style={{
-                            background: 'rgba(255,255,255,.3)',
-                            borderRadius: 6,
-                            padding: '1px 6px',
-                            fontSize: '.65rem',
-                            fontWeight: 700,
-                          }}>
+                          <span style={{ background: 'rgba(255,255,255,.3)', borderRadius: 6, padding: '1px 6px', fontSize: '.65rem', fontWeight: 700 }}>
                             ×{tenant.promo_count}
                           </span>
                         )}
@@ -971,59 +2225,54 @@ export default function Landing({ session }) {
                       <span style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 8, padding: '4px 12px', fontSize: '.72rem', fontWeight: 700, display: 'inline-block', marginBottom: 8 }}>
                         {tenant.ville || tenant.pays || 'Tunisie'}
                       </span>
-                      <h3 className="sora fw-bold text-white mb-2">{tenant.nom}</h3>
+                      <h3 className="sora fw-bold text-white mb-2">
+                        <Link to={`/coworking/${tenant.id}`} className="text-white text-decoration-none hover-underline cursor-pointer">
+                          {tenant.nom}
+                        </Link>
+                      </h3>
                       <p className="mb-1" style={{ color: '#e6ded7', fontSize: '.9rem', maxWidth: 460 }}>
-                        {tenant.description || 'Espace de coworking premium pour professionnels ambitieux.'}
+                        {tenant.description || 'Établissement partenaire DeskyWork.'}
                       </p>
                       <div className="d-flex align-items-center gap-3 mb-3" style={{ color: '#cfcac3', fontSize: '.8rem' }}>
                         {tenant.adresse && (
                           <span className="d-inline-flex align-items-center gap-1">
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>location_on</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 14, color: EC.cobalt }}>location_on</span>
                             {tenant.adresse}
                           </span>
                         )}
-                        {tenant.telephone && (
-                          <span className="d-inline-flex align-items-center gap-1">
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>phone</span>
-                            {tenant.telephone}
-                          </span>
-                        )}
                       </div>
+
                       <div className="d-flex flex-wrap gap-2">
                         <Link
                           to={`/coworking/${tenant.id}`}
                           className="btn d-inline-flex align-items-center gap-2"
-                          style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 12, padding: '10px 20px', fontWeight: 700, border: 'none', fontSize: '.9rem', transition: 'all .25s' }}
+                          style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 12, padding: '10px 18px', fontWeight: 700, border: 'none', fontSize: '.88rem', transition: 'all .25s' }}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>visibility</span>
-                          Voir plus
+                          {t('landing.viewEstablishment')}
                         </Link>
-                        {tenant.has_promo && (
+                        {tenant.has_promo ? (
                           <button
                             onClick={() => setPromoTenant(tenant)}
                             className="btn d-inline-flex align-items-center gap-2"
                             style={{
                               background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
                               color: 'white', border: 'none', borderRadius: 12,
-                              padding: '10px 20px', fontWeight: 700, fontSize: '.9rem',
-                              transition: 'all .25s', cursor: 'pointer',
-                              boxShadow: '0 4px 14px rgba(249,93,0,.4)',
+                              padding: '10px 18px', fontWeight: 700, fontSize: '.88rem',
+                              cursor: 'pointer', boxShadow: '0 4px 14px rgba(249,93,0,.4)',
                             }}
-                            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-                            onMouseLeave={e => e.currentTarget.style.transform = 'none'}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>local_offer</span>
-                            Promotions
+                            {t('landing.promotionsBtn')}
                           </button>
-                        )}
-                        {!tenant.has_promo && (
+                        ) : (
                           <Link
-                            to={`/book-guest?tenantId=${tenant.id}`}
+                            to={`/coworking/${tenant.id}`}
                             className="btn d-inline-flex align-items-center gap-2"
-                            style={{ backgroundColor: 'transparent', color: 'white', border: '2px solid rgba(255,255,255,.5)', borderRadius: 12, padding: '10px 20px', fontWeight: 700, fontSize: '.9rem', transition: 'all .25s' }}
+                            style={{ backgroundColor: 'transparent', color: 'white', border: '2px solid rgba(255,255,255,.5)', borderRadius: 12, padding: '10px 18px', fontWeight: 700, fontSize: '.88rem' }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>event_available</span>
-                            Réserver
+                            {t('landing.bookEstablishment')}
                           </Link>
                         )}
                       </div>
@@ -1036,16 +2285,62 @@ export default function Landing({ session }) {
         </div>
       </section>
 
-      {/* ══ TARIFS ══ */}
+      {/* ══ TYPOLOGIES D'ESPACES (7 TYPES OFFICIELS CDC v3.0) ══ */}
+      <section className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease' }}>
+        <div className="container py-3">
+          <div className="text-center mb-4">
+            <span className="sec-badge">7 Typologies Officielles</span>
+            <h2 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: 'clamp(1.6rem,2.6vw,2.1rem)' }}>
+              Des espaces adaptés à chaque usage
+            </h2>
+          </div>
+          <div className="row g-3 justify-content-center">
+            {SPACE_TYPES.map((st) => (
+              <div key={st.value} className="col-6 col-md-4 col-lg-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchType(st.value);
+                    setShowSearchResults(true);
+                    const el = document.getElementById('search-results') || document.getElementById('search');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                  className="w-100 text-start p-3 rounded-4 transition-all"
+                  style={{
+                    backgroundColor: searchType === st.value ? EC.cobaltLight : EC.cardBg,
+                    border: searchType === st.value ? `2px solid ${EC.cobalt}` : `1.5px solid ${EC.outline}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div className="d-flex align-items-center gap-2 mb-1">
+                    <span className="material-symbols-outlined" style={{ color: EC.cobalt, fontSize: 22 }}>{st.icon}</span>
+                    <span className="sora fw-bold" style={{ color: EC.navy, fontSize: '.9rem' }}>
+                      {lang === 'en' ? (st.labelEn || st.label) : st.label}
+                    </span>
+                  </div>
+                  <p className="mb-0 text-truncate" style={{ color: EC.muted, fontSize: '.76rem' }}>
+                    {st.desc}
+                  </p>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 4 — TARIFS & ABONNEMENTS (#tarifs / #pricing)
+      ══════════════════════════════════════════════════════════════════════ */}
       <section id="tarifs" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
+        <span id="pricing" style={{ position: 'absolute', top: 0 }} />
         <div className="container py-4">
           <div className="text-center mb-5">
-            <span className="sec-badge">Tarifs Transparents</span>
+            <span className="sec-badge">{t('landing.pricingBadge')}</span>
             <h2 className="sora fw-bold mb-3" style={{ color: EC.navy, fontSize: 'clamp(1.8rem,3vw,2.4rem)' }}>
-              Choisissez votre formule
+              {t('landing.pricingTitle')}
             </h2>
-            <p style={{ color: EC.muted, maxWidth: 480, margin: '0 auto' }}>
-              Pas de frais cachés. Pas de mauvaises surprises. Juste de la productivité pure.
+            <p style={{ color: EC.muted, maxWidth: 580, margin: '0 auto', lineHeight: 1.8 }}>
+              {t('landing.pricingSubtitle')}
             </p>
           </div>
           <div className="row g-4 align-items-stretch">
@@ -1054,67 +2349,185 @@ export default function Landing({ session }) {
         </div>
       </section>
 
-      {/* ══ TÉMOIGNAGES ══ */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 5 — PARTENAIRES (#partenaires / #entreprises)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="partenaires" className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease' }}>
+        <span id="entreprises" style={{ position: 'absolute', top: 0 }} />
+        <div className="container py-4">
+          <div className="text-center mb-5">
+            <span className="sec-badge">{t('landing.partnersBadge')}</span>
+            <h2 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: 'clamp(1.6rem,2.6vw,2.1rem)' }}>
+              {t('landing.partnersTitle')}
+            </h2>
+            <p style={{ color: EC.muted, maxWidth: 640, margin: '0 auto', lineHeight: 1.8 }}>
+              {t('landing.partnersSubtitle')}
+            </p>
+          </div>
+          <div className="row g-4">
+            {[
+              {
+                icon: 'domain',
+                title: t('landing.partnerCard1Title'),
+                desc: t('landing.partnerCard1Desc'),
+                cta: t('landing.partnerCta'),
+                to: '/espaces-partenaires',
+              },
+              {
+                icon: 'school',
+                title: t('landing.partnerCard2Title'),
+                desc: t('landing.partnerCard2Desc'),
+                cta: t('landing.proposeTraining'),
+                to: '/devenir-formateur',
+              },
+              {
+                icon: 'business_center',
+                title: t('landing.partnerCard3Title'),
+                desc: t('landing.partnerCard3Desc'),
+                cta: 'Créer un compte Entreprise',
+                to: '/register?type=entreprise',
+              },
+            ].map((actor) => (
+              <div key={actor.title} className="col-md-4">
+                <div style={{ backgroundColor: EC.cardBg, borderRadius: 20, padding: '1.75rem', height: '100%', border: `1.5px solid ${EC.outline}`, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: EC.cobaltLight, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+                    <span className="material-symbols-outlined" style={{ color: EC.cobalt, fontSize: 24 }}>{actor.icon}</span>
+                  </div>
+                  <h4 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.08rem' }}>{actor.title}</h4>
+                  <p style={{ color: EC.muted, fontSize: '.88rem', lineHeight: 1.7, flex: 1 }}>{actor.desc}</p>
+                  <Link to={actor.to} style={{ color: EC.cobalt, fontWeight: 700, textDecoration: 'none', fontSize: '.9rem', marginTop: 12 }}>
+                    {actor.cta} →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 6 — FORMATIONS (#formations)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="formations" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
+        <div className="container py-4">
+          <div className="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+            <div>
+              <span className="sec-badge">{t('landing.formationsBadge')}</span>
+              <h2 className="sora fw-bold mb-1" style={{ color: EC.navy, fontSize: 'clamp(1.7rem,2.8vw,2.2rem)' }}>
+                {t('landing.formationsTitle')}
+              </h2>
+              <p style={{ color: EC.muted, margin: 0, maxWidth: 560 }}>
+                {t('landing.formationsSubtitle')}
+              </p>
+            </div>
+            <Link to="/devenir-formateur" style={{ color: EC.cobalt, fontWeight: 700, textDecoration: 'none', fontSize: '.92rem' }}>
+              {t('landing.proposeTraining')}
+            </Link>
+          </div>
+
+          {publicFormations.length === 0 ? (
+            <div className="p-4 text-center" style={{ backgroundColor: EC.cardBg, borderRadius: 20, border: `1.5px solid ${EC.outline}` }}>
+              <p style={{ color: EC.muted, margin: 0 }}>
+                {t('landing.noTrainings')}
+              </p>
+            </div>
+          ) : (
+            <div className="d-flex gap-3 pb-3" style={{ overflowX: 'auto', scrollSnapType: 'x mandatory' }}>
+              {publicFormations.map((f) => (
+                <div
+                  key={f.id}
+                  style={{
+                    minWidth: 300, maxWidth: 340, flex: '0 0 auto', scrollSnapAlign: 'start',
+                    backgroundColor: EC.cardBg, borderRadius: 20, padding: '1.5rem',
+                    border: `1.5px solid ${EC.outline}`, display: 'flex', flexDirection: 'column',
+                    transition: 'transform .2s ease, box-shadow .2s ease',
+                  }}
+                  className="cursor-pointer"
+                >
+                  <Link
+                    to={session ? '/dashboard/formations' : (f.tenant_id ? `/coworking/${f.tenant_id}` : '/register')}
+                    className="d-block text-decoration-none cursor-pointer"
+                    style={{ flex: 1 }}
+                    title={`Découvrir ${f.titre}`}
+                  >
+                    <div className="d-flex justify-content-between align-items-center mb-2 gap-2">
+                      <span style={{ fontSize: '.7rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
+                        {f.ville || 'Tunisie'}
+                      </span>
+                      <span className="sora fw-bold" style={{ color: EC.cobalt, fontSize: '.95rem' }}>
+                        {f.prix_inscription > 0 ? formatDT(f.prix_inscription) : t('landing.free')}
+                      </span>
+                    </div>
+                    <h4 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.05rem' }}>{f.titre}</h4>
+                    <p style={{ color: EC.muted, fontSize: '.82rem', marginBottom: '0.75rem' }}>
+                      {f.etablissement ? `Centre : ${f.etablissement}` : 'Session de formation ouverte au public'}
+                    </p>
+                    <div style={{ fontSize: '.78rem', color: EC.muted, marginBottom: '1rem' }}>
+                      <div>{formatDateTunis(f.date_debut)} · {formatTimeTunis(f.date_debut)}</div>
+                      {f.places_restantes !== null && (
+                        <div style={{ color: f.liste_attente ? '#b45309' : '#15803d', fontWeight: 600, marginTop: 2 }}>
+                          {f.liste_attente ? t('landing.waitingList') : t('landing.spotsRemaining', { count: f.places_restantes })}
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                  <Link
+                    to={session ? '/dashboard/formations' : (f.tenant_id ? `/coworking/${f.tenant_id}` : '/register')}
+                    style={{
+                      display: 'block', textAlign: 'center', textDecoration: 'none',
+                      backgroundColor: EC.cobalt, color: '#fff', borderRadius: 12, padding: '10px 0',
+                      fontWeight: 700, fontSize: '.86rem', zIndex: 2,
+                    }}
+                  >
+                    {t('landing.discoverSession')}
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 7 — TÉMOIGNAGES (#temoignages)
+      ══════════════════════════════════════════════════════════════════════ */}
       <section id="temoignages" className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease' }}>
         <div className="container py-4">
           <div className="text-center mb-5">
-            <span className="sec-badge">Témoignages</span>
+            <span className="sec-badge">{t('landing.testimonialsBadge')}</span>
             <h2 className="sora fw-bold mb-3" style={{ color: EC.navy, fontSize: 'clamp(1.8rem,3vw,2.4rem)' }}>
-              Ils adorent DeskyWork
+              {t('landing.testimonialsTitle')}
             </h2>
+            <p style={{ color: EC.muted, maxWidth: 540, margin: '0 auto', lineHeight: 1.8 }}>
+              {t('landing.testimonialsSubtitle')}
+            </p>
           </div>
           <div className="row g-4">
-            {testimonials.map((t, i) => <TestiCard key={i} {...t} dark={dark} />)}
+            {testimonials.map((tItem, i) => <TestiCard key={i} {...tItem} dark={dark} />)}
           </div>
         </div>
       </section>
 
-      {/* ══ CTA ══ */}
-      <section className="cta-sec py-5">
-        <div className="cta-grid" />
-        <div className="container py-5 position-relative text-center">
-          <span className="sec-badge inv">Passez à l'action</span>
-          <h2 className="sora fw-bold text-white mb-4" style={{ fontSize: 'clamp(2rem,4vw,3rem)', maxWidth: 620, margin: '0 auto 1rem' }}>
-            Prêt à faire votre meilleur travail ?
-          </h2>
-          <p className="mb-5" style={{ color: '#cfcac3', maxWidth: 500, margin: '0 auto 2.5rem', lineHeight: 1.8 }}>
-            Vivez la différence DeskyWork avec un pass journalier ou un abonnement complet.
-            Rejoignez +200 professionnels qui ont choisi l'excellence.
-          </p>
-          <div className="d-flex flex-column flex-sm-row justify-content-center gap-3">
-            <Link to={session ? '/dashboard' : '/register'} className="btn d-inline-flex align-items-center gap-2"
-              style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 12, padding: '15px 36px', fontWeight: 700, border: 'none', fontSize: '1rem', transition: 'all .25s' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(249,93,0,.4)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>event_available</span>
-              Réserver un Pass Jour
-            </Link>
-            <Link to="/register" className="btn d-inline-flex align-items-center gap-2"
-              style={{ backgroundColor: dark ? '#282623' : '#ffffff', color: dark ? '#fbffff' : '#100f0d', border: dark ? '1px solid rgba(255,255,255,0.2)' : 'none', borderRadius: 12, padding: '15px 36px', fontWeight: 700, fontSize: '1rem', transition: 'all .25s', boxShadow: '0 8px 24px rgba(0,0,0,.25)' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.backgroundColor = dark ? '#383430' : '#fff3ec'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.backgroundColor = dark ? '#282623' : '#ffffff'; }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>person_add</span>
-              Devenir Membre
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ══ CONTACT ══ */}
-      <section id="contact" className="py-5" style={{ backgroundColor: EC.bg, transition: 'background .3s ease' }}>
+      {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 8 — CONTACT & FOOTER (#contact)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="contact" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
         <div className="container py-4">
           <div className="row g-5 align-items-start">
             <div className="col-lg-5">
-              <span className="sec-badge">Contact</span>
+              <span className="sec-badge">{t('landing.contactBadge')}</span>
               <h2 className="sora fw-bold mb-4" style={{ color: EC.navy, fontSize: 'clamp(1.8rem,3vw,2.2rem)' }}>
-                Venez nous rendre visite
+                {t('landing.contactTitle')}
               </h2>
+              <p style={{ color: EC.muted, marginBottom: '2rem', lineHeight: 1.75 }}>
+                {t('landing.contactSubtitle')}
+              </p>
               <div className="d-flex flex-column gap-4">
                 {[
-                  { icon: 'location_on', label: 'Adresse', val: 'Montplaisir, Tunis' },
-                  { icon: 'phone', label: 'Téléphone', val: '+216 52 882 880\n+216 52 882 930' },
-                  { icon: 'mail', label: 'Email', val: 'contact@vclow.com' },
-                  { icon: 'schedule', label: 'Horaires', val: 'Lun–Ven 7h–22h · Week-end 9h–18h' },
+                  { icon: 'location_on', label: 'Adresse', val: t('landing.contactAddress') },
+                  { icon: 'phone', label: 'Téléphone', val: '+216 71 000 000\n+216 52 882 880' },
+                  { icon: 'mail', label: 'Email', val: t('landing.contactEmail') },
+                  { icon: 'schedule', label: 'Horaires', val: t('landing.contactHours') },
                 ].map(({ icon, label, val }) => (
                   <div key={icon} className="d-flex gap-3 align-items-start">
                     <div style={{ width: 46, height: 46, borderRadius: 13, background: EC.cobaltLight, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1122,14 +2535,7 @@ export default function Landing({ session }) {
                     </div>
                     <div>
                       <div style={{ fontSize: '.72rem', fontWeight: 700, color: EC.muted, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 3 }}>{label}</div>
-                      {icon === 'phone' ? (
-                        <div style={{ color: EC.navy, fontWeight: 500 }}>
-                          <a href="tel:+21652882880" style={{ color: 'inherit', display: 'block' }}>+216 52 882 880</a>
-                          <a href="tel:+21652882930" style={{ color: 'inherit', display: 'block' }}>+216 52 882 930</a>
-                        </div>
-                      ) : (
-                        <div style={{ color: EC.navy, fontWeight: 500, whiteSpace: 'pre-line' }}>{val}</div>
-                      )}
+                      <div style={{ color: EC.navy, fontWeight: 500, whiteSpace: 'pre-line' }}>{val}</div>
                     </div>
                   </div>
                 ))}
@@ -1138,40 +2544,46 @@ export default function Landing({ session }) {
 
             <div className="col-lg-7">
               <div style={{ backgroundColor: EC.cardBg, borderRadius: 24, padding: '2.5rem', boxShadow: dark ? '0 8px 32px rgba(0,0,0,.4)' : '0 8px 32px rgba(0,13,35,.08)', border: `1.5px solid ${EC.outline}` }}>
-                <h4 className="sora fw-bold mb-4" style={{ color: EC.navy }}>Envoyez-nous un message</h4>
+                <h4 className="sora fw-bold mb-4" style={{ color: EC.navy }}>{t('landing.contactTitle')}</h4>
                 <form onSubmit={handleContactSubmit}>
                   <div className="row g-3">
                     <div className="col-md-6">
-                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>Prénom &amp; Nom</label>
-                      <input type="text" required className="ec-input" placeholder="Votre nom complet" value={contactForm.nom} onChange={e => setContactForm(f => ({ ...f, nom: e.target.value }))} />
+                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>{t('landing.contactName')}</label>
+                      <input type="text" required className="ec-input" placeholder={t('landing.contactName')} value={contactForm.nom} onChange={(e) => setContactForm((f) => ({ ...f, nom: e.target.value }))} />
                     </div>
                     <div className="col-md-6">
-                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>Email</label>
-                      <input type="email" required className="ec-input" placeholder="votre@email.com" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
+                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>{t('landing.contactEmailInput')}</label>
+                      <input type="email" required className="ec-input" placeholder="votre@email.com" value={contactForm.email} onChange={(e) => setContactForm((f) => ({ ...f, email: e.target.value }))} />
                     </div>
                     <div className="col-12">
-                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>Sujet</label>
-                      <select required className="ec-input" value={contactForm.sujet} onChange={e => setContactForm(f => ({ ...f, sujet: e.target.value }))}>
-                        <option value="">Choisir un sujet…</option>
-                        <option>Visite de l'espace</option>
-                        <option>Abonnement mensuel</option>
-                        <option>Solution entreprise</option>
-                        <option>Autre demande</option>
+                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>{t('landing.contactSubject')}</label>
+                      <select required className="ec-input" value={contactForm.sujet} onChange={(e) => setContactForm((f) => ({ ...f, sujet: e.target.value }))}>
+                        <option value="">{t('landing.contactSubject')}</option>
+                        <option value="general">{t('landing.contactSubjectGeneral')}</option>
+                        <option value="partner">{t('landing.contactSubjectPartner')}</option>
+                        <option value="trainer">{t('landing.contactSubjectTrainer')}</option>
+                        <option value="support">{t('landing.contactSubjectSupport')}</option>
                       </select>
                     </div>
                     <div className="col-12">
-                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>Message</label>
-                      <textarea required className="ec-input" rows={4} placeholder="Décrivez votre besoin…" style={{ resize: 'vertical' }} value={contactForm.message} onChange={e => setContactForm(f => ({ ...f, message: e.target.value }))} />
+                      <label className="fw-semibold mb-2 d-block" style={{ color: EC.navy, fontSize: '.875rem' }}>{t('landing.contactMessage')}</label>
+                      <textarea required className="ec-input" rows={4} placeholder={t('landing.contactMessage')} style={{ resize: 'vertical' }} value={contactForm.message} onChange={(e) => setContactForm((f) => ({ ...f, message: e.target.value }))} />
                     </div>
                     <div className="col-12">
-                      <button type="submit" disabled={contactLoading} className="btn w-100 d-flex align-items-center justify-content-center gap-2"
+                      <button
+                        type="submit"
+                        disabled={contactLoading}
+                        className="btn w-100 d-flex align-items-center justify-content-center gap-2"
                         style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 12, padding: '14px', fontWeight: 700, border: 'none', fontSize: '1rem', transition: 'all .25s' }}
-                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(249,93,0,.3)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
+                      >
                         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>send</span>
-                        {contactLoading ? 'Envoi en cours...' : 'Envoyer le message'}
+                        {contactLoading ? t('landing.contactSending') : t('landing.contactSubmit')}
                       </button>
-                      {contactStatus.text && <div className="mt-3" role="status" style={{ color: contactStatus.type === 'success' ? '#15803d' : '#b91c1c', fontWeight: 600 }}>{contactStatus.text}</div>}
+                      {contactStatus.text && (
+                        <div className="mt-3" role="status" style={{ color: contactStatus.type === 'success' ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                          {contactStatus.text}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </form>
@@ -1187,88 +2599,103 @@ export default function Landing({ session }) {
           <div className="row g-4 mb-5 align-items-start">
             <div className="col-lg-4 col-md-6">
               <div style={{ marginBottom: '1.25rem' }}>
-                <img src="/logo 2.png" alt="DeskyWork" className="ec-footer-logo" style={{ height: 40, width: 'auto', objectFit: 'contain', transform: 'scale(2.0)', transformOrigin: 'left center', maxWidth: 120 }} />
+                <img
+                  src={dark ? '/images/logo-deskywork-light.png' : '/images/logo-deskywork-dark.png'}
+                  alt="DeskyWork"
+                  className="ec-footer-logo"
+                  style={{ height: 48, width: 'auto', objectFit: 'contain' }}
+                />
               </div>
-              <p style={{ color: '#f8fafc', fontSize: '.95rem', lineHeight: 1.8, maxWidth: 330, margin: 0, fontWeight: 500 }}>
-                Espaces de travail premium pour les professionnels modernes. Situé au cœur de Tunis depuis 2021.
+              <p style={{ color: '#cfcac3', fontSize: '.9rem', lineHeight: 1.8, maxWidth: 330, margin: 0, fontWeight: 500 }}>
+                {t('landing.footerDesc')}
               </p>
               <div className="mt-4 d-flex gap-3">
-                <a href="#contact" aria-label="Contact" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff' }}>
+                <a href="#contact" aria-label="Contact" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>public</span>
                 </a>
-                <a href="mailto:contact@vclow.com" aria-label="Email" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff' }}>
+                <a href="mailto:contact@deskywork.com" aria-label="Email" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>alternate_email</span>
                 </a>
-                <a href="#contact" aria-label="Messagerie" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff' }}>
+                <a href="#contact" aria-label="Messagerie" className="soc-btn" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.04)', color: '#ffffff', borderRadius: '50%', width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chat</span>
                 </a>
               </div>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Explorer</h6>
+              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+                {t('landing.footerNav')}
+              </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="#espaces" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Trouver un espace</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Réunions & Événements</a></li>
-                <li><a href="#tarifs" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Plans Membres</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Solutions Entreprises</a></li>
+                <li><a href="#search" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.findSpace')}</a></li>
+                <li><a href="#about" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.about')}</a></li>
+                <li><a href="#featured" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.featured')}</a></li>
+                <li><a href="#tarifs" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.pricing')}</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Société</h6>
+              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+                {t('landing.footerPartners')}
+              </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="#avantages" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>À propos</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Carrières</a></li>
-                <li><a href="#temoignages" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Blog</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Réseau Partenaires</a></li>
+                <li><Link to="/espaces-partenaires" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.partners')}</Link></li>
+                <li><a href="#formations" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.formations')}</a></li>
+                <li><Link to="/devenir-formateur" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Devenir Formateur</Link></li>
+                <li><a href="#contact" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('navbar.contact')}</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Légal</h6>
+              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+                {t('landing.footerLegal')}
+              </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Politique de confidentialité</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Conditions d'utilisation</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Cookies</a></li>
-                <li><a href="#top" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Plan du site</a></li>
+                <li><Link to="/cgu" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('landing.footerCgu')}</Link></li>
+                <li><Link to="/confidentialite" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>{t('landing.footerPrivacy')}</Link></li>
+                <li><a href="#top" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Haut de page ↑</a></li>
               </ul>
             </div>
 
             <div className="col-lg-2 col-md-3 col-6">
-              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>Contact</h6>
+              <h6 className="fw-bold mb-3" style={{ color: '#ffffff', fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+                {t('navbar.contact')}
+              </h6>
               <ul className="list-unstyled d-flex flex-column gap-2 mb-0">
-                <li><a href="tel:+21652882880" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>+216 52 882 880</a></li>
-                <li><a href="tel:+21652882930" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>+216 52 882 930</a></li>
-                <li><a href="mailto:contact@vclow.com" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>contact@vclow.com</a></li>
-                <li><a href="#contact" style={{ color: '#f8fafc', fontWeight: 500, textDecoration: 'none' }}>Tunis, Tunisie</a></li>
+                <li><a href="mailto:contact@deskywork.com" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>contact@deskywork.com</a></li>
+                <li><a href="#contact" style={{ color: '#cfcac3', fontWeight: 500, textDecoration: 'none' }}>Tunis, Tunisie</a></li>
               </ul>
             </div>
           </div>
 
           <hr style={{ borderColor: 'rgba(255,255,255,.12)', margin: 0 }} />
           <div className="d-flex flex-column flex-md-row justify-content-between align-items-center pt-4 gap-2">
-            <p className="mb-0" style={{ color: '#f8fafc', fontSize: '.85rem', fontWeight: 500 }}>
-              © {new Date().getFullYear()} DeskyWork. Tous droits réservés.
+            <p className="mb-0" style={{ color: '#888480', fontSize: '.85rem', fontWeight: 500 }}>
+              © {new Date().getFullYear()} {t('landing.footerCopyright')}
             </p>
-            <p className="mb-0" style={{ color: '#f8fafc', fontSize: '.85rem', fontWeight: 500 }}>
+            <p className="mb-0" style={{ color: '#888480', fontSize: '.85rem', fontWeight: 500 }}>
               Conçu avec <span style={{ color: EC.cobalt }}>♥</span> à Tunis
             </p>
           </div>
         </div>
       </footer>
 
+      {/* Bouton retour en haut */}
+      {/* Bouton retour en haut (visible uniquement après défilement) */}
       <button
         type="button"
-        aria-label={isAtTop ? 'Faire défiler vers le bas' : 'Retour en haut'}
-        title={isAtTop ? 'Faire défiler vers le bas' : 'Retour en haut'}
-        onClick={handleScrollButton}
+        aria-label="Retour en haut"
+        title="Retour en haut"
+        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
         className="back-to-top"
+        style={{
+          opacity: isAtTop ? 0 : 1,
+          pointerEvents: isAtTop ? 'none' : 'auto',
+          transform: isAtTop ? 'scale(0.8)' : 'scale(1)',
+          transition: 'opacity 0.25s ease, transform 0.25s ease',
+        }}
       >
-        <span
-          className="material-symbols-outlined"
-          style={{ fontSize: 28, transition: 'transform 0.3s ease', transform: `rotate(${isAtTop ? 180 : 0}deg)` }}
-        >
+        <span className="material-symbols-outlined" style={{ fontSize: 28 }}>
           keyboard_arrow_up
         </span>
       </button>
