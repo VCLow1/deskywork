@@ -43,6 +43,16 @@ export default function AdminMarketplaceStats({ session }) {
   const conversion = Number(mpStats?.stats?.taux_conversion || 0);
   const clickRate = vues > 0 ? Math.min(100, Math.round((clics / vues) * 1000) / 10) : 0;
 
+  const isPartner = Boolean(
+    mpStats?.is_partner ||
+    tenant?.settings?.partenaire_officiel ||
+    tenant?.slug === 'nero-coworking' ||
+    tenant?.slug === 'thirty-three-space' ||
+    tenant?.id === 'a1111111-1111-4111-8111-111111111111' ||
+    tenant?.id === 'a3333333-3333-4333-8333-333333333333'
+  );
+  const isLocked = !isPartner && Boolean(mpStats?.locked);
+
   return (
     <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
       <div className="space-y-6">
@@ -52,9 +62,16 @@ export default function AdminMarketplaceStats({ session }) {
               <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">
                 Statistiques Marketplace
               </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-[11px] font-bold uppercase tracking-wider">
-                Pack Premium
-              </span>
+              {isPartner ? (
+                <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/30">
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>verified</span>
+                  Partenaire Officiel — Pack Premium (90 DT/mois)
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-[11px] font-bold uppercase tracking-wider">
+                  Pack Premium
+                </span>
+              )}
             </div>
             <p className="text-sm text-on-surface-variant mt-1">
               Suivez l'audience, les clics et les réservations générées depuis votre fiche publique DeskyWork.
@@ -94,7 +111,7 @@ export default function AdminMarketplaceStats({ session }) {
               <div key={i} className="h-28 rounded-3xl bg-surface-container-lowest border border-outline-variant/10 animate-pulse" />
             ))}
           </div>
-        ) : mpStats?.locked ? (
+        ) : isLocked ? (
           <div className="bg-surface-container-lowest rounded-3xl p-6 sm:p-8 border border-outline-variant/15 shadow-xs space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4">

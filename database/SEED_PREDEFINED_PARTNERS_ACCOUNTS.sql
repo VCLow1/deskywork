@@ -30,10 +30,10 @@ INSERT INTO public.tenants (
     'actif',
     'enterprise',
     'A',
-    220.00,
+    90.00,
     999999,
     999999,
-    '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb,
+    '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true,"tarif_partenaire":90}'::jsonb,
     NOW(),
     NOW()
 )
@@ -50,10 +50,10 @@ ON CONFLICT (id) DO UPDATE SET
     statut = 'actif',
     plan = 'enterprise',
     tier = 'A',
-    montant_mensuel = 220.00,
+    montant_mensuel = 90.00,
     limite_membres = 999999,
     limite_espaces = 999999,
-    settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb,
+    settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true,"tarif_partenaire":90}'::jsonb,
     updated_at = NOW();
 
 INSERT INTO public.tenants (
@@ -77,10 +77,10 @@ INSERT INTO public.tenants (
     'actif',
     'enterprise',
     'A',
-    220.00,
+    90.00,
     999999,
     999999,
-    '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb,
+    '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true,"tarif_partenaire":90}'::jsonb,
     NOW(),
     NOW()
 )
@@ -97,10 +97,10 @@ ON CONFLICT (id) DO UPDATE SET
     statut = 'actif',
     plan = 'enterprise',
     tier = 'A',
-    montant_mensuel = 220.00,
+    montant_mensuel = 90.00,
     limite_membres = 999999,
     limite_espaces = 999999,
-    settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true}'::jsonb,
+    settings = '{"saas_pack":"premium","onboarding_completed":true,"limite_staff":10,"partenaire_officiel":true,"tarif_partenaire":90}'::jsonb,
     updated_at = NOW();
 
 -- ─────────────────────────────────────────────────────────────────────────

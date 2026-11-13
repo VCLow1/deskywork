@@ -4,7 +4,7 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
 
 function Gauge({ label, used, max, icon }) {
-  const unlimited = max === null || max === undefined;
+  const unlimited = max === null || max === undefined || Number(max) >= 9999;
   const pct = unlimited ? 100 : Math.min(100, Math.round(((used || 0) / Math.max(1, max)) * 100));
   const near = !unlimited && pct >= 85;
   return (
@@ -100,9 +100,17 @@ export default function AdminSubscription({ session }) {
           <div className="bg-surface-container-lowest rounded-3xl p-6 border border-outline-variant/15">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
               <div>
-                <span className="inline-block px-3 py-1 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-xs font-bold mb-2">
-                  Pack Actif
-                </span>
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className="inline-block px-3 py-1 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-xs font-bold">
+                    Pack Actif
+                  </span>
+                  {activePack?.is_partner && (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-500/30">
+                      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>verified</span>
+                      Partenaire Officiel — Remise Exceptionnelle (90.000 DT / mois HT au lieu de 220 DT)
+                    </span>
+                  )}
+                </div>
                 <h2 className="font-sora font-bold text-2xl text-primary">
                   Pack {activePack?.name} — {Number(activePack?.prix || 0).toFixed(3)} DT <span className="text-sm font-normal text-on-surface-variant">/ mois HT</span>
                 </h2>
@@ -151,9 +159,16 @@ export default function AdminSubscription({ session }) {
                           </span>
                         ) : null}
                       </div>
-                      <p className="font-sora font-extrabold text-2xl text-[#f95d00] mb-4">
-                        {p.prix} DT <span className="text-xs font-normal text-on-surface-variant">/ mois</span>
-                      </p>
+                      <div className="mb-4">
+                        <p className="font-sora font-extrabold text-2xl text-[#f95d00]">
+                          {activePack?.is_partner && p.key === 'premium' ? '90' : p.prix} DT <span className="text-xs font-normal text-on-surface-variant">/ mois HT</span>
+                        </p>
+                        {activePack?.is_partner && p.key === 'premium' && (
+                          <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                            Tarif partenaire appliqué (prix catalogue : 220 DT)
+                          </p>
+                        )}
+                      </div>
                       <ul className="space-y-2 mb-5">
                         {(p.features || []).map((f, idx) => (
                           <li key={idx} className="flex items-start gap-2 text-xs text-primary">
