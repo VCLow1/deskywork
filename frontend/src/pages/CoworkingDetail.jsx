@@ -153,7 +153,19 @@ export default function CoworkingDetail() {
   }
 
   const c = coworking;
-  const heroImg = c.cover_url || c.logo_url || FALLBACK_IMG;
+  const isNero = Boolean(
+    c.id === 'nero-coworking' ||
+    (c.slug && c.slug.toLowerCase().includes('nero')) ||
+    (c.nom && c.nom.toLowerCase().includes('nero')) ||
+    (c.subdomain && c.subdomain.toLowerCase().includes('nero'))
+  );
+  const isThirtyThree = Boolean(
+    c.id === 'thirty-three-space' ||
+    (c.slug && c.slug.toLowerCase().includes('thirty')) ||
+    (c.nom && c.nom.toLowerCase().includes('thirty'))
+  );
+  const effectiveLogo = c.logo_url || (isNero ? PARTNER_NERO_BASE64 : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : null));
+  const heroImg = c.cover_url || effectiveLogo || FALLBACK_IMG;
 
   return (
     <div style={{ minHeight: '100vh', background: EC.bg, color: EC.navy, fontFamily: 'Inter, sans-serif', paddingBottom: 64, transition: 'background .3s ease, color .3s ease' }}>
@@ -166,9 +178,37 @@ export default function CoworkingDetail() {
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '2.2rem 24px' }}>
           <div style={{ maxWidth: 1240, margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              {c.logo_url && (
-                <img src={c.logo_url} alt="logo"
-                  style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'contain', background: '#ffffff', border: '2px solid rgba(255,255,255,0.7)', padding: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }} />
+              {effectiveLogo && (
+                <div
+                  style={{
+                    height: 76,
+                    minWidth: isNero ? 170 : 76,
+                    maxWidth: isNero ? 220 : 120,
+                    borderRadius: 18,
+                    background: isNero ? '#1e293b' : '#ffffff',
+                    border: isNero ? '2.5px solid rgba(255,255,255,0.85)' : '2.5px solid rgba(255,255,255,0.95)',
+                    padding: isNero ? '10px 20px' : '8px 12px',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <img
+                    src={effectiveLogo}
+                    alt={c.nom}
+                    style={{
+                      height: isNero ? 46 : 56,
+                      maxWidth: isNero ? 170 : 90,
+                      width: 'auto',
+                      objectFit: 'contain',
+                      display: 'block',
+                      filter: isNero ? 'drop-shadow(0 2px 8px rgba(0,0,0,0.45))' : 'none',
+                    }}
+                  />
+                </div>
               )}
               <div>
                 <span style={{ background: 'linear-gradient(135deg,#f95d00,#ff8a3d)', color: '#ffffff', borderRadius: 8, padding: '5px 12px', fontSize: '.72rem', fontWeight: 800, display: 'inline-block', marginBottom: 10, letterSpacing: '.04em', boxShadow: '0 8px 18px rgba(249,93,0,0.3)' }}>

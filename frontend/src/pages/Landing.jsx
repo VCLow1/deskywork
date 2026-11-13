@@ -1410,10 +1410,10 @@ export default function Landing({ session }) {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          height: 64px;
-          min-width: 170px;
-          padding: 8px 24px;
-          border-radius: 18px;
+          height: 72px;
+          min-width: 190px;
+          padding: 10px 28px;
+          border-radius: 20px;
           background: ${dark ? 'rgba(255,255,255,0.06)' : '#ffffff'};
           border: 1.5px solid ${dark ? 'rgba(255,255,255,0.14)' : 'rgba(16,15,13,0.1)'};
           backdrop-filter: blur(10px);
@@ -1446,13 +1446,13 @@ export default function Landing({ session }) {
         }
         .partner-card .partner-visual {
           width: 100%;
-          height: 192px; /* h-48 */
+          height: 220px;
           display: flex;
           align-items: center;
           justify-content: center;
           position: relative;
           overflow: hidden;
-          padding: 24px;
+          padding: 24px 32px;
         }
         .partner-card .partner-tag {
           display: inline-block;
@@ -2125,7 +2125,7 @@ export default function Landing({ session }) {
               <img
                 src={partnerThirtyThree}
                 alt="Thirty Three Space"
-                style={{ height: 44, maxWidth: 150, objectFit: 'contain', display: 'block' }}
+                style={{ height: 48, maxWidth: 165, objectFit: 'contain', display: 'block' }}
               />
             </a>
             <div
@@ -2133,17 +2133,18 @@ export default function Landing({ session }) {
               className="trust-logo-card"
               style={{
                 background: dark ? 'rgba(255,255,255,0.06)' : '#1e293b',
-                border: dark ? '1.5px solid rgba(255,255,255,0.14)' : '1.5px solid #334155',
+                border: dark ? '1.5px solid rgba(255,255,255,0.2)' : '1.5px solid #334155',
               }}
             >
               <img
                 src={partnerNero}
                 alt="Néro Coworking Space"
                 style={{
-                  height: 32,
-                  maxWidth: 140,
+                  height: 38,
+                  maxWidth: 155,
                   objectFit: 'contain',
                   display: 'block',
+                  filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.4))',
                 }}
               />
             </div>
@@ -2506,17 +2507,20 @@ export default function Landing({ session }) {
                   style={{
                     background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #1e293b 100%)',
                     borderBottom: '1px solid rgba(255,255,255,0.08)',
+                    padding: '24px 32px',
                   }}
                 >
                   <img
                     src={partnerNero}
                     alt="Nero Coworking Space"
                     style={{
-                      maxHeight: 52,
-                      maxWidth: '80%',
+                      height: 115,
+                      maxHeight: 120,
+                      maxWidth: '88%',
+                      width: 'auto',
                       objectFit: 'contain',
                       display: 'block',
-                      filter: 'drop-shadow(0 4px 14px rgba(0,0,0,0.35))',
+                      filter: 'drop-shadow(0 8px 24px rgba(0,0,0,0.5))',
                     }}
                   />
                   <div
@@ -2548,13 +2552,11 @@ export default function Landing({ session }) {
                   <div className="d-flex align-items-center gap-2 mb-2">
                     <span
                       style={{
-                        background: 'rgba(249,93,0,0.12)',
-                        border: '1px solid rgba(249,93,0,0.3)',
-                        color: '#f95d00',
-                        fontSize: '.72rem',
-                        fontWeight: 800,
-                        letterSpacing: '.06em',
-                        textTransform: 'uppercase',
+                        background: EC.soft,
+                        border: `1px solid ${EC.outline}`,
+                        color: EC.cobalt,
+                        fontSize: '.75rem',
+                        fontWeight: 700,
                         borderRadius: 999,
                         padding: '3px 10px',
                         display: 'inline-flex',
@@ -2562,8 +2564,8 @@ export default function Landing({ session }) {
                         gap: 5,
                       }}
                     >
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
-                      {t('landing.officialPartnerBadge')}
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: EC.cobalt }}>location_on</span>
+                      Tunis · Ennasr 2
                     </span>
                   </div>
 
@@ -2616,14 +2618,17 @@ export default function Landing({ session }) {
                   style={{
                     background: '#ffffff',
                     borderBottom: '1px solid rgba(0,0,0,0.06)',
+                    padding: '20px 32px',
                   }}
                 >
                   <img
                     src={partnerThirtyThree}
                     alt="Thirty Three Space"
                     style={{
-                      maxHeight: 96,
-                      maxWidth: '80%',
+                      height: 145,
+                      maxHeight: 150,
+                      maxWidth: '85%',
+                      width: 'auto',
                       objectFit: 'contain',
                       display: 'block',
                     }}
@@ -2657,13 +2662,11 @@ export default function Landing({ session }) {
                   <div className="d-flex align-items-center gap-2 mb-2">
                     <span
                       style={{
-                        background: 'rgba(249,93,0,0.12)',
-                        border: '1px solid rgba(249,93,0,0.3)',
-                        color: '#f95d00',
-                        fontSize: '.72rem',
-                        fontWeight: 800,
-                        letterSpacing: '.06em',
-                        textTransform: 'uppercase',
+                        background: EC.soft,
+                        border: `1px solid ${EC.outline}`,
+                        color: EC.cobalt,
+                        fontSize: '.75rem',
+                        fontWeight: 700,
                         borderRadius: 999,
                         padding: '3px 10px',
                         display: 'inline-flex',
@@ -2671,8 +2674,8 @@ export default function Landing({ session }) {
                         gap: 5,
                       }}
                     >
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
-                      {t('landing.officialPartnerBadge')}
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: EC.cobalt }}>location_on</span>
+                      Tunis · Les Berges du Lac 2
                     </span>
                   </div>
 
