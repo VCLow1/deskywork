@@ -4,14 +4,17 @@ require('dotenv').config();
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
 
 if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
   console.error('Variables SUPABASE_URL, SUPABASE_ANON_KEY et SUPABASE_SERVICE_ROLE_KEY requises.');
 }
 
 // Client admin (service role) — contourne le RLS
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseAdmin = createClient(
+  supabaseUrl || 'https://knekaeqnasweyrrhtimb.supabase.co',
+  supabaseServiceKey || supabaseAnonKey || 'dummy'
+);
 
 // Assurer l'existence des buckets de stockage publics (images, avatars, documents)
 async function ensureStorageBucket() {

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { guestApi } from '../services/api';
@@ -227,11 +228,11 @@ function TestiCard({ quote, name, role, initial, dark }) {
 
 /* ─── Diaporama d'images en fond ─── */
 const HERO_SLIDES = [
-  { src: '/images/coworking/space-1.jpg',   title: 'Open Space',         tag: 'Travail collaboratif' },
-  { src: '/images/coworking/space-2.jpg',   title: 'Bureaux privatifs',  tag: 'Concentration totale' },
-  { src: '/images/coworking/space-3.jpg',   title: 'Bureaux dédiés',     tag: 'Équipes & startups' },
-  { src: '/images/coworking/space-4.jpg',   title: 'Salles de réunion',  tag: 'Réunions & workshops' },
-  { src: '/images/coworking/space-5.jpg',   title: 'Espace lounge',      tag: 'Pause & networking' },
+  { src: '/images/coworking/space-1.jpg', title: 'Open Space', tag: 'Travail collaboratif' },
+  { src: '/images/coworking/space-2.jpg', title: 'Bureaux privatifs', tag: 'Concentration totale' },
+  { src: '/images/coworking/space-3.jpg', title: 'Bureaux dédiés', tag: 'Équipes & startups' },
+  { src: '/images/coworking/space-4.jpg', title: 'Salles de réunion', tag: 'Réunions & workshops' },
+  { src: '/images/coworking/space-5.jpg', title: 'Espace lounge', tag: 'Pause & networking' },
 ];
 
 /* ─── Modale Promos ─── */
@@ -792,8 +793,8 @@ export default function Landing({ session }) {
         .hero-shade {
           position:absolute; inset:0; z-index:1;
           background:${dark
-            ? 'linear-gradient(180deg, rgba(12,11,10,0.72) 0%, rgba(12,11,10,0.58) 42%, rgba(12,11,10,0.94) 100%)'
-            : 'linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(255,255,255,0.58) 42%, rgba(255,255,255,0.95) 100%)'};
+          ? 'linear-gradient(180deg, rgba(12,11,10,0.72) 0%, rgba(12,11,10,0.58) 42%, rgba(12,11,10,0.94) 100%)'
+          : 'linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(255,255,255,0.58) 42%, rgba(255,255,255,0.95) 100%)'};
           pointer-events:none;
           transition:background .3s ease;
         }

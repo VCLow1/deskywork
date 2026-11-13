@@ -492,9 +492,6 @@ async function uploadPhoto(req, res) {
     res.status(500).json({ error: err.message || 'Erreur lors de l\'upload de la photo.' });
   }
 }
-    res.status(500).json({ error: err.message });
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // CDC v3.0 — CONSTANTES PACKS SAAS & HELPERS
