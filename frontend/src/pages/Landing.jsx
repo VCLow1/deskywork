@@ -8,8 +8,9 @@ import { useLanguage } from '../context/LanguageContext';
 import { SPACE_TYPES, SPACE_TYPE_LABELS, EQUIPMENTS } from '../constants/spaceTypes';
 import { SAAS_PACKS } from '../constants/saasPacks';
 import { formatDT, formatDateTunis, formatTimeTunis } from '../utils/format';
-import partnerThirtyThree from '../assets/partners/thirty-three-space.png';
-import partnerNero from '../assets/partners/nero-coworking.png';
+import { PARTNER_THIRTY_THREE_BASE64, PARTNER_NERO_BASE64 } from '../assets/partners/partnerLogos';
+const partnerThirtyThree = PARTNER_THIRTY_THREE_BASE64;
+const partnerNero = PARTNER_NERO_BASE64;
 
 const EQUIPMENT_ICONS = {
   'Wi-Fi': 'wifi',
@@ -1401,15 +1402,16 @@ export default function Landing({ session }) {
           width: 96px;
           height: 96px;
           border-radius: 50%;
-          padding: 8px;
-          background: transparent !important;
-          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.18)' : 'rgba(16,15,13,0.12)'};
+          padding: 14px;
+          background: ${dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)'};
+          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.14)' : 'rgba(16,15,13,0.1)'};
+          backdrop-filter: blur(8px);
           overflow: hidden;
           transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
           text-decoration: none;
         }
         .trust-logo-card:hover {
-          transform: translateY(-3px) scale(1.05);
+          transform: translateY(-3px) scale(1.06);
           border-color: #f95d00;
           box-shadow: 0 8px 24px rgba(249,93,0,0.22);
         }
@@ -1995,7 +1997,7 @@ export default function Landing({ session }) {
               <img
                 src={partnerThirtyThree}
                 alt="Thirty Three Space"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: '50%' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
               />
             </a>
             <div
@@ -2010,8 +2012,7 @@ export default function Landing({ session }) {
                   height: '100%',
                   objectFit: 'contain',
                   display: 'block',
-                  borderRadius: '50%',
-                  filter: dark ? 'invert(1)' : 'none',
+                  filter: dark ? 'none' : 'brightness(0)',
                 }}
               />
             </div>
