@@ -525,8 +525,8 @@ export default function Dashboard({ session }) {
 
       {/* ═══════ HEADER ═══════ */}
       <header className="mb-7 bento-card">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="min-w-0">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="shrink-0 min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-on-surface-variant mb-1">
               {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </p>

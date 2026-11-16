@@ -344,8 +344,8 @@ export default function SuperAdminDashboard({ session }) {
       <div className="p-2 sm:p-6 lg:p-8 max-w-[1400px] mx-auto">
 
         {/* ── En-tête + filtre global ─────────────────────────────────────── */}
-        <div className="mb-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-          <div>
+        <div className="mb-6 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="shrink-0">
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-on-surface-variant mb-1">
               Vue globale de la plateforme · {windowLabel(period)}
             </p>

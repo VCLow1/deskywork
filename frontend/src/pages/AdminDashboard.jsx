@@ -593,16 +593,16 @@ export default function AdminDashboard({ session }) {
     <PortalLayout profile={profile} onLogout={handleLogout}>
 
       {/* ── En-tête + filtre global ─────────────────────────────────────── */}
-      <header className="mb-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1 truncate">
+      <header className="mb-6 space-y-3">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="shrink-0 min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-0.5">
               {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </p>
-            <h1 className="font-sora font-bold text-primary" style={{ fontSize: 'clamp(20px, 4vw, 26px)' }}>
+            <h1 className="font-sora font-bold text-primary text-2xl sm:text-3xl leading-tight">
               {welcomeText}, {profile?.prenom || 'Admin'}
             </h1>
-            <p className="text-on-surface-variant text-sm mt-1 flex flex-wrap gap-1 items-center">
+            <p className="text-on-surface-variant text-sm mt-0.5 flex flex-wrap gap-1.5 items-center">
               <span>Tableau de bord — {getRoleLabel(profile?.role)}</span>
               {lastRefresh && (
                 <span className="text-xs text-on-surface-variant/60">
@@ -611,14 +611,14 @@ export default function AdminDashboard({ session }) {
               )}
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2.5">
             <PeriodFilter value={period} onChange={setPeriod} />
             {profile?.role !== 'staff' && (
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleExportPdf}
                   disabled={exportingPdf}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-low text-primary border border-outline-variant/20 hover:bg-surface-container transition-colors disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-low text-primary border border-outline-variant/20 hover:bg-surface-container transition-colors disabled:opacity-50 shadow-2xs"
                 >
                   <span className="material-symbols-outlined text-[17px] text-[#f95d00]">
                     {exportingPdf ? 'sync' : 'picture_as_pdf'}
@@ -628,7 +628,7 @@ export default function AdminDashboard({ session }) {
                 <button
                   onClick={handleExport}
                   disabled={exporting || !kpis}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50 shadow-2xs"
                 >
                   <span className="material-symbols-outlined text-[17px]">
                     {exporting ? 'sync' : 'download'}

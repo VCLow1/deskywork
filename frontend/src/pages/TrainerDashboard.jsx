@@ -320,8 +320,8 @@ export default function TrainerDashboard({ session }) {
       <div>
 
         {/* Header */}
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
+        <div className="mb-6 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="shrink-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="w-7 h-7 rounded-lg bg-secondary/10 flex items-center justify-center">
                 <span className="material-symbols-outlined text-secondary" style={{ fontSize: 16 }}>school</span>
