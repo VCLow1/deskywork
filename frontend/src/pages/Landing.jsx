@@ -14,6 +14,21 @@ import { PARTNER_THIRTY_THREE_BASE64, PARTNER_NERO_BASE64 } from '../assets/part
 const partnerThirtyThree = PARTNER_THIRTY_THREE_BASE64;
 const partnerNero = PARTNER_NERO_BASE64;
 
+const TRUST_MARQUEE_ITEMS = [
+  { id: 'tt-1', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-1', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+  { id: 'tt-2', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-2', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+  { id: 'tt-3', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-3', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+  { id: 'tt-4', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-4', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+  { id: 'tt-5', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-5', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+  { id: 'tt-6', name: 'Thirty Three Space', logo: partnerThirtyThree, to: '/coworking/thirty-three-space', isDark: false },
+  { id: 'nero-6', name: 'Néro Coworking Space', logo: partnerNero, to: '/coworking/nero-coworking', isDark: true },
+];
+
 const EQUIPMENT_ICONS = {
   'Wi-Fi': 'wifi',
   'Projecteur': 'videocam',
@@ -1400,31 +1415,96 @@ export default function Landing({ session }) {
         .hero-arrow.prev { left:24px; }
         .hero-arrow.next { right:24px; }
 
-        /* TRUST BAR */
+        /* TRUST BAR & MOVING CIRCULAR LOGOS MARQUEE */
         .trust-bar {
           background: ${dark ? '#1a1612' : '#ffedd8'};
           border-top: 1px solid ${dark ? 'rgba(249,93,0,.2)' : 'rgba(249,93,0,.12)'};
           border-bottom: 1px solid ${dark ? 'rgba(249,93,0,.2)' : 'rgba(249,93,0,.12)'};
           transition: background .3s ease;
+          overflow: hidden;
         }
-        .trust-logo-card {
+        .trust-marquee-wrapper {
+          position: relative;
+          width: 100%;
+          overflow: hidden;
+          padding: 8px 0 16px;
+          display: flex;
+          gap: 28px;
+          user-select: none;
+          mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+          -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+        }
+        .trust-marquee-track {
+          display: flex;
+          align-items: center;
+          gap: 28px;
+          flex-shrink: 0;
+          animation: trustScrollLeft 30s linear infinite;
+          will-change: transform;
+        }
+        .trust-marquee-wrapper:hover .trust-marquee-track {
+          animation-play-state: paused;
+        }
+        @keyframes trustScrollLeft {
+          0% {
+            transform: translateX(0);
+          }
+          100% {
+            transform: translateX(calc(-100% - 28px));
+          }
+        }
+        .trust-circle-card {
+          width: 96px;
+          height: 96px;
+          border-radius: 50%;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          height: 72px;
-          min-width: 190px;
-          padding: 10px 28px;
-          border-radius: 20px;
-          background: ${dark ? 'rgba(255,255,255,0.06)' : '#ffffff'};
-          border: 1.5px solid ${dark ? 'rgba(255,255,255,0.14)' : 'rgba(16,15,13,0.1)'};
-          backdrop-filter: blur(10px);
-          transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+          flex-shrink: 0;
           text-decoration: none;
+          cursor: pointer;
+          transition: transform .25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color .25s ease, box-shadow .25s ease;
+          position: relative;
+          padding: 12px;
+          box-sizing: border-box;
         }
-        .trust-logo-card:hover {
-          transform: translateY(-3px) scale(1.03);
-          border-color: #f95d00;
-          box-shadow: 0 8px 24px rgba(249,93,0,0.22);
+        .trust-circle-card:hover {
+          transform: translateY(-4px) scale(1.12);
+          border-color: #f95d00 !important;
+          box-shadow: 0 10px 24px rgba(249,93,0,0.35) !important;
+        }
+        .trust-circle-card.light-card {
+          background: ${dark ? 'rgba(255,255,255,0.96)' : '#ffffff'};
+          border: 2px solid ${dark ? 'rgba(249,93,0,0.28)' : 'rgba(249,93,0,0.18)'};
+          box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+        }
+        .trust-circle-card.dark-card {
+          background: ${dark ? '#0c1222' : '#1e293b'};
+          border: 2px solid ${dark ? 'rgba(249,93,0,0.35)' : '#334155'};
+          box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+        }
+        @media (max-width: 640px) {
+          .trust-marquee-wrapper {
+            gap: 18px;
+            padding: 6px 0 12px;
+          }
+          .trust-marquee-track {
+            gap: 18px;
+            animation-duration: 22s;
+          }
+          .trust-circle-card {
+            width: 78px;
+            height: 78px;
+            padding: 8px;
+          }
+          @keyframes trustScrollLeft {
+            0% {
+              transform: translateX(0);
+            }
+            100% {
+              transform: translateX(calc(-100% - 18px));
+            }
+          }
         }
 
         /* PARTNER CARD (EXCLUSIVE PARTNERS NERO & THIRTY THREE) */
@@ -2109,46 +2189,70 @@ export default function Landing({ session }) {
         </button>
       </section>
 
-      {/* ══ TRUST BAR (PARTENAIRES HISTORIQUES) ══ */}
-      <section id="partenaires-logos" className="trust-bar py-5" style={{ scrollMarginTop: '100px' }}>
-        <div className="container">
-          <p className="text-center mb-4" style={{ color: EC.cobalt, fontSize: '.76rem', fontWeight: 800, letterSpacing: '.18em', textTransform: 'uppercase' }}>
+      {/* ══ TRUST BAR (PARTENAIRES HISTORIQUES — MARQUEE CIRCULAIRE) ══ */}
+      <section id="partenaires-logos" className="trust-bar py-4" style={{ scrollMarginTop: '100px' }}>
+        <div className="container mb-3">
+          <p className="text-center mb-0" style={{ color: EC.cobalt, fontSize: '.76rem', fontWeight: 800, letterSpacing: '.18em', textTransform: 'uppercase' }}>
             {t('landing.trustText')}
           </p>
-          <div className="d-flex flex-wrap justify-content-center align-items-center gap-4">
-            <a
-              href="https://thirtythreespace.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Thirty Three Space"
-              className="trust-logo-card"
-            >
-              <img
-                src={partnerThirtyThree}
-                alt="Thirty Three Space"
-                style={{ height: 48, maxWidth: 165, objectFit: 'contain', display: 'block' }}
-              />
-            </a>
-            <div
-              title="Néro Coworking Space"
-              className="trust-logo-card"
-              style={{
-                background: dark ? 'rgba(255,255,255,0.06)' : '#1e293b',
-                border: dark ? '1.5px solid rgba(255,255,255,0.2)' : '1.5px solid #334155',
-              }}
-            >
-              <img
-                src={partnerNero}
-                alt="Néro Coworking Space"
-                style={{
-                  height: 38,
-                  maxWidth: 155,
-                  objectFit: 'contain',
-                  display: 'block',
-                  filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.4))',
-                }}
-              />
-            </div>
+        </div>
+
+        <div className="trust-marquee-wrapper" aria-label="Partenaires officiels">
+          <div className="trust-marquee-track">
+            {TRUST_MARQUEE_ITEMS.map((item, i) => (
+              <Link
+                key={`track1-${item.id}-${i}`}
+                to={item.to}
+                title={`${item.name} — Partenaire officiel`}
+                className={`trust-circle-card ${item.isDark ? 'dark-card' : 'light-card'}`}
+              >
+                <img
+                  src={item.logo}
+                  alt={item.name}
+                  style={item.isDark ? {
+                    width: '64px',
+                    height: '30px',
+                    objectFit: 'contain',
+                    display: 'block',
+                    filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.45))',
+                  } : {
+                    width: '54px',
+                    height: '54px',
+                    objectFit: 'contain',
+                    display: 'block',
+                  }}
+                />
+              </Link>
+            ))}
+          </div>
+
+          <div className="trust-marquee-track" aria-hidden="true">
+            {TRUST_MARQUEE_ITEMS.map((item, i) => (
+              <Link
+                key={`track2-${item.id}-${i}`}
+                to={item.to}
+                tabIndex="-1"
+                title={`${item.name} — Partenaire officiel`}
+                className={`trust-circle-card ${item.isDark ? 'dark-card' : 'light-card'}`}
+              >
+                <img
+                  src={item.logo}
+                  alt={item.name}
+                  style={item.isDark ? {
+                    width: '64px',
+                    height: '30px',
+                    objectFit: 'contain',
+                    display: 'block',
+                    filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.45))',
+                  } : {
+                    width: '54px',
+                    height: '54px',
+                    objectFit: 'contain',
+                    display: 'block',
+                  }}
+                />
+              </Link>
+            ))}
           </div>
         </div>
       </section>
