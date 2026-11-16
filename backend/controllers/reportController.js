@@ -67,7 +67,7 @@ async function getAdminReport(req, res) {
   try {
     const tid = req.tenantId;
     const period = String(req.query.period || 'mois');
-    const win = getPeriodWindow(period);
+    const win = getPeriodWindow(period, new Date(), req.query);
     const prev = previousWindow(win);
     const label = periodLabel(win);
     const now = new Date();
@@ -388,7 +388,7 @@ async function getAdminReport(req, res) {
 async function getSuperAdminReport(req, res) {
   try {
     const period = String(req.query.period || 'mois');
-    const win = getPeriodWindow(period);
+    const win = getPeriodWindow(period, new Date(), req.query);
     const prev = previousWindow(win);
     const label = periodLabel(win);
     const now = new Date();

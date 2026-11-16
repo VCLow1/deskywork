@@ -241,7 +241,11 @@ export default function SuperAdminDashboard({ session }) {
     topCoworkings: [],
   };
 
-  const bucketCaption = period === 'jour' ? 'Par heure' : period === 'mois' ? 'Par jour' : period === 'annee' ? 'Par mois' : 'Par année';
+  const pStr = typeof period === 'string' ? period : (period?.key || 'mois');
+  const bucketCaption = pStr.startsWith('jour') ? 'Par heure'
+    : (pStr.startsWith('mois') || pStr.startsWith('semaine') || pStr.startsWith('custom')) ? 'Par jour'
+    : (pStr.startsWith('annee') || pStr.startsWith('trimestre')) ? 'Par mois'
+    : 'Par année';
 
   const planSummary = Object.entries(safeStats.planBreakdown || {})
     .map(([plan, count]) => `${PLAN_LABELS[plan] || plan} ${count}`)

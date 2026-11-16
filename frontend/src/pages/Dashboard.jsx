@@ -219,26 +219,35 @@ export default function Dashboard({ session }) {
     const countRes = (s, e) => (bookings || []).filter(b => b.statut !== 'cancelled' && inRange(b.date_debut, s, e)).length;
     const countForm = (s, e) => (myFormations || []).filter(i => i.statut !== 'annulee' && inRange(i.formations?.date_debut || i.created_at, s, e)).length;
 
-    const y = win.fromJ.getFullYear();
-    const m = win.fromJ.getMonth();
-    if (period === 'jour') {
+    if (win.bucket === 'hour') {
+      const y = win.fromJ.getFullYear();
+      const m = win.fromJ.getMonth();
+      const d = win.fromJ.getDate();
       for (let h = 0; h < 24; h++) {
-        const s = new Date(y, m, win.fromJ.getDate(), h, 0, 0, 0);
-        const e = new Date(y, m, win.fromJ.getDate(), h, 59, 59, 999);
+        const s = new Date(y, m, d, h, 0, 0, 0);
+        const e = new Date(y, m, d, h, 59, 59, 999);
         buckets.push({ label: `${h}h`, reservations: countRes(s, e), formations: countForm(s, e) });
       }
-    } else if (period === 'mois') {
-      const dim = new Date(y, m + 1, 0).getDate();
-      for (let d = 1; d <= dim; d++) {
-        const s = new Date(y, m, d, 0, 0, 0, 0);
-        const e = new Date(y, m, d, 23, 59, 59, 999);
-        buckets.push({ label: String(d), reservations: countRes(s, e), formations: countForm(s, e) });
+    } else if (win.bucket === 'day') {
+      const cur = new Date(win.fromJ);
+      cur.setHours(0, 0, 0, 0);
+      let count = 0;
+      while (cur <= win.toJ && count < 60) {
+        const s = new Date(cur);
+        const e = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 23, 59, 59, 999);
+        buckets.push({ label: cur.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }), reservations: countRes(s, e), formations: countForm(s, e) });
+        cur.setDate(cur.getDate() + 1);
+        count++;
       }
-    } else if (period === 'annee') {
-      for (let mo = 0; mo < 12; mo++) {
-        const s = new Date(y, mo, 1, 0, 0, 0, 0);
-        const e = new Date(y, mo + 1, 0, 23, 59, 59, 999);
-        buckets.push({ label: new Date(y, mo, 1).toLocaleDateString('fr-FR', { month: 'short' }), reservations: countRes(s, e), formations: countForm(s, e) });
+    } else if (win.bucket === 'month') {
+      const cur = new Date(win.fromJ.getFullYear(), win.fromJ.getMonth(), 1);
+      let count = 0;
+      while (cur <= win.toJ && count < 36) {
+        const s = new Date(cur);
+        const e = new Date(cur.getFullYear(), cur.getMonth() + 1, 0, 23, 59, 59, 999);
+        buckets.push({ label: cur.toLocaleDateString('fr-FR', { month: 'short' }), reservations: countRes(s, e), formations: countForm(s, e) });
+        cur.setMonth(cur.getMonth() + 1);
+        count++;
       }
     } else {
       for (let yr = win.fromJ.getFullYear(); yr <= win.toJ.getFullYear(); yr++) {
@@ -250,9 +259,10 @@ export default function Dashboard({ session }) {
     return buckets;
   }, [bookings, myFormations, period]);
 
-  const memberActivityCaption = period === 'jour' ? 'Par heure · ' + windowLabel(period)
-    : period === 'mois' ? 'Par jour · ' + windowLabel(period)
-      : period === 'annee' ? 'Par mois · ' + windowLabel(period)
+  const pStr = typeof period === 'string' ? period : (period?.key || 'mois');
+  const memberActivityCaption = pStr.startsWith('jour') ? 'Par heure · ' + windowLabel(period)
+    : (pStr.startsWith('mois') || pStr.startsWith('semaine') || pStr.startsWith('custom')) ? 'Par jour · ' + windowLabel(period)
+      : (pStr.startsWith('annee') || pStr.startsWith('trimestre')) ? 'Par mois · ' + windowLabel(period)
         : 'Par année · historique';
 
   /* ── Load all data ── */

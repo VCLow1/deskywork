@@ -332,9 +332,12 @@ export default function AdminDashboard({ session }) {
     setError('');
     try {
       const p = periodRef.current;
+      const params = typeof p === 'string' && p.startsWith('custom:')
+        ? { period: 'custom', from: p.split(':')[1], to: p.split(':')[2] }
+        : { period: p };
       const [kpiRes, chartRes, pendingRes, liveRes] = await Promise.all([
-        kpiApi.getAll({ period: p }),
-        kpiApi.getRevenueChart({ period: p }),
+        kpiApi.getAll(params),
+        kpiApi.getRevenueChart(params),
         memberApi.getPendingAccounts().catch(() => ({ pending: [] })),
         sessionApi.getLive().catch(() => ({ live_sessions: null })),
       ]);
@@ -357,7 +360,11 @@ export default function AdminDashboard({ session }) {
     if (!silent) setReportLoading(true);
     setReportError('');
     try {
-      const r = await kpiApi.getReport({ period: periodRef.current });
+      const p = periodRef.current;
+      const params = typeof p === 'string' && p.startsWith('custom:')
+        ? { period: 'custom', from: p.split(':')[1], to: p.split(':')[2] }
+        : { period: p };
+      const r = await kpiApi.getReport(params);
       setReport(r);
     } catch (e) {
       setReportError(e.message);
@@ -489,7 +496,10 @@ export default function AdminDashboard({ session }) {
   const handleExportPdf = async () => {
     setExportingPdf(true);
     try {
-      await kpiApi.downloadPdfReport({ period });
+      const params = typeof period === 'string' && period.startsWith('custom:')
+        ? { period: 'custom', from: period.split(':')[1], to: period.split(':')[2] }
+        : { period };
+      await kpiApi.downloadPdfReport(params);
     } catch (e) {
       alert('Erreur export PDF : ' + e.message);
     } finally {
@@ -556,7 +566,14 @@ export default function AdminDashboard({ session }) {
 
   const win = periodWindow(period);
   const label = windowLabel(period);
-  const bucketCaption = period === 'jour' ? `Par heure · ${label}` : period === 'mois' ? `Par jour · ${label}` : period === 'annee' ? `Par mois · ${label}` : 'Par année · historique';
+  const pStr = typeof period === 'string' ? period : (period?.key || 'mois');
+  const bucketCaption = pStr.startsWith('jour')
+    ? `Par heure · ${label}`
+    : (pStr.startsWith('mois') || pStr.startsWith('semaine') || pStr.startsWith('custom'))
+    ? `Par jour · ${label}`
+    : (pStr.startsWith('annee') || pStr.startsWith('trimestre'))
+    ? `Par mois · ${label}`
+    : `Par année · historique`;
 
   const membersTrend = trendBadge(membres.periode || 0, membres.periodePrecedente || 0);
 

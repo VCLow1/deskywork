@@ -2,16 +2,106 @@
 const { supabaseAdmin } = require('../config/supabase');
 const { computeRemainingMinutes } = require('../models/helpers');
 
-// ─── Fenêtres de période ─────────────────────────────────────────────────
-function getPeriodWindow(period, now = new Date()) {
-  const y = now.getFullYear();
-  const m = now.getMonth();
+// ─── Fenêtres de période enrichies (Pro Analytics) ───────────────────────
+function getPeriodWindow(period, now = new Date(), reqQuery = {}) {
+  const customFrom = reqQuery.from;
+  const customTo = reqQuery.to;
+
+  // 1. Plage personnalisée explicite via query params
+  if (customFrom && customTo) {
+    const fromJ = new Date(customFrom);
+    const toJ = new Date(customTo);
+    if (!isNaN(fromJ) && !isNaN(toJ)) {
+      fromJ.setHours(0, 0, 0, 0);
+      toJ.setHours(23, 59, 59, 999);
+      const ms = Math.max(1, toJ.getTime() - fromJ.getTime());
+      const days = ms / (1000 * 60 * 60 * 24);
+      let bucket = 'day';
+      if (days <= 2) bucket = 'hour';
+      else if (days <= 62) bucket = 'day';
+      else if (days <= 730) bucket = 'month';
+      else bucket = 'year';
+      return { period: 'custom', from: fromJ.toISOString(), to: toJ.toISOString(), fromJ, toJ, ms, bucket };
+    }
+  }
+
+  // 2. Format personnalisé string: 'custom:YYYY-MM-DD:YYYY-MM-DD'
+  if (typeof period === 'string' && period.startsWith('custom:')) {
+    const parts = period.split(':');
+    const f = parts[1];
+    const t = parts[2];
+    if (f && t) {
+      const fromJ = new Date(f + (f.length === 10 ? 'T00:00:00.000Z' : ''));
+      const toJ = new Date(t + (t.length === 10 ? 'T23:59:59.999Z' : ''));
+      if (!isNaN(fromJ) && !isNaN(toJ)) {
+        const ms = Math.max(1, toJ.getTime() - fromJ.getTime());
+        const days = ms / (1000 * 60 * 60 * 24);
+        let bucket = 'day';
+        if (days <= 2) bucket = 'hour';
+        else if (days <= 62) bucket = 'day';
+        else if (days <= 730) bucket = 'month';
+        else bucket = 'year';
+        return { period: 'custom', from: fromJ.toISOString(), to: toJ.toISOString(), fromJ, toJ, ms, bucket };
+      }
+    }
+  }
+
+  // 3. Décalage / Offset : ex. 'mois:-1' (mois dernier), 'jour:-1' (hier), 'semaine:-1'
+  let offset = 0;
+  let baseKey = period || 'mois';
+  if (typeof period === 'string' && period.includes(':')) {
+    const parts = period.split(':');
+    baseKey = parts[0];
+    offset = parseInt(parts[1], 10) || 0;
+  }
+
+  const targetDate = new Date(now);
+  if (baseKey === 'jour' || baseKey === 'aujourdhui') {
+    targetDate.setDate(targetDate.getDate() + offset);
+  } else if (baseKey === 'semaine' || baseKey === '7j') {
+    targetDate.setDate(targetDate.getDate() + (offset * 7));
+  } else if (baseKey === 'mois') {
+    targetDate.setMonth(targetDate.getMonth() + offset);
+  } else if (baseKey === 'trimestre') {
+    targetDate.setMonth(targetDate.getMonth() + (offset * 3));
+  } else if (baseKey === 'annee') {
+    targetDate.setFullYear(targetDate.getFullYear() + offset);
+  }
+
+  const y = targetDate.getFullYear();
+  const m = targetDate.getMonth();
+  const d = targetDate.getDate();
+
   let fromJ, toJ, bucket;
-  switch (period) {
+  switch (baseKey) {
     case 'jour':
-      fromJ = new Date(y, m, now.getDate(), 0, 0, 0, 0);
-      toJ   = new Date(y, m, now.getDate(), 23, 59, 59, 999);
+    case 'aujourdhui':
+      fromJ = new Date(y, m, d, 0, 0, 0, 0);
+      toJ   = new Date(y, m, d, 23, 59, 59, 999);
       bucket = 'hour';
+      break;
+    case 'hier':
+      fromJ = new Date(y, m, d - 1, 0, 0, 0, 0);
+      toJ   = new Date(y, m, d - 1, 23, 59, 59, 999);
+      bucket = 'hour';
+      break;
+    case 'semaine':
+    case '7j':
+      fromJ = new Date(y, m, d - 6, 0, 0, 0, 0);
+      toJ   = new Date(y, m, d, 23, 59, 59, 999);
+      bucket = 'day';
+      break;
+    case 'mois_precedent':
+    case 'mois_dernier':
+      fromJ = new Date(y, m - 1, 1, 0, 0, 0, 0);
+      toJ   = new Date(y, m, 0, 23, 59, 59, 999);
+      bucket = 'day';
+      break;
+    case 'trimestre':
+      const qStartMonth = Math.floor(m / 3) * 3;
+      fromJ = new Date(y, qStartMonth, 1, 0, 0, 0, 0);
+      toJ   = new Date(y, qStartMonth + 3, 0, 23, 59, 59, 999);
+      bucket = 'month';
       break;
     case 'annee':
       fromJ = new Date(y, 0, 1, 0, 0, 0, 0);
@@ -20,7 +110,7 @@ function getPeriodWindow(period, now = new Date()) {
       break;
     case 'tout':
       fromJ = new Date(2020, 0, 1, 0, 0, 0, 0);
-      toJ   = new Date(y, m, now.getDate(), 23, 59, 59, 999);
+      toJ   = new Date(y, m, d, 23, 59, 59, 999);
       bucket = 'year';
       break;
     case 'mois':
@@ -30,7 +120,16 @@ function getPeriodWindow(period, now = new Date()) {
       bucket = 'day';
       break;
   }
-  return { period, from: fromJ.toISOString(), to: toJ.toISOString(), fromJ, toJ, ms: toJ.getTime() - fromJ.getTime(), bucket };
+  return {
+    period: baseKey,
+    offset,
+    from: fromJ.toISOString(),
+    to: toJ.toISOString(),
+    fromJ,
+    toJ,
+    ms: Math.max(1, toJ.getTime() - fromJ.getTime()),
+    bucket,
+  };
 }
 
 function previousWindow(win) {
@@ -51,8 +150,8 @@ function sumMt(items) {
 
 function buildBuckets(win) {
   const out = [];
-  const start = win.fromJ;
   if (win.bucket === 'hour') {
+    const start = win.fromJ;
     for (let h = 0; h < 24; h++) {
       out.push({
         label: `${String(h).padStart(2, '0')}h`,
@@ -61,25 +160,34 @@ function buildBuckets(win) {
       });
     }
   } else if (win.bucket === 'day') {
-    const y = start.getFullYear(), mo = start.getMonth();
-    const last = new Date(y, mo + 1, 0).getDate();
-    for (let d = 1; d <= last; d++) {
-      out.push({ label: String(d), start: new Date(y, mo, d, 0, 0, 0, 0), end: new Date(y, mo, d, 23, 59, 59, 999) });
+    const cur = new Date(win.fromJ);
+    cur.setHours(0, 0, 0, 0);
+    let count = 0;
+    while (cur <= win.toJ && count < 100) {
+      const dStart = new Date(cur);
+      const dEnd = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 23, 59, 59, 999);
+      const label = cur.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      out.push({ label, start: dStart, end: dEnd });
+      cur.setDate(cur.getDate() + 1);
+      count++;
     }
   } else if (win.bucket === 'month') {
-    for (let i = 0; i < 12; i++) {
-      out.push({
-        label: new Date(start.getFullYear(), i, 1).toLocaleDateString('fr-FR', { month: 'short' }),
-        start: new Date(start.getFullYear(), i, 1),
-        end:   new Date(start.getFullYear(), i + 1, 0, 23, 59, 59, 999),
-      });
+    const cur = new Date(win.fromJ.getFullYear(), win.fromJ.getMonth(), 1);
+    let count = 0;
+    while (cur <= win.toJ && count < 48) {
+      const mStart = new Date(cur);
+      const mEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0, 23, 59, 59, 999);
+      const label = cur.toLocaleDateString('fr-FR', { month: 'short', year: win.toJ.getFullYear() !== win.fromJ.getFullYear() ? '2-digit' : undefined });
+      out.push({ label, start: mStart, end: mEnd });
+      cur.setMonth(cur.getMonth() + 1);
+      count++;
     }
   } else {
-    for (let yr = start.getFullYear(); yr <= win.toJ.getFullYear(); yr++) {
+    for (let yr = win.fromJ.getFullYear(); yr <= win.toJ.getFullYear(); yr++) {
       out.push({ label: String(yr), start: new Date(yr, 0, 1), end: new Date(yr, 11, 31, 23, 59, 59, 999) });
     }
   }
-  return out;
+  return out.length > 0 ? out : [{ label: 'Période', start: win.fromJ, end: win.toJ }];
 }
 
 function inBucket(date, b) { return date >= b.start && date <= b.end; }
@@ -94,7 +202,7 @@ async function getAdminKpis(req, res) {
     const todayStr = today.toISOString().split('T')[0];
     const tid      = req.tenantId;
     const period   = String(req.query.period || 'mois');
-    const win      = getPeriodWindow(period, today);
+    const win      = getPeriodWindow(period, today, req.query);
     const prev     = previousWindow(win);
 
     const debutMois         = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
@@ -306,7 +414,7 @@ async function getRevenueChart(req, res) {
     const now    = new Date();
     const tid    = req.tenantId;
     const period = String(req.query.period || 'mois');
-    const win    = getPeriodWindow(period, now);
+    const win    = getPeriodWindow(period, now, req.query);
     const buckets = buildBuckets(win);
     const W_FROM  = buckets[0].start.toISOString();
     const W_TO    = buckets[buckets.length - 1].end.toISOString();

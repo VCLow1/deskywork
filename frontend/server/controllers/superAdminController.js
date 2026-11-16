@@ -1,6 +1,7 @@
 // controllers/superAdminController.js — MODULE S6 : Super Admin (Tenants + Users)
 const { supabaseAdmin } = require('../config/supabase');
 const { auditLog } = require('../middleware/guards');
+const { getPeriodWindow, buildBuckets } = require('./kpisController');
 
 // GET /api/super-admin/tenants
 async function listTenants(req, res) {
@@ -202,66 +203,6 @@ async function onboardTenant(req, res) {
   res.json({ message: `Invitation envoyée à ${email} pour gérer "${tenant.nom}".`, user: { id: authUser.user.id, email } });
 }
 
-// GET /api/super-admin/stats?period=jour|mois|annee|tout
-function getPeriodWindow(period, now = new Date()) {
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  let fromJ, toJ, bucket;
-  switch (period) {
-    case 'jour':
-      fromJ = new Date(y, m, now.getDate(), 0, 0, 0, 0);
-      toJ = new Date(y, m, now.getDate(), 23, 59, 59, 999);
-      bucket = 'hour';
-      break;
-    case 'annee':
-      fromJ = new Date(y, 0, 1, 0, 0, 0, 0);
-      toJ = new Date(y, 11, 31, 23, 59, 59, 999);
-      bucket = 'month';
-      break;
-    case 'tout':
-      fromJ = new Date(2020, 0, 1, 0, 0, 0, 0);
-      toJ = new Date(y, m, now.getDate(), 23, 59, 59, 999);
-      bucket = 'year';
-      break;
-    case 'mois':
-    default:
-      fromJ = new Date(y, m, 1, 0, 0, 0, 0);
-      toJ = new Date(y, m + 1, 0, 23, 59, 59, 999);
-      bucket = 'day';
-      break;
-  }
-  return { period, from: fromJ.toISOString(), to: toJ.toISOString(), fromJ, toJ, bucket };
-}
-
-function buildBuckets(win) {
-  const out = [];
-  const start = win.fromJ;
-  if (win.bucket === 'hour') {
-    for (let h = 0; h < 24; h++) {
-      const s = new Date(start.getFullYear(), start.getMonth(), start.getDate(), h, 0, 0, 0);
-      const e = new Date(start.getFullYear(), start.getMonth(), start.getDate(), h, 59, 59, 999);
-      out.push({ label: `${String(h).padStart(2, '0')}h`, start: s, end: e });
-    }
-  } else if (win.bucket === 'day') {
-    const y = start.getFullYear(); const m = start.getMonth();
-    const last = new Date(y, m + 1, 0).getDate();
-    for (let d = 1; d <= last; d++) {
-      out.push({ label: String(d), start: new Date(y, m, d, 0, 0, 0, 0), end: new Date(y, m, d, 23, 59, 59, 999) });
-    }
-  } else if (win.bucket === 'month') {
-    const y = start.getFullYear();
-    for (let i = 0; i < 12; i++) {
-      const s = new Date(y, i, 1);
-      out.push({ label: s.toLocaleDateString('fr-FR', { month: 'short' }), start: s, end: new Date(y, i + 1, 0, 23, 59, 59, 999) });
-    }
-  } else {
-    for (let yr = start.getFullYear(); yr <= win.toJ.getFullYear(); yr++) {
-      out.push({ label: String(yr), start: new Date(yr, 0, 1), end: new Date(yr, 11, 31, 23, 59, 59, 999) });
-    }
-  }
-  return out;
-}
-
 function pctChange(cur, prev) {
   if (prev > 0) return Math.round(((cur - prev) / prev) * 100);
   return cur > 0 ? 100 : 0;
@@ -270,7 +211,7 @@ function pctChange(cur, prev) {
 async function getStats(req, res) {
   try {
     const period = String(req.query.period || 'mois');
-    const win = getPeriodWindow(period);
+    const win = getPeriodWindow(period, new Date(), req.query);
     const prevEnd = new Date(win.fromJ.getTime() - 1);
     const prevFrom = new Date(prevEnd.getTime() - (win.toJ.getTime() - win.fromJ.getTime()));
     const prevWin = { from: prevFrom.toISOString(), to: prevEnd.toISOString() };

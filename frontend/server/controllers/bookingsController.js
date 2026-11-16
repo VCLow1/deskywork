@@ -171,12 +171,8 @@ async function createBooking(req, res) {
       });
     }
 
-    // Statut : Event Space toujours soumis à validation manuelle ('pending') ; sinon selon réglage tenant
-    let initialStatut = 'pending';
-    if (bookingTenantId && espData?.type !== 'event_space') {
-      const { data: tenantCfg } = await supabaseAdmin.from('tenants').select('settings').eq('id', bookingTenantId).maybeSingle();
-      if (tenantCfg?.settings?.auto_confirmation === true) initialStatut = 'confirmed';
-    }
+    // Approbation obligatoire par le coworking pour TOUTES les réservations (espaces ou formations)
+    const initialStatut = 'pending';
 
     // Normalisation du mode pour respecter la contrainte CHECK (mode IN ('online', 'on_site', 'phone'))
     // CDC v3.0 D1 : règlement 100 % sur place — « online » n'est plus proposé.
