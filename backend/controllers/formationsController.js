@@ -106,7 +106,7 @@ async function getFormation(req, res) {
 
 async function createFormation(req, res) {
   try {
-    const { titre, description, formateur_id, espace_id, date_debut, date_fin, capacite_max, prix_inscription, programme, prerequis, materiel, mode, tenant_id } = req.body;
+    const { titre, description, formateur_id, espace_id, date_debut, date_fin, capacite_max, prix_inscription, programme, prerequis, materiel, mode, tenant_id, dates_fixes, total_heures } = req.body;
 
     if (!titre || !formateur_id || !date_debut || !date_fin || !capacite_max) {
       return res.status(400).json({ error: 'titre, formateur_id, date_debut, date_fin et capacite_max sont requis.' });
@@ -142,6 +142,7 @@ async function createFormation(req, res) {
         dateFin: date_fin,
         tenantId: targetTenantId,
         mode: 'on_site',
+        totalHours: total_heures || null,
       });
       reservationId = reservation.id;
       if (bookingTenantId) targetTenantId = bookingTenantId;
@@ -290,8 +291,28 @@ async function updateFormation(req, res) {
       updates.reservation_id = null;
     }
 
-    if (updates.statut === 'annulee' && existingReservationId) {
+    if (updates.statut === 'publiee' && existingReservationId) {
+      await supabaseAdmin.from('reservations').update({ statut: 'confirmed' }).eq('id', existingReservationId);
+      if (isStaff && existing.formateur_id) {
+        supabaseAdmin.from('notifications').insert({
+          user_id: existing.formateur_id,
+          type: 'formation_approuvee',
+          canal: 'Dashboard',
+          message: `🎉 Votre formation « ${existing.titre} » et sa salle ont été approuvées par le coworking ! Elle est désormais publiée.`,
+        }).then(() => {}).catch(() => {});
+      }
+    }
+
+    if ((updates.statut === 'annulee' || updates.statut === 'refusee') && existingReservationId) {
       await supabaseAdmin.from('reservations').update({ statut: 'cancelled' }).eq('id', existingReservationId);
+      if (isStaff && existing.formateur_id) {
+        supabaseAdmin.from('notifications').insert({
+          user_id: existing.formateur_id,
+          type: 'formation_refusee',
+          canal: 'Dashboard',
+          message: `❌ Votre demande de formation « ${existing.titre} » a été refusée par l'établissement.`,
+        }).then(() => {}).catch(() => {});
+      }
     }
 
     const { data, error } = await supabaseAdmin

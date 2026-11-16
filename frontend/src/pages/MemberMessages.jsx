@@ -33,35 +33,60 @@ function getDateLabel(dateStr) {
 }
 
 function ConversationItem({ conv, isActive, onClick }) {
+  const isCommunity = conv.type === 'group' || /canal/i.test(conv.title);
   const lastMsg = conv.last_message;
-  const senderLabel = lastMsg
-    ? lastMsg.sender_id === conv.currentUserId ? 'Vous' : 'Support'
-    : '';
+  let senderLabel = '';
+  if (lastMsg) {
+    if (lastMsg.sender_id === conv.currentUserId) {
+      senderLabel = 'Vous';
+    } else if (lastMsg.profiles?.prenom) {
+      senderLabel = lastMsg.profiles.prenom;
+    } else {
+      senderLabel = isCommunity ? 'Participant' : 'Support';
+    }
+  }
 
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left flex items-start gap-3 p-4 rounded-2xl transition-all duration-200 ${
+      className={`w-full text-left flex items-start gap-3 p-3.5 rounded-2xl transition-all duration-200 ${
         isActive
-          ? 'bg-secondary/8 border-2 border-secondary/20'
+          ? 'bg-secondary/8 border-2 border-secondary/20 shadow-xs'
           : 'bg-white border border-outline-variant/10 hover:bg-surface-variant/20 hover:border-outline-variant/20'
       }`}
       style={{ boxShadow: isActive ? '0 4px 16px rgba(0,84,203,0.06)' : '0 2px 8px rgba(16,35,63,0.04)' }}
     >
-      <div className="flex items-center justify-center w-11 h-11 rounded-full shrink-0" style={{ background: 'linear-gradient(135deg, #f95d00, #ff7a28)' }}>
-        <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>{conv.type === 'group' ? 'group' : 'headset_mic'}</span>
+      <div
+        className="flex items-center justify-center w-11 h-11 rounded-2xl shrink-0"
+        style={{
+          background: isCommunity
+            ? 'linear-gradient(135deg, #f95d00, #ff7a28)'
+            : 'linear-gradient(135deg, #100f0d, #2b2926)',
+        }}
+      >
+        <span className="material-symbols-outlined text-white" style={{ fontSize: 22 }}>
+          {isCommunity ? 'groups' : 'headset_mic'}
+        </span>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2 mb-1">
-          <span className="text-sm font-semibold text-primary truncate" style={{ fontFamily: 'Sora, sans-serif' }}>{conv.title}</span>
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <span className="text-sm font-semibold text-primary truncate" style={{ fontFamily: 'Sora, sans-serif' }}>
+            {conv.title}
+          </span>
           {lastMsg && <span className="text-[11px] text-on-surface-variant/50 shrink-0">{getRelativeTime(lastMsg.created_at)}</span>}
         </div>
+        {isCommunity && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full mb-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Canal Coworking
+          </span>
+        )}
         {lastMsg ? (
           <p className={`text-xs truncate ${conv.unread_count > 0 ? 'text-on-surface-variant font-semibold' : 'text-on-surface-variant/60'}`}>
             {senderLabel && <span className="font-semibold">{senderLabel}: </span>}{lastMsg.content}
           </p>
         ) : (
-          <p className="text-xs text-on-surface-variant/40 italic">Aucun message</p>
+          <p className="text-xs text-on-surface-variant/40 italic">Aucun message pour le moment</p>
         )}
       </div>
       {conv.unread_count > 0 && (
@@ -320,6 +345,17 @@ export default function MemberMessages({ session }) {
   };
 
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+  const [filterTab, setFilterTab] = useState('all'); // 'all' | 'channels' | 'direct'
+  const [searchFilter, setSearchFilter] = useState('');
+
+  const filteredConversations = conversations.filter(c => {
+    const isChan = c.type === 'group' || /canal/i.test(c.title);
+    if (filterTab === 'channels' && !isChan) return false;
+    if (filterTab === 'direct' && isChan) return false;
+    if (searchFilter.trim() && !c.title.toLowerCase().includes(searchFilter.toLowerCase())) return false;
+    return true;
+  });
+
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return (
@@ -352,21 +388,56 @@ export default function MemberMessages({ session }) {
                 </button>
               </div>
             )}
-            <div className="p-4 border-b border-outline-variant/10">
+            {/* Recherche & Filtres Onglets */}
+            <div className="p-3 border-b border-outline-variant/10 space-y-2">
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" style={{ fontSize: 20 }}>search</span>
-                <input type="text" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-outline-variant/15 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-secondary/40 transition-colors" />
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" style={{ fontSize: 18 }}>search</span>
+                <input
+                  type="text"
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  placeholder="Rechercher une discussion..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-outline-variant/15 text-xs text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-secondary/40 transition-colors"
+                />
+              </div>
+
+              {/* Onglets Canaux / Direct */}
+              <div className="flex p-0.5 rounded-xl bg-surface-variant/30 gap-1 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('all')}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${filterTab === 'all' ? 'bg-white shadow-2xs text-primary' : 'text-on-surface-variant/60 hover:text-primary'}`}
+                >
+                  Tous ({conversations.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('channels')}
+                  className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all ${filterTab === 'channels' ? 'bg-[#f95d00] text-white shadow-2xs' : 'text-on-surface-variant/60 hover:text-primary'}`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>groups</span>
+                  <span>Canaux</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('direct')}
+                  className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all ${filterTab === 'direct' ? 'bg-white shadow-2xs text-primary' : 'text-on-surface-variant/60 hover:text-primary'}`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>chat</span>
+                  <span>Direct</span>
+                </button>
               </div>
             </div>
+
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {loading ? (
                 <div className="flex items-center justify-center py-12"><span className="material-symbols-outlined animate-spin text-secondary" style={{ fontSize: 28 }}>progress_activity</span></div>
-              ) : conversations.length === 0 ? (
+              ) : filteredConversations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <span className="material-symbols-outlined text-on-surface-variant/30" style={{ fontSize: 40 }}>chat_bubble_outline</span>
-                  <p className="text-sm text-on-surface-variant/50 text-center">Aucune conversation</p>
+                  <p className="text-sm text-on-surface-variant/50 text-center">Aucune discussion dans cette vue</p>
                 </div>
-              ) : conversations.map(conv => (
+              ) : filteredConversations.map(conv => (
                 <ConversationItem key={conv.id} conv={{ ...conv, currentUserId: profile?.id }} isActive={activeConv?.id === conv.id} onClick={() => selectConversation(conv)} />
               ))}
             </div>
@@ -379,8 +450,8 @@ export default function MemberMessages({ session }) {
                   <span className="material-symbols-outlined text-on-surface-variant/30" style={{ fontSize: 40 }}>forum</span>
                 </span>
                 <div className="text-center">
-                  <p className="text-on-surface-variant/60 text-sm font-medium" style={{ fontFamily: 'Sora, sans-serif' }}>Sélectionnez une conversation</p>
-                  <p className="text-on-surface-variant/40 text-xs mt-1">Pour commencer à discuter</p>
+                  <p className="text-on-surface-variant/60 text-sm font-medium" style={{ fontFamily: 'Sora, sans-serif' }}>Sélectionnez un canal ou une discussion</p>
+                  <p className="text-on-surface-variant/40 text-xs mt-1">Pour commencer à échanger avec la communauté</p>
                 </div>
               </div>
             ) : (
@@ -389,14 +460,44 @@ export default function MemberMessages({ session }) {
                   <button onClick={() => setShowMobileChat(false)} className="md:hidden flex items-center justify-center w-9 h-9 rounded-full hover:bg-surface-variant/30">
                     <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 20 }}>arrow_back</span>
                   </button>
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #f95d00, #ff7a28)' }}>
-                    <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>headset_mic</span>
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                    style={{
+                      background: activeConv.type === 'group' || /canal/i.test(activeConv.title)
+                        ? 'linear-gradient(135deg, #f95d00, #ff7a28)'
+                        : 'linear-gradient(135deg, #100f0d, #2b2926)',
+                    }}
+                  >
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: 20 }}>
+                      {activeConv.type === 'group' || /canal/i.test(activeConv.title) ? 'groups' : 'headset_mic'}
+                    </span>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-primary" style={{ fontFamily: 'Sora, sans-serif' }}>{activeConv.title}</p>
-                    <p className="text-xs text-on-surface-variant/50">{activeConv.type === 'support' && teamLabel ? `${teamLabel} · En ligne` : 'En ligne'}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-primary" style={{ fontFamily: 'Sora, sans-serif' }}>{activeConv.title}</p>
+                      {(activeConv.type === 'group' || /canal/i.test(activeConv.title)) && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          Canal Ouvert
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-on-surface-variant/50">
+                      {activeConv.type === 'group' || /canal/i.test(activeConv.title)
+                        ? 'Espace d\'échange ouvert à tous les participants DeskyWork'
+                        : activeConv.type === 'support' && teamLabel ? `${teamLabel} · En ligne` : 'En ligne'}
+                    </p>
                   </div>
                 </div>
+
+                {/* Bannière d'information pour le canal communautaire */}
+                {(activeConv.type === 'group' || /canal/i.test(activeConv.title)) && (
+                  <div className="px-5 py-2.5 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 flex items-center gap-2 text-xs text-orange-950 font-medium">
+                    <span className="material-symbols-outlined text-[#f95d00] shrink-0" style={{ fontSize: 18 }}>campaign</span>
+                    <span>
+                      <strong>Canal Communauté :</strong> Échangez en direct avec tous les coworkers, formateurs et membres de ce coworking !
+                    </span>
+                  </div>
+                )}
                 <div className="flex-1 overflow-y-auto px-5 py-4" style={{ background: '#F8F9FB' }}>
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full gap-3">

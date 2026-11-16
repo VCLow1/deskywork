@@ -266,6 +266,27 @@ export default function AdminFormations({ session }) {
     } catch (err) { setError(err.message); }
   };
 
+  const approveFormation = async (f) => {
+    try {
+      await formationApi.update(f.id, { statut: 'publiee' });
+      setSuccess(`Formation « ${f.titre} » et sa réservation de salle approuvées avec succès !`);
+      await refreshData();
+    } catch (err) {
+      setError(err.message || "Erreur lors de l'approbation.");
+    }
+  };
+
+  const refuseFormation = async (f) => {
+    if (!window.confirm(`Refuser la demande de formation « ${f.titre} » et libérer la salle ?`)) return;
+    try {
+      await formationApi.update(f.id, { statut: 'annulee' });
+      setSuccess(`Formation « ${f.titre} » refusée.`);
+      await refreshData();
+    } catch (err) {
+      setError(err.message || 'Erreur lors du refus.');
+    }
+  };
+
   /* ─── Formateur Actions ─── */
   const saveFormateur = async (e) => {
     e.preventDefault(); setError(''); setFormSaving(true);
@@ -645,11 +666,17 @@ export default function AdminFormations({ session }) {
                           {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
                         </div>
                       </div>
-                      <div className="flex gap-2 pt-2 border-t border-outline-variant/10">
+                      <div className="flex gap-2 pt-2 border-t border-outline-variant/10 flex-wrap">
+                        {f.statut === 'planifiee' && profile?.role !== 'super_admin' && (
+                          <>
+                            <button onClick={() => approveFormation(f)} className="flex-1 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 shadow-xs">Approuver</button>
+                            <button onClick={() => refuseFormation(f)} className="py-1.5 px-3 text-xs font-semibold border border-rose-300 text-rose-700 rounded-xl hover:bg-rose-50">Refuser</button>
+                          </>
+                        )}
                         <button onClick={() => openParticipants(f)} className="flex-1 py-1.5 text-xs font-semibold border border-secondary/30 text-secondary rounded-xl hover:bg-secondary/5">Inscrits</button>
                         {profile?.role !== 'super_admin' && (
                           <>
-                            <button onClick={() => openEditFormation(f)} className="flex-1 py-1.5 text-xs font-semibold border border-outline-variant/30 text-on-surface-variant rounded-xl hover:bg-surface-container">Modifier</button>
+                            <button onClick={() => openEditFormation(f)} className="py-1.5 px-2 text-xs font-semibold border border-outline-variant/30 text-on-surface-variant rounded-xl hover:bg-surface-container">Modifier</button>
                             {f.statut !== 'annulee' && (
                               <button onClick={() => cancelFormation(f.id)} className="px-3 py-1.5 text-xs font-semibold border border-error/30 text-error rounded-xl hover:bg-error/5">✕</button>
                             )}
@@ -712,6 +739,28 @@ export default function AdminFormations({ session }) {
                             </td>
                             <td className="p-4">
                               <div className="flex flex-wrap items-center justify-end gap-2">
+                                {f.statut === 'planifiee' && profile?.role !== 'super_admin' && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => approveFormation(f)}
+                                      title="Approuver la formation et sa réservation"
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>
+                                      <span>Approuver</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => refuseFormation(f)}
+                                      title="Refuser la formation"
+                                      className="inline-flex items-center gap-1 px-2 py-1.5 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold transition-all"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>block</span>
+                                      <span>Refuser</span>
+                                    </button>
+                                  </>
+                                )}
                                 <ActionBtn icon="group" title="Participants" onClick={() => openParticipants(f)} color="text-secondary" />
                                 <ActionBtn icon="download" title="Export émargement" onClick={() => exportEmargement(f)} color="text-on-surface-variant" />
                                 {profile?.role !== 'super_admin' && (

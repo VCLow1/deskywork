@@ -522,7 +522,34 @@ export default function Landing({ session }) {
   const [searchHeureDebut, setSearchHeureDebut] = useState('09:00');
   const [searchHeureFin, setSearchHeureFin] = useState('17:00');
   const [searchEquipements, setSearchEquipements] = useState([]);
+  const [searchBudgetMax, setSearchBudgetMax] = useState('');
+  const [searchPartnerOnly, setSearchPartnerOnly] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
+
+  /* Compteur de filtres actifs */
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (searchVille) count++;
+    if (searchType) count++;
+    if (searchCapacite) count++;
+    if (searchBudgetMax) count++;
+    if (searchPartnerOnly) count++;
+    if (searchKeyword) count++;
+    count += searchEquipements.length;
+    return count;
+  }, [searchVille, searchType, searchCapacite, searchBudgetMax, searchPartnerOnly, searchKeyword, searchEquipements]);
+
+  const resetAllFilters = () => {
+    setSearchVille('');
+    setSearchType('');
+    setSearchCapacite('');
+    setSearchBudgetMax('');
+    setSearchPartnerOnly(false);
+    setSearchKeyword('');
+    setSearchEquipements([]);
+    setSearchDate('');
+  };
 
   /* Onglets d'intention Hero (CDC v3.0 Premium) */
   const [activeHeroTab, setActiveHeroTab] = useState('espaces'); // 'espaces' | 'formations' | 'b2b'
@@ -620,9 +647,18 @@ export default function Landing({ session }) {
 
   const filteredEspaces = publicEspaces.filter((esp) => {
     const villeEsp = esp.tenants?.ville || '';
+    const nomEsp = esp.nom || '';
+    const tenantNom = esp.tenants?.nom || '';
+
+    if (searchKeyword && !(`${nomEsp} ${tenantNom} ${villeEsp}`).toLowerCase().includes(searchKeyword.toLowerCase())) return false;
     if (searchVille && !villeEsp.toLowerCase().includes(searchVille.toLowerCase())) return false;
     if (searchType && esp.type !== searchType) return false;
     if (searchCapacite && Number(esp.capacite || 1) < Number(searchCapacite)) return false;
+    if (searchBudgetMax && Number(esp.tarif_horaire || 0) > Number(searchBudgetMax)) return false;
+    if (searchPartnerOnly) {
+      const isOfficial = /nero|thirty\s*three/i.test(tenantNom);
+      if (!isOfficial) return false;
+    }
     if (searchEquipements.length > 0) {
       const espEq = Array.isArray(esp.equipements)
         ? esp.equipements.map((x) => String(x).toLowerCase())
@@ -1824,13 +1860,13 @@ export default function Landing({ session }) {
                         <button
                           type="button"
                           onClick={() => setShowFilterPopover(!showFilterPopover)}
-                          className={`btn-filter-trigger ${showFilterPopover || searchEquipements.length > 0 ? 'active' : ''}`}
+                          className={`btn-filter-trigger ${showFilterPopover || activeFiltersCount > 0 ? 'active' : ''}`}
                           title={(t('landing.filters') || 'Filtres').replace(':', '').trim()}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>tune</span>
                           <span>{(t('landing.filters') || 'Filtres').replace(':', '').trim()}</span>
-                          {searchEquipements.length > 0 && (
-                            <span className="filter-badge-count">{searchEquipements.length}</span>
+                          {activeFiltersCount > 0 && (
+                            <span className="filter-badge-count">{activeFiltersCount}</span>
                           )}
                           <span
                             className="material-symbols-outlined"
@@ -1895,36 +1931,121 @@ export default function Landing({ session }) {
                           </div>
                         </div>
 
-                        {/* Grille des badges / pills d'équipements */}
-                        <div className="filter-chips-grid">
-                          {EQUIPMENTS.map((eq) => {
-                            const active = searchEquipements.includes(eq);
-                            const icon = EQUIPMENT_ICONS[eq] || 'check_circle';
-                            return (
-                              <button
-                                key={eq}
-                                type="button"
-                                onClick={() => toggleEquipement(eq)}
-                                className={`filter-chip-pill ${active ? 'active' : ''}`}
-                                aria-pressed={active}
-                              >
-                                <span className="material-symbols-outlined chip-icon">{icon}</span>
-                                <span className="chip-label">{eq}</span>
-                                {active ? (
-                                  <span className="chip-check-badge">
-                                    <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>check</span>
-                                  </span>
-                                ) : (
-                                  <span className="chip-plus-badge">
-                                    <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>add</span>
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
+                        {/* 1. Filtres rapides : Partenaire Officiel & Budget */}
+                        <div className="mb-4 pb-3" style={{ borderBottom: `1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}` }}>
+                          <div className="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+                            <button
+                              type="button"
+                              onClick={() => setSearchPartnerOnly(!searchPartnerOnly)}
+                              className={`filter-chip-pill ${searchPartnerOnly ? 'active' : ''}`}
+                              style={{ borderColor: searchPartnerOnly ? '#f95d00' : undefined }}
+                            >
+                              <span className="material-symbols-outlined chip-icon" style={{ color: searchPartnerOnly ? '#f95d00' : '#f59e0b' }}>verified</span>
+                              <span className="chip-label">Partenaires officiels uniquement (Nero & Thirty Three)</span>
+                              {searchPartnerOnly && (
+                                <span className="chip-check-badge">
+                                  <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>check</span>
+                                </span>
+                              )}
+                            </button>
+
+                            <div className="d-flex align-items-center gap-2">
+                              <span style={{ fontSize: '.78rem', fontWeight: 700, color: dark ? '#cbd5e1' : '#475569' }}>
+                                Budget max :
+                              </span>
+                              <div className="d-flex align-items-center gap-1">
+                                {[
+                                  { label: 'Tous', val: '' },
+                                  { label: '≤ 10 DT', val: '10' },
+                                  { label: '≤ 25 DT', val: '25' },
+                                  { label: '≤ 50 DT', val: '50' },
+                                ].map((b) => (
+                                  <button
+                                    key={b.label}
+                                    type="button"
+                                    onClick={() => setSearchBudgetMax(searchBudgetMax === b.val ? '' : b.val)}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                      searchBudgetMax === b.val
+                                        ? 'bg-[#f95d00] text-white shadow-xs'
+                                        : dark
+                                          ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {b.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Capacité minimale rapide */}
+                          <div className="d-flex align-items-center gap-2">
+                            <span style={{ fontSize: '.78rem', fontWeight: 700, color: dark ? '#cbd5e1' : '#475569' }}>
+                              Capacité requise :
+                            </span>
+                            <div className="d-flex flex-wrap align-items-center gap-1">
+                              {[
+                                { label: 'Toutes', val: '' },
+                                { label: '1+ pers', val: '1' },
+                                { label: '4+ pers', val: '4' },
+                                { label: '10+ pers', val: '10' },
+                                { label: '20+ pers', val: '20' },
+                              ].map((c) => (
+                                <button
+                                  key={c.label}
+                                  type="button"
+                                  onClick={() => setSearchCapacite(searchCapacite === c.val ? '' : c.val)}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                    searchCapacite === c.val
+                                      ? 'bg-indigo-600 text-white shadow-xs'
+                                      : dark
+                                        ? 'bg-white/5 text-slate-300 hover:bg-white/10'
+                                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {c.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Ligne de créneau horaire */}
+                        {/* 2. Grille des commodités & équipements */}
+                        <div className="mb-2">
+                          <label className="d-block mb-2" style={{ fontSize: '.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: dark ? '#94a3b8' : '#64748b' }}>
+                            Équipements & Commodités indispensables :
+                          </label>
+                          <div className="filter-chips-grid">
+                            {EQUIPMENTS.map((eq) => {
+                              const active = searchEquipements.includes(eq);
+                              const icon = EQUIPMENT_ICONS[eq] || 'check_circle';
+                              return (
+                                <button
+                                  key={eq}
+                                  type="button"
+                                  onClick={() => toggleEquipement(eq)}
+                                  className={`filter-chip-pill ${active ? 'active' : ''}`}
+                                  aria-pressed={active}
+                                >
+                                  <span className="material-symbols-outlined chip-icon">{icon}</span>
+                                  <span className="chip-label">{eq}</span>
+                                  {active ? (
+                                    <span className="chip-check-badge">
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>check</span>
+                                    </span>
+                                  ) : (
+                                    <span className="chip-plus-badge">
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13, fontWeight: 900 }}>add</span>
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* 3. Ligne de créneau horaire */}
                         <div className="filter-timeslot-row">
                           <div className="filter-timeslot-label">
                             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>schedule</span>
@@ -1953,19 +2074,25 @@ export default function Landing({ session }) {
                           </div>
                         </div>
 
-                        {/* Pied du tiroir avec actions */}
+                        {/* Pied du tiroir avec actions & compteur en direct */}
                         <div className="filter-drawer-footer">
                           <div className="filter-counter-text">
-                            {searchEquipements.length > 0 ? (
-                              <span className="d-flex align-items-center gap-1.5" style={{ color: '#f95d00' }}>
-                                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
-                                <strong>{searchEquipements.length}</strong> équipement{searchEquipements.length > 1 ? 's' : ''} sélectionné{searchEquipements.length > 1 ? 's' : ''}
-                              </span>
-                            ) : (
-                              <span>Tous les équipements acceptés (aucun filtre exclusif)</span>
-                            )}
+                            <span className="d-flex align-items-center gap-1.5" style={{ color: '#f95d00', fontWeight: 700 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                              <strong>{filteredEspaces.length}</strong> espace{filteredEspaces.length > 1 ? 's' : ''} disponible{filteredEspaces.length > 1 ? 's' : ''}
+                            </span>
                           </div>
                           <div className="d-flex align-items-center gap-2">
+                            {activeFiltersCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={resetAllFilters}
+                                className="btn-filter-reset"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>restart_alt</span>
+                                <span>Réinitialiser tout</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => {
@@ -1976,7 +2103,7 @@ export default function Landing({ session }) {
                               className="btn-apply-filter"
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>done_all</span>
-                              <span>Appliquer les filtres</span>
+                              <span>Voir les {filteredEspaces.length} espaces</span>
                             </button>
                           </div>
                         </div>
@@ -2189,26 +2316,114 @@ export default function Landing({ session }) {
       {(showSearchResults || searchVille || searchType || searchCapacite || searchEquipements.length > 0) && (
         <section id="search-results" className="py-5" style={{ backgroundColor: EC.bg, borderBottom: `1px solid ${EC.outline}` }}>
           <div className="container py-2">
-            <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            {/* En-tête des résultats & Filtres actifs */}
+            <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
               <div>
                 <span className="sec-badge">{t('landing.searchResultsBadge')}</span>
                 <h2 className="sora fw-bold mb-1" style={{ color: EC.navy, fontSize: 'clamp(1.4rem,2.4vw,1.9rem)' }}>
-                  {t('landing.searchResultsTitle', { count: filteredEspaces.length })}
+                  {filteredEspaces.length} espace{filteredEspaces.length > 1 ? 's' : ''} trouvé{filteredEspaces.length > 1 ? 's' : ''}
                 </h2>
+                <p style={{ color: EC.muted, fontSize: '.85rem', margin: 0 }}>
+                  Espaces de travail professionnels prêts à réserver chez nos partenaires.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchVille(''); setSearchType(''); setSearchCapacite('');
-                  setSearchDate(''); setSearchEquipements([]); setShowSearchResults(false);
-                }}
-                style={{
-                  background: 'transparent', border: `1.5px solid ${EC.outline}`,
-                  borderRadius: 10, padding: '8px 14px', fontSize: '.82rem', fontWeight: 600, color: EC.navy, cursor: 'pointer',
-                }}
-              >
-                {t('landing.resetFilters')}
-              </button>
+              {activeFiltersCount > 0 && (
+                <button
+                  type="button"
+                  onClick={resetAllFilters}
+                  className="d-flex align-items-center gap-1.5"
+                  style={{
+                    background: 'transparent', border: `1.5px solid ${EC.outline}`,
+                    borderRadius: 12, padding: '8px 16px', fontSize: '.82rem', fontWeight: 700, color: '#f95d00', cursor: 'pointer',
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>restart_alt</span>
+                  <span>Réinitialiser les filtres ({activeFiltersCount})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Barre de badges / pills de filtres actifs */}
+            {activeFiltersCount > 0 && (
+              <div className="d-flex flex-wrap align-items-center gap-2 mb-4 p-3 rounded-2xl" style={{ background: dark ? 'rgba(255,255,255,0.04)' : '#f1f5f9' }}>
+                <span style={{ fontSize: '.76rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: EC.muted, marginRight: 4 }}>
+                  Filtres actifs :
+                </span>
+                {searchVille && (
+                  <span className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>location_on</span>
+                    {searchVille}
+                    <button type="button" onClick={() => setSearchVille('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#94a3b8' }}>✕</button>
+                  </span>
+                )}
+                {searchType && (
+                  <span className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>category</span>
+                    {SPACE_TYPE_LABELS[searchType] || searchType}
+                    <button type="button" onClick={() => setSearchType('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#94a3b8' }}>✕</button>
+                  </span>
+                )}
+                {searchPartnerOnly && (
+                  <span className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff7ed', border: '1px solid #fdba74', color: '#ea580c' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>verified</span>
+                    Partenaires officiels (Nero & Thirty Three)
+                    <button type="button" onClick={() => setSearchPartnerOnly(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#ea580c' }}>✕</button>
+                  </span>
+                )}
+                {searchBudgetMax && (
+                  <span className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>payments</span>
+                    Max {searchBudgetMax} DT/h
+                    <button type="button" onClick={() => setSearchBudgetMax('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#94a3b8' }}>✕</button>
+                  </span>
+                )}
+                {searchCapacite && (
+                  <span className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>group</span>
+                    {searchCapacite}+ pers
+                    <button type="button" onClick={() => setSearchCapacite('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#94a3b8' }}>✕</button>
+                  </span>
+                )}
+                {searchEquipements.map((eq) => (
+                  <span key={eq} className="d-inline-flex align-items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>{EQUIPMENT_ICONS[eq] || 'check'}</span>
+                    {eq}
+                    <button type="button" onClick={() => toggleEquipement(eq)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2, color: '#94a3b8' }}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Onglets segmentés rapides de type d'espace */}
+            <div className="d-flex flex-wrap gap-2 mb-4">
+              {[
+                { label: 'Tous les espaces', val: '', icon: 'apps' },
+                { label: 'Open Space', val: 'open_space', icon: 'chair' },
+                { label: 'Bureaux Privés', val: 'private_office', icon: 'meeting_room' },
+                { label: 'Salles de Réunion', val: 'meeting_room', icon: 'groups' },
+                { label: 'Salles de Formation', val: 'training_room', icon: 'school' },
+                { label: 'Événements', val: 'event_space', icon: 'celebration' },
+              ].map((tab) => {
+                const isAct = searchType === tab.val;
+                return (
+                  <button
+                    key={tab.label}
+                    type="button"
+                    onClick={() => setSearchType(isAct && tab.val !== '' ? '' : tab.val)}
+                    className="d-flex align-items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all"
+                    style={{
+                      backgroundColor: isAct ? '#f95d00' : dark ? 'rgba(255,255,255,0.06)' : '#ffffff',
+                      color: isAct ? '#ffffff' : EC.navy,
+                      border: `1.5px solid ${isAct ? '#f95d00' : EC.outline}`,
+                      cursor: 'pointer',
+                      boxShadow: isAct ? '0 4px 14px rgba(249,93,0,0.25)' : undefined,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
             </div>
 
             {filteredEspaces.length === 0 ? (
@@ -2227,9 +2442,16 @@ export default function Landing({ session }) {
                         </Link>
                         <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column' }}>
                           <div className="d-flex justify-content-between align-items-center mb-2">
-                            <span style={{ fontSize: '.7rem', fontWeight: 800, textTransform: 'uppercase', padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
-                              {SPACE_TYPE_LABELS[esp.type] || esp.type}
-                            </span>
+                            <div className="d-flex align-items-center gap-1.5">
+                              <span style={{ fontSize: '.7rem', fontWeight: 800, textTransform: 'uppercase', padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
+                                {SPACE_TYPE_LABELS[esp.type] || esp.type}
+                              </span>
+                              {/nero|thirty\s*three/i.test(esp.tenants?.nom || '') && (
+                                <span style={{ fontSize: '.65rem', fontWeight: 800, padding: '3px 8px', borderRadius: 999, background: '#fff7ed', color: '#ea580c', border: '1px solid #fdba74' }}>
+                                  ★ Partenaire
+                                </span>
+                              )}
+                            </div>
                             <span className="sora fw-bold" style={{ color: EC.cobalt, fontSize: '.95rem' }}>
                               {formatDT(esp.tarif_horaire)} {t('landing.perHour')}
                             </span>

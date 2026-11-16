@@ -326,6 +326,44 @@ export default function TrainerFormations({ session }) {
   const [form, setForm] = useState(emptyForm);
   const [spaceCheck, setSpaceCheck] = useState({ status: 'idle', message: '' });
 
+  /* ─── Dates fixes & Horaires de la formation ─── */
+  const [datesFixes, setDatesFixes] = useState([]);
+  const [heureDebut, setHeureDebut] = useState('09:00');
+  const [heureFin, setHeureFin] = useState('17:00');
+  const [newDateInput, setNewDateInput] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().slice(0, 10);
+  });
+
+  const addDateFixe = (dStr) => {
+    if (!dStr) return;
+    if (datesFixes.includes(dStr)) return;
+    const next = [...datesFixes, dStr].sort();
+    setDatesFixes(next);
+  };
+
+  const removeDateFixe = (dStr) => {
+    setDatesFixes(prev => prev.filter(d => d !== dStr));
+  };
+
+  const addNextDay = () => {
+    let base = new Date();
+    if (datesFixes.length > 0) {
+      base = new Date(datesFixes[datesFixes.length - 1] + 'T00:00:00');
+    }
+    base.setDate(base.getDate() + 1);
+    addDateFixe(base.toISOString().slice(0, 10));
+  };
+
+  const addNextSaturday = () => {
+    let base = new Date();
+    const day = base.getDay();
+    const diff = (6 - day + 7) % 7 || 7;
+    base.setDate(base.getDate() + diff);
+    addDateFixe(base.toISOString().slice(0, 10));
+  };
+
   /* ─── Coworking & Espaces formation ─── */
   const [tenants, setTenants] = useState([]);
   const [selectedTenantId, setSelectedTenantId] = useState('');
@@ -338,18 +376,23 @@ export default function TrainerFormations({ session }) {
     return espacesFormation.find(e => e.id === form.espace_id) || espaces.find(e => e.id === form.espace_id);
   };
 
-  const calculateSpaceHours = () => {
-    if (!form.date_debut || !form.date_fin) return 0;
-    const d1 = new Date(form.date_debut);
-    const d2 = new Date(form.date_fin);
-    if (isNaN(d1) || isNaN(d2) || d2 <= d1) return 0;
-    return Math.max(1, (d2 - d1) / (1000 * 60 * 60));
+  const calculateDailyHours = () => {
+    if (!heureDebut || !heureFin) return 0;
+    const [h1, m1] = heureDebut.split(':').map(Number);
+    const [h2, m2] = heureFin.split(':').map(Number);
+    const diffMin = (h2 * 60 + m2) - (h1 * 60 + m1);
+    return Math.max(0.5, diffMin / 60);
+  };
+
+  const calculateTotalHours = () => {
+    const daily = calculateDailyHours();
+    return Math.max(1, (datesFixes.length || 1) * daily);
   };
 
   const calculateSpacePrice = () => {
     const esp = getSelectedSpace();
     if (!esp || !esp.tarif_horaire) return 0;
-    const hours = calculateSpaceHours();
+    const hours = calculateTotalHours();
     return parseFloat((hours * parseFloat(esp.tarif_horaire)).toFixed(3));
   };
 
@@ -360,7 +403,7 @@ export default function TrainerFormations({ session }) {
     return () => clearTimeout(t);
   }, [success]);
 
-  /* ─── Chargement des espaces selon tenant + dates ─── */
+  /* ─── Chargement des espaces dès que le Coworking (Tenant) est sélectionné ─── */
   useEffect(() => {
     if (!showFormModal || !selectedTenantId) {
       setEspacesFormation([]);
@@ -368,16 +411,9 @@ export default function TrainerFormations({ session }) {
       return;
     }
     let cancelled = false;
-    const timer = setTimeout(async () => {
-      setLoadingEspaces(true);
-      try {
-        const params = { tenant_id: selectedTenantId };
-        if (form.date_debut && form.date_fin && new Date(form.date_debut) < new Date(form.date_fin)) {
-          params.date_debut = new Date(form.date_debut).toISOString();
-          params.date_fin = new Date(form.date_fin).toISOString();
-        }
-        if (form.reservation_id) params.exclude_reservation_id = form.reservation_id;
-        const res = await bookingApi.getEspacesFormation(params);
+    setLoadingEspaces(true);
+    bookingApi.getEspacesFormation({ tenant_id: selectedTenantId })
+      .then(res => {
         if (!cancelled) {
           setEspacesFormation(res.espaces || []);
           const ids = (res.espaces || []).map(e => e.id);
@@ -385,15 +421,15 @@ export default function TrainerFormations({ session }) {
             setForm(p => ({ ...p, espace_id: '' }));
           }
         }
-      } catch {
+      })
+      .catch(() => {
         if (!cancelled) setEspacesFormation([]);
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setLoadingEspaces(false);
-      }
-    }, 350);
-    return () => { cancelled = true; clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showFormModal, selectedTenantId, form.date_debut, form.date_fin, form.reservation_id]);
+      });
+    return () => { cancelled = true; };
+  }, [showFormModal, selectedTenantId]);
 
   /* ─── Mise à jour du spaceCheck selon l'espace sélectionné ─── */
   useEffect(() => {
@@ -409,8 +445,8 @@ export default function TrainerFormations({ session }) {
       setSpaceCheck({
         status: 'ok',
         message: espace.type === 'open_space'
-          ? 'Open space disponible. Une réservation sera créée automatiquement.'
-          : 'Salle de formation disponible. Une réservation sera créée automatiquement.',
+          ? 'Open space disponible dans ce coworking. Une réservation sera créée et soumise à approbation.'
+          : 'Salle de formation disponible dans ce coworking. Une réservation sera créée et soumise à approbation.',
       });
     } else {
       setSpaceCheck({ status: 'idle', message: '' });
@@ -470,6 +506,13 @@ export default function TrainerFormations({ session }) {
     setSelectedTenantId('');
     setEspacesFormation([]);
     setSpaceCheck({ status: 'idle', message: '' });
+    // Date par défaut : dans 2 jours
+    const defDate = new Date();
+    defDate.setDate(defDate.getDate() + 2);
+    const defDateStr = defDate.toISOString().slice(0, 10);
+    setDatesFixes([defDateStr]);
+    setHeureDebut('09:00');
+    setHeureFin('17:00');
     setError('');
     setShowFormModal(true);
   };
@@ -480,6 +523,26 @@ export default function TrainerFormations({ session }) {
     // Retrouver le tenant de l'espace existant
     const espaceExistant = espaces.find(e => e.id === f.espace_id);
     setSelectedTenantId(espaceExistant?.tenant_id || '');
+    
+    // Extraire les dates fixes et les heures
+    let existingDates = [];
+    let hDeb = '09:00';
+    let hFin = '17:00';
+    if (f.date_debut) {
+      const d1 = new Date(f.date_debut);
+      const d2 = f.date_fin ? new Date(f.date_fin) : d1;
+      const pad = (n) => String(n).padStart(2, '0');
+      hDeb = `${pad(d1.getHours())}:${pad(d1.getMinutes())}`;
+      hFin = `${pad(d2.getHours())}:${pad(d2.getMinutes())}`;
+      existingDates = [d1.toISOString().slice(0, 10)];
+      if (f.date_fin && d2.toISOString().slice(0, 10) !== d1.toISOString().slice(0, 10)) {
+        existingDates.push(d2.toISOString().slice(0, 10));
+      }
+    }
+    setDatesFixes(f.dates_fixes || existingDates);
+    setHeureDebut(hDeb);
+    setHeureFin(hFin);
+
     setForm({
       id: f.id,
       titre: f.titre || '',
@@ -510,18 +573,42 @@ export default function TrainerFormations({ session }) {
   const handleSave = async (e) => {
     e.preventDefault();
     if (spaceCheck.status === 'conflict') return;
+    if (datesFixes.length === 0) {
+      setError('Veuillez ajouter au moins une date de formation (dates fixes).');
+      return;
+    }
+    if (!selectedTenantId) {
+      setError('Veuillez sélectionner un établissement partenaire (coworking).');
+      return;
+    }
     setError(''); setFormSaving(true);
     try {
+      const sortedDates = [...datesFixes].sort();
+      const debutISO = new Date(`${sortedDates[0]}T${heureDebut}:00`).toISOString();
+      const finISO = new Date(`${sortedDates[sortedDates.length - 1]}T${heureFin}:00`).toISOString();
+      const totalH = calculateTotalHours();
+      
+      const datesSummary = sortedDates.map((d, i) =>
+        `• Session ${i + 1} : ${new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })} (${heureDebut} → ${heureFin})`
+      ).join('\n');
+
+      let cleanProg = form.programme || '';
+      cleanProg = cleanProg.replace(/^📅 Sessions fixes.*?\n\n/s, '');
+      const finalProgramme = `📅 Sessions fixes (${sortedDates.length} jour${sortedDates.length > 1 ? 's' : ''}) :\n${datesSummary}\n\n${cleanProg}`.trim();
+
       const payload = {
         ...form,
         formateur_id: profile.id,
         capacite_max: parseInt(form.capacite_max),
         prix_inscription: parseFloat(form.prix_inscription) || 0,
-        date_debut: new Date(form.date_debut).toISOString(),
-        date_fin: new Date(form.date_fin).toISOString(),
+        date_debut: debutISO,
+        date_fin: finISO,
         espace_id: form.espace_id || null,
         mode: form.mode || 'sur_place',
         tenant_id: selectedTenantId || undefined,
+        total_heures: totalH,
+        dates_fixes: sortedDates,
+        programme: finalProgramme,
       };
 
       if (form.id) {
@@ -529,12 +616,13 @@ export default function TrainerFormations({ session }) {
         setSuccess('Formation modifiée avec succès !');
       } else {
         const created = await formationApi.create(payload);
-        setSuccess(created.message || 'Formation créée avec succès !');
+        setSuccess(created.message || 'Formation créée avec succès ! La réservation sera validée par le coworking.');
       }
 
       setShowFormModal(false);
       setForm(emptyForm);
       setSelectedTenantId('');
+      setDatesFixes([]);
       setEspacesFormation([]);
       await refreshData();
     } catch (err) { setError(err.message); }
@@ -915,93 +1003,54 @@ export default function TrainerFormations({ session }) {
             />
           </Field>
 
-          {/* ══ ÉTAPE 1 : Créneau horaire ══ */}
-          <div className="rounded-2xl border border-indigo-200 p-4 space-y-3" style={{ background: '#f5f3ff' }}>
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-indigo-600" style={{ fontSize: 14 }}>calendar_today</span>
-              </span>
-              <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">
-                Étape 1 — Créneau horaire
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Date & Heure de début" required>
-                <input
-                  type="datetime-local"
-                  className={inputCls}
-                  required
-                  value={form.date_debut}
-                  onChange={e => setForm(p => ({ ...p, date_debut: e.target.value, espace_id: '' }))}
-                />
-              </Field>
-              <Field label="Date & Heure de fin" required>
-                <input
-                  type="datetime-local"
-                  className={inputCls}
-                  required
-                  value={form.date_fin}
-                  onChange={e => setForm(p => ({ ...p, date_fin: e.target.value, espace_id: '' }))}
-                />
-              </Field>
-            </div>
-            {form.date_debut && form.date_fin && new Date(form.date_debut) >= new Date(form.date_fin) && (
-              <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>error</span>
-                La date de fin doit être postérieure à la date de début.
-              </p>
-            )}
-          </div>
-
-          {/* ══ ÉTAPE 2 : Établissement partenaire (désactivé si dates invalides) ══ */}
-          <div className={`rounded-2xl border p-4 space-y-3 transition-all duration-200 ${!form.date_debut || !form.date_fin || new Date(form.date_debut) >= new Date(form.date_fin)
-            ? 'border-slate-200 bg-slate-50 opacity-50 pointer-events-none select-none'
-            : 'border-amber-200 bg-amber-50'
-            }`}>
+          {/* ══ ÉTAPE 1 : Établissement partenaire (Coworking en premier) ══ */}
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 14 }}>apartment</span>
+                <span className="material-symbols-outlined text-amber-700" style={{ fontSize: 15 }}>apartment</span>
               </span>
-              <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">
-                Étape 2 — Établissement &amp; Salle
+              <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">
+                Étape 1 — Établissement partenaire (Coworking)
               </span>
             </div>
-            <Field label="Choisir un établissement partenaire">
+            <Field label="Choisir un espace de coworking" required>
               <select
                 className={inputCls}
+                required
                 value={selectedTenantId}
                 onChange={e => {
                   setSelectedTenantId(e.target.value);
                   setForm(p => ({ ...p, espace_id: '' }));
                 }}
               >
-                <option value="">— Sélectionner un coworking —</option>
+                <option value="">— Sélectionner un coworking partenaire —</option>
                 {tenants.map(t => (
                   <option key={t.id} value={t.id}>
-                    {t.nom}{t.ville ? ` — ${t.ville}` : ''}
+                    {t.nom}{t.ville ? ` (${t.ville})` : ''} — Partenaire Officiel
                   </option>
                 ))}
               </select>
-              {tenants.length === 0 && (
-                <p className="text-[11px] text-on-surface-variant/60 mt-1">
-                  Aucun coworking disponible sur la plateforme.
-                </p>
+              {selectedTenantId && (
+                <div className="flex items-center gap-2 text-xs text-amber-800 font-medium mt-1">
+                  <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 16 }}>verified</span>
+                  <span>Établissement sélectionné. Choisissez maintenant une salle de formation ci-dessous.</span>
+                </div>
               )}
             </Field>
           </div>
 
-          {/* ══ ÉTAPE 3 : Espace (désactivé si pas de tenant choisi) ══ */}
+          {/* ══ ÉTAPE 2 : Espace & Salle de ce coworking ══ */}
           <div className={`rounded-2xl border p-4 space-y-3 transition-all duration-200 ${!selectedTenantId
             ? 'border-slate-200 bg-slate-50 opacity-50 pointer-events-none select-none'
-            : 'border-emerald-200 bg-emerald-50'
+            : 'border-emerald-200 bg-emerald-50/70'
             }`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 14 }}>door_open</span>
+                  <span className="material-symbols-outlined text-emerald-700" style={{ fontSize: 15 }}>meeting_room</span>
                 </span>
-                <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-                  Étape 3 — Espace
+                <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">
+                  Étape 2 — Salle ou Espace du coworking
                 </span>
               </div>
               {loadingEspaces && (
@@ -1012,37 +1061,37 @@ export default function TrainerFormations({ session }) {
             {selectedTenantId && !loadingEspaces && espacesFormation.length === 0 && (
               <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
                 <span className="material-symbols-outlined shrink-0" style={{ fontSize: 15 }}>warning</span>
-                Aucune salle de formation ou open space disponible dans ce coworking.
+                Aucune salle de formation disponible pour cet établissement.
               </div>
             )}
 
             {selectedTenantId && !loadingEspaces && espacesFormation.length > 0 && (
-              <Field label="Salle de formation ou Open space">
+              <Field label="Salle de formation ou Open space" required>
                 <select
                   className={inputCls}
+                  required
                   value={form.espace_id}
                   onChange={e => setForm(p => ({ ...p, espace_id: e.target.value }))}
                 >
-                  <option value="">— Sélectionner un espace (optionnel) —</option>
+                  <option value="">— Sélectionner une salle / espace —</option>
                   {espacesFormation.filter(e => e.type === 'training_room').length > 0 && (
-                    <optgroup label="Salles de formation">
+                    <optgroup label="🎓 Salles de formation (Recommandé)">
                       {espacesFormation
                         .filter(e => e.type === 'training_room')
                         .map(e => (
-                          <option key={e.id} value={e.id} disabled={e.disponible === false}>
-                            {e.disponible === false ? '[Indisponible] ' : ''}{e.nom} — {e.capacite} places
+                          <option key={e.id} value={e.id}>
+                            {e.nom} — {e.capacite} places ({e.tarif_horaire || 0} DT/h)
                           </option>
                         ))}
                     </optgroup>
                   )}
                   {espacesFormation.filter(e => e.type === 'open_space').length > 0 && (
-                    <optgroup label="Open spaces">
+                    <optgroup label="🪑 Open spaces">
                       {espacesFormation
                         .filter(e => e.type === 'open_space')
                         .map(e => (
-                          <option key={e.id} value={e.id} disabled={e.disponible === false}>
-                            {e.disponible === false ? '[Occupé] ' : ''}{e.nom} — {e.capacite} places
-                            {e.disponible === false ? ' (choisir une salle de formation)' : ''}
+                          <option key={e.id} value={e.id}>
+                            {e.nom} — {e.capacite} places ({e.tarif_horaire || 0} DT/h)
                           </option>
                         ))}
                     </optgroup>
@@ -1062,39 +1111,178 @@ export default function TrainerFormations({ session }) {
                     <span>{spaceCheck.message}</span>
                   </div>
                 )}
-
-                <p className="text-[11px] text-on-surface-variant mt-1">
-                  Seules les salles de formation et open spaces sont affichés.
-                  Un open space est bloqué dès qu'une réservation existe dans le même créneau.
-                </p>
               </Field>
             )}
+          </div>
 
-            {/* Si un espace est sélectionné et disponible : Estimation du coût & Mode de paiement */}
-            {form.espace_id && getSelectedSpace() && spaceCheck.status !== 'conflict' && (
-              <div className="mt-3 pt-3 border-t border-emerald-200/80 space-y-3">
-                {/* Récapitulatif du coût de location */}
-                <div className="p-3.5 rounded-2xl bg-white/90 border border-emerald-200 flex items-center justify-between shadow-xs">
+          {/* ══ ÉTAPE 3 : Dates fixes & Horaires de la formation (Plusieurs jours) ══ */}
+          <div className={`rounded-2xl border p-4 space-y-4 transition-all duration-200 ${!selectedTenantId || !form.espace_id
+            ? 'border-slate-200 bg-slate-50 opacity-50 pointer-events-none select-none'
+            : 'border-indigo-200 bg-indigo-50/70'
+            }`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-indigo-700" style={{ fontSize: 15 }}>event_repeat</span>
+                </span>
+                <span className="text-xs font-bold text-indigo-800 uppercase tracking-wider">
+                  Étape 3 — Dates fixes &amp; Horaires (Plusieurs jours)
+                </span>
+              </div>
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                {datesFixes.length} jour{datesFixes.length > 1 ? 's' : ''} sélectionné{datesFixes.length > 1 ? 's' : ''}
+              </span>
+            </div>
+
+            {/* Horaires quotidiens */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/80 p-3 rounded-xl border border-indigo-100">
+              <Field label="Heure de début quotidienne" required>
+                <input
+                  type="time"
+                  className={inputCls}
+                  required
+                  value={heureDebut}
+                  onChange={e => setHeureDebut(e.target.value)}
+                />
+              </Field>
+              <Field label="Heure de fin quotidienne" required>
+                <input
+                  type="time"
+                  className={inputCls}
+                  required
+                  value={heureFin}
+                  onChange={e => setHeureFin(e.target.value)}
+                />
+              </Field>
+              <div className="sm:col-span-2 text-right">
+                <span className="text-xs font-semibold text-indigo-700">
+                  Durée par session : {calculateDailyHours()}h
+                </span>
+              </div>
+            </div>
+
+            {/* Ajouter une date fixe */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                <span>Ajouter des dates fixes pour la formation</span>
+                <span className="text-[11px] font-normal text-slate-500">Sélectionnez chaque jour de session</span>
+              </label>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  className={inputCls}
+                  min={new Date().toISOString().slice(0, 10)}
+                  value={newDateInput}
+                  onChange={e => setNewDateInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newDateInput) {
+                      addDateFixe(newDateInput);
+                    }
+                  }}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs sm:text-sm whitespace-nowrap flex items-center gap-1.5 transition-all shadow-xs"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                  <span>Ajouter</span>
+                </button>
+              </div>
+
+              {/* Raccourcis rapides */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="text-[11px] font-semibold text-slate-500 mr-1">Raccourcis :</span>
+                <button
+                  type="button"
+                  onClick={addNextDay}
+                  className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-bold rounded-lg transition-colors"
+                >
+                  + Jour suivant
+                </button>
+                <button
+                  type="button"
+                  onClick={addNextSaturday}
+                  className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-bold rounded-lg transition-colors"
+                >
+                  + Samedi prochain
+                </button>
+              </div>
+            </div>
+
+            {/* Liste des dates fixes sélectionnées */}
+            {datesFixes.length === 0 ? (
+              <div className="p-3.5 bg-white/70 border border-dashed border-indigo-200 rounded-xl text-center text-xs text-indigo-600 font-medium">
+                Aucune date fixée. Ajoutez au moins une date ci-dessus pour planifier la formation.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  Planning des séances ({datesFixes.length} jour{datesFixes.length > 1 ? 's' : ''}) :
+                </p>
+                <div className="grid gap-2 max-h-48 overflow-y-auto pr-1">
+                  {datesFixes.map((dStr, idx) => {
+                    const dateObj = new Date(dStr + 'T00:00:00');
+                    const formatted = dateObj.toLocaleDateString('fr-FR', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    });
+                    return (
+                      <div
+                        key={dStr}
+                        className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-indigo-100 shadow-2xs hover:border-indigo-300 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-800 text-[11px] font-bold flex items-center justify-center shrink-0">
+                            J{idx + 1}
+                          </span>
+                          <div>
+                            <p className="text-xs font-bold text-slate-800 capitalize">{formatted}</p>
+                            <p className="text-[10px] text-slate-500 font-medium">
+                              {heureDebut} → {heureFin} · {calculateDailyHours()}h
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeDateFixe(dStr)}
+                          title="Supprimer cette séance"
+                          className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Estimation du coût de location & Résumé */}
+            {form.espace_id && getSelectedSpace() && datesFixes.length > 0 && (
+              <div className="pt-3 border-t border-indigo-200/80 space-y-3">
+                <div className="p-3.5 rounded-2xl bg-white border border-indigo-200 flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-emerald-700" style={{ fontSize: 18 }}>payments</span>
+                    <div className="w-9 h-9 rounded-xl bg-indigo-100 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-indigo-700" style={{ fontSize: 20 }}>payments</span>
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-slate-800">Coût de location de l'espace</p>
+                      <p className="text-xs font-bold text-slate-900">Coût estimé location de salle</p>
                       <p className="text-[11px] text-slate-500">
-                        {getSelectedSpace()?.tarif_horaire || 0} DT/h × {calculateSpaceHours().toFixed(1)} h
+                        {getSelectedSpace()?.tarif_horaire || 0} DT/h × {calculateTotalHours()} h ({datesFixes.length} séance{datesFixes.length > 1 ? 's' : ''} de {calculateDailyHours()}h)
                       </p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="font-sora font-bold text-xl text-emerald-700">{calculateSpacePrice()}</span>
-                    <span className="text-xs font-bold text-emerald-600 ml-1">DT</span>
+                    <span className="font-sora font-extrabold text-xl text-indigo-700">{calculateSpacePrice()}</span>
+                    <span className="text-xs font-bold text-indigo-600 ml-1">DT</span>
                   </div>
                 </div>
 
-                {/* Mode de règlement CDC v3.0 D1 : 100 % sur place */}
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
-                  <strong>Règlement à effectuer sur place</strong> (espèces, chèque ou virement) lors de votre arrivée à l'établissement. Un reçu PDF numéroté vous sera remis après encaissement.
+                  <strong>Validation obligatoire par le coworking :</strong> La réservation sera envoyée au responsable du coworking pour approbation. Le règlement sera effectué sur place lors de votre arrivée.
                 </div>
               </div>
             )}

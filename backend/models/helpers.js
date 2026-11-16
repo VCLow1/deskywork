@@ -372,14 +372,16 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
   };
 }
 
-async function createReservationWithPayment({ userId, espaceId, dateDebut, dateFin, tenantId, mode = 'on_site' }) {
+async function createReservationWithPayment({ userId, espaceId, dateDebut, dateFin, tenantId, mode = 'on_site', totalHours = null }) {
   const { data: espData } = await supabaseAdmin
     .from('espaces')
     .select('tarif_horaire, tenant_id')
     .eq('id', espaceId)
     .single();
 
-  const hours = Math.max(1, (new Date(dateFin) - new Date(dateDebut)) / (1000 * 60 * 60));
+  const hours = totalHours && Number(totalHours) > 0
+    ? Number(totalHours)
+    : Math.max(1, (new Date(dateFin) - new Date(dateDebut)) / (1000 * 60 * 60));
   const tarif = parseFloat(espData?.tarif_horaire) || 0;
   const computedMontant = parseFloat((hours * tarif).toFixed(3));
   const bookingTenantId = tenantId || espData?.tenant_id || null;

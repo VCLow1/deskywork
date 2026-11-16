@@ -131,7 +131,12 @@ export default function AdminReservations({ session }) {
     setActionId(id);
     try {
       await bookingApi.update(id, { statut: 'confirmed' });
-      showToast("Réservation confirmée ! Règlement à effectuer sur place lors de l'arrivée du client.");
+      // Si la réservation est liée à une formation, publier la formation
+      const { data: linkedForm } = await supabase.from('formations').select('id, titre').eq('reservation_id', id).maybeSingle();
+      if (linkedForm) {
+        await supabase.from('formations').update({ statut: 'publiee' }).eq('id', linkedForm.id);
+      }
+      showToast("Réservation approuvée et confirmée ! Règlement sur place lors de l'arrivée.");
       await loadData();
     } catch (e) {
       setError(e.message);
@@ -145,6 +150,12 @@ export default function AdminReservations({ session }) {
     setActionId(id);
     try {
       await bookingApi.update(id, { statut });
+      if (statut === 'refused' || statut === 'cancelled') {
+        const { data: linkedForm } = await supabase.from('formations').select('id').eq('reservation_id', id).maybeSingle();
+        if (linkedForm) {
+          await supabase.from('formations').update({ statut: 'annulee' }).eq('id', linkedForm.id);
+        }
+      }
       showToast(successMsg);
       await loadData();
     } catch (e) {

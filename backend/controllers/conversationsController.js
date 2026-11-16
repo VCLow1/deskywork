@@ -4,10 +4,65 @@ const { applyTenantFilter } = require('../middleware/guards');
 const { emitToUser } = require('../services/socketService');
 const { ensureConversationLinks, notifyNewMessage } = require('../services/messagingService');
 
+// Garantir l'existence d'un canal communautaire pour chaque coworking et y inscrire l'utilisateur
+async function ensureCommunityChannels(userId, tenantId = null) {
+  try {
+    const { data: tenants } = await supabaseAdmin
+      .from('tenants')
+      .select('id, nom, is_active')
+      .eq('is_active', true);
+
+    for (const t of tenants || []) {
+      const channelTitle = `Canal Communauté — ${t.nom}`;
+      let { data: channel } = await supabaseAdmin
+        .from('conversations')
+        .select('id, title, type, tenant_id')
+        .eq('tenant_id', t.id)
+        .eq('type', 'group')
+        .ilike('title', '%Canal Communauté%')
+        .maybeSingle();
+
+      if (!channel) {
+        const { data: newChan } = await supabaseAdmin
+          .from('conversations')
+          .insert({
+            title: channelTitle,
+            type: 'group',
+            tenant_id: t.id,
+          })
+          .select()
+          .single();
+        channel = newChan;
+      }
+
+      if (channel && userId) {
+        const { data: isMem } = await supabaseAdmin
+          .from('conversation_members')
+          .select('conversation_id')
+          .eq('conversation_id', channel.id)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (!isMem) {
+          await supabaseAdmin.from('conversation_members').insert({
+            conversation_id: channel.id,
+            user_id: userId,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ ensureCommunityChannels:', err.message);
+  }
+}
+
 async function listConversations(req, res) {
   try {
     const { page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Initialise les canaux communautaires pour l'utilisateur
+    await ensureCommunityChannels(req.user.id, req.tenantId);
 
     const { data: memberships, error: mErr } = await supabaseAdmin
       .from('conversation_members')
@@ -21,7 +76,7 @@ async function listConversations(req, res) {
 
     const { data: conversations, error, count } = await supabaseAdmin
       .from('conversations')
-      .select('*', { count: 'exact' })
+      .select('*, tenants(id, nom, logo_url)', { count: 'exact' })
       .in('id', convIds)
       .order('updated_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
@@ -31,7 +86,7 @@ async function listConversations(req, res) {
     const enriched = await Promise.all((conversations || []).map(async (conv) => {
       const { data: lastMsg } = await supabaseAdmin
         .from('messages')
-        .select('id, content, sender_id, created_at')
+        .select('id, content, sender_id, created_at, profiles(id, prenom, nom, role)')
         .eq('conversation_id', conv.id)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -86,22 +141,32 @@ async function createConversation(req, res) {
 
 async function getConversation(req, res) {
   try {
-    const { data: membership } = await supabaseAdmin
+    let { data: membership } = await supabaseAdmin
       .from('conversation_members')
       .select('*')
       .eq('conversation_id', req.params.id)
       .eq('user_id', req.user.id)
       .maybeSingle();
 
-    if (!membership) return res.status(403).json({ error: 'Accès refusé.' });
-
     const { data: conversation, error } = await supabaseAdmin
       .from('conversations')
-      .select('*')
+      .select('*, tenants(id, nom, logo_url)')
       .eq('id', req.params.id)
       .single();
 
-    if (error) return res.status(404).json({ error: 'Conversation introuvable.' });
+    if (error || !conversation) return res.status(404).json({ error: 'Conversation introuvable.' });
+
+    // Pour les canaux communautaires (type group), inscription automatique
+    if (!membership && (conversation.type === 'group' || req.profile?.role === 'super_admin')) {
+      const { data: newMem } = await supabaseAdmin
+        .from('conversation_members')
+        .insert({ conversation_id: conversation.id, user_id: req.user.id })
+        .select('*')
+        .single();
+      membership = newMem;
+    }
+
+    if (!membership) return res.status(403).json({ error: 'Accès refusé.' });
 
     res.json({ conversation, membership });
   } catch (err) {
@@ -114,12 +179,20 @@ async function listMessages(req, res) {
     const { page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const { data: membership } = await supabaseAdmin
+    let { data: membership } = await supabaseAdmin
       .from('conversation_members')
       .select('*')
       .eq('conversation_id', req.params.id)
       .eq('user_id', req.user.id)
       .maybeSingle();
+
+    if (!membership) {
+      const { data: conv } = await supabaseAdmin.from('conversations').select('id, type').eq('id', req.params.id).maybeSingle();
+      if (conv?.type === 'group' || req.profile?.role === 'super_admin') {
+        const { data: newMem } = await supabaseAdmin.from('conversation_members').insert({ conversation_id: req.params.id, user_id: req.user.id }).select('*').single();
+        membership = newMem;
+      }
+    }
 
     if (!membership) return res.status(403).json({ error: 'Accès refusé.' });
 
@@ -143,12 +216,20 @@ async function createMessage(req, res) {
     const { content } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ error: 'Message vide.' });
 
-    const { data: membership } = await supabaseAdmin
+    let { data: membership } = await supabaseAdmin
       .from('conversation_members')
       .select('*')
       .eq('conversation_id', req.params.id)
       .eq('user_id', req.user.id)
       .maybeSingle();
+
+    if (!membership) {
+      const { data: conv } = await supabaseAdmin.from('conversations').select('id, type').eq('id', req.params.id).maybeSingle();
+      if (conv?.type === 'group' || req.profile?.role === 'super_admin') {
+        const { data: newMem } = await supabaseAdmin.from('conversation_members').insert({ conversation_id: req.params.id, user_id: req.user.id }).select('*').single();
+        membership = newMem;
+      }
+    }
 
     if (!membership) return res.status(403).json({ error: 'Accès refusé.' });
 
@@ -328,6 +409,9 @@ async function listAdminConversations(req, res) {
   try {
     const { page = 1, limit = 50, search = '' } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Initialise les canaux communautaires
+    await ensureCommunityChannels(req.user.id, req.tenantId);
 
     let query = supabaseAdmin
       .from('conversations')
