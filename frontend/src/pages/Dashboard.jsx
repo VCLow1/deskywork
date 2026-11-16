@@ -1139,7 +1139,13 @@ export default function Dashboard({ session }) {
                           <h4 className="font-semibold text-primary text-xs truncate mb-1">{f.titre}</h4>
                           <p className="text-[10px] text-on-surface-variant">Formateur : <strong>{formateurName}</strong></p>
                           <div className="flex justify-between items-center mt-2.5">
-                            <span className="text-[10px] font-bold text-secondary">{f.prix_inscription > 0 ? `${f.prix_inscription} DT` : 'Gratuit'}</span>
+                            <span className="text-[10px] font-bold text-secondary">
+                              {f.prix_inscription > 0
+                                ? `${f.prix_inscription} DT`
+                                : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                                ? 'Gratuit'
+                                : 'Non défini'}
+                            </span>
                             <Link
                               to="/dashboard/formations"
                               className="px-2.5 py-1 rounded bg-[#8b5cf6] text-white text-[10px] font-bold hover:bg-[#8b5cf6]/90 transition-colors"

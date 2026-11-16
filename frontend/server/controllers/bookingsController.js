@@ -19,7 +19,7 @@ async function getBookingsCalendar(req, res) {
     let query = supabaseAdmin
       .from('reservations')
       .select('id, espace_id, user_id, date_debut, date_fin, statut, mode, tenant_id, espaces(nom, type, tenant_id), profiles!user_id(nom, prenom, email)')
-      .eq('statut', 'confirmed')  // Le calendrier n'affiche que les réservations confirmées
+      .in('statut', ['confirmed', 'pending'])  // Affiche les réservations confirmées ET en attente (formations incluses)
       .lt('date_debut', to)
       .gt('date_fin', from)
       .order('date_debut', { ascending: true });
@@ -57,7 +57,7 @@ async function getBookingsCalendar(req, res) {
       let fb = supabaseAdmin
         .from('reservations')
         .select('id, espace_id, date_debut, date_fin, statut, reference, tenant_id, espaces(nom, type, tenant_id)')
-        .eq('statut', 'confirmed')
+        .in('statut', ['confirmed', 'pending'])
         .lt('date_debut', to)
         .gt('date_fin', from)
         .order('date_debut', { ascending: true });
@@ -74,7 +74,65 @@ async function getBookingsCalendar(req, res) {
       return res.json({ reservations: [] });
     }
 
-    res.json({ reservations: data });
+    // Récupération et synchronisation des formations pour l'agenda
+    let reservationsList = Array.isArray(data) ? [...data] : [];
+    try {
+      let formQ = supabaseAdmin
+        .from('formations')
+        .select('id, titre, description, formateur_id, espace_id, date_debut, date_fin, capacite_max, prix_inscription, statut, tenant_id, reservation_id, profiles!fk_formations_formateur_profiles(id, nom, prenom, email), espaces(id, nom, type)')
+        .in('statut', ['planifiee', 'en_cours', 'terminee'])
+        .lt('date_debut', to)
+        .gt('date_fin', from);
+
+      if (isStaff && req.tenantId) {
+        formQ = formQ.eq('tenant_id', req.tenantId);
+      } else if (!isSuperAdmin && !isStaff) {
+        formQ = formQ.eq('formateur_id', req.user.id);
+      }
+      if (espace_id) {
+        formQ = formQ.eq('espace_id', espace_id);
+      }
+
+      const { data: formationsData } = await formQ;
+      if (Array.isArray(formationsData)) {
+        for (const f of formationsData) {
+          // Chercher si une réservation existante correspond à cette formation
+          let found = reservationsList.find(r => r.id === f.reservation_id || (r.espace_id === f.espace_id && r.date_debut === f.date_debut));
+          if (found) {
+            found.is_formation = true;
+            found.formation_id = f.id;
+            found.formation_titre = f.titre;
+            found.capacite_max = f.capacite_max;
+            found.prix_inscription = f.prix_inscription;
+            if (!found.profiles && f.profiles) found.profiles = f.profiles;
+          } else {
+            // Ajouter la formation comme créneau réservé dans l'agenda
+            reservationsList.push({
+              id: f.reservation_id || `formation-${f.id}`,
+              espace_id: f.espace_id,
+              user_id: f.formateur_id,
+              date_debut: f.date_debut,
+              date_fin: f.date_fin,
+              statut: f.statut === 'planifiee' ? (f.reservation_id ? 'pending' : 'confirmed') : f.statut,
+              mode: 'on_site',
+              tenant_id: f.tenant_id,
+              espaces: f.espaces,
+              profiles: f.profiles,
+              is_formation: true,
+              formation_id: f.id,
+              formation_titre: f.titre,
+              capacite_max: f.capacite_max,
+              prix_inscription: f.prix_inscription,
+            });
+          }
+        }
+        reservationsList.sort((a, b) => new Date(a.date_debut) - new Date(b.date_debut));
+      }
+    } catch (formErr) {
+      console.warn('⚠️ Synchronisation formations agenda:', formErr.message);
+    }
+
+    res.json({ reservations: reservationsList });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

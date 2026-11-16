@@ -526,8 +526,14 @@ export default function PortalLayout({ children, profile, onLogout }) {
         }
       });
 
+    // Fallback polling périodique (15s) pour garantir les notifications temps réel sur tout environnement
+    const pollInterval = setInterval(() => {
+      if (!cancelled) fetchNotifications(true);
+    }, 15000);
+
     return () => {
       cancelled = true;
+      clearInterval(pollInterval);
       removeCreatedListener();
       removeChangedListener();
       supabase.removeChannel(channel);

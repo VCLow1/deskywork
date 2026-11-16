@@ -316,7 +316,7 @@ export default function TrainerFormations({ session }) {
   /* Form */
   const emptyForm = {
     id: '', titre: '', description: '', espace_id: '',
-    capacite_max: 10, prix_inscription: 0,
+    capacite_max: 10, prix_inscription: '', est_gratuit: false,
     date_debut: '', date_fin: '',
     programme: '', prerequis: '', materiel: '',
     statut: 'planifiee',
@@ -543,13 +543,15 @@ export default function TrainerFormations({ session }) {
     setHeureDebut(hDeb);
     setHeureFin(hFin);
 
+    const isGratuit = Boolean(f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'));
     setForm({
       id: f.id,
       titre: f.titre || '',
       description: f.description || '',
       espace_id: f.espace_id || '',
       capacite_max: f.capacite_max || 10,
-      prix_inscription: f.prix_inscription || 0,
+      prix_inscription: f.prix_inscription > 0 ? f.prix_inscription : '',
+      est_gratuit: isGratuit,
       date_debut: f.date_debut ? new Date(f.date_debut).toISOString().slice(0, 16) : '',
       date_fin: f.date_fin ? new Date(f.date_fin).toISOString().slice(0, 16) : '',
       programme: f.programme || '',
@@ -596,11 +598,16 @@ export default function TrainerFormations({ session }) {
       cleanProg = cleanProg.replace(/^📅 Sessions fixes.*?\n\n/s, '');
       const finalProgramme = `📅 Sessions fixes (${sortedDates.length} jour${sortedDates.length > 1 ? 's' : ''}) :\n${datesSummary}\n\n${cleanProg}`.trim();
 
+      const isGratuit = Boolean(form.est_gratuit);
+      const parsedPrice = parseFloat(form.prix_inscription);
+      const finalPrice = (!isGratuit && !isNaN(parsedPrice) && parsedPrice > 0) ? parsedPrice : 0;
+
       const payload = {
         ...form,
         formateur_id: profile.id,
         capacite_max: parseInt(form.capacite_max),
-        prix_inscription: parseFloat(form.prix_inscription) || 0,
+        prix_inscription: finalPrice,
+        est_gratuit: isGratuit,
         date_debut: debutISO,
         date_fin: finISO,
         espace_id: form.espace_id || null,
@@ -813,7 +820,11 @@ export default function TrainerFormations({ session }) {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined" style={{ fontSize: 13 }}>payments</span>
-                        {f.prix_inscription > 0 ? `${parseFloat(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
+                        {f.prix_inscription > 0
+                          ? `${parseFloat(f.prix_inscription).toFixed(3)} DT`
+                          : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                          ? <span className="text-emerald-600 font-semibold">Gratuit</span>
+                          : <span className="text-slate-400 font-medium italic">Non défini</span>}
                       </div>
                     </div>
                     {/* Fill bar */}
@@ -887,9 +898,13 @@ export default function TrainerFormations({ session }) {
                             </div>
                           </td>
                           <td className="p-4 font-semibold text-primary text-sm">
-                            {f.prix_inscription > 0
-                              ? `${parseFloat(f.prix_inscription).toFixed(3)} DT`
-                              : <span className="text-emerald-600 text-xs font-semibold">Gratuit</span>}
+                            {f.prix_inscription > 0 ? (
+                              `${parseFloat(f.prix_inscription).toFixed(3)} DT`
+                            ) : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? (
+                              <span className="text-emerald-600 text-xs font-semibold">Gratuit</span>
+                            ) : (
+                              <span className="text-slate-400 text-xs font-medium italic">Non défini</span>
+                            )}
                           </td>
                           <td className="p-4">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUT_STYLES[f.statut] || ''}`}>
@@ -1299,16 +1314,32 @@ export default function TrainerFormations({ session }) {
                 onChange={e => setForm(p => ({ ...p, capacite_max: e.target.value }))}
               />
             </Field>
-            <Field label="Prix d'inscription (DT)">
-              <input
-                type="number"
-                min={0}
-                step="0.5"
-                className={inputCls}
-                placeholder="0 = Gratuit"
-                value={form.prix_inscription}
-                onChange={e => setForm(p => ({ ...p, prix_inscription: e.target.value }))}
-              />
+            <Field label="Tarif d'inscription (DT)">
+              <div className="space-y-2">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  className={`${inputCls} ${form.est_gratuit ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
+                  placeholder={form.est_gratuit ? 'Gratuit' : 'Ex: 50 (laisser vide si non défini)'}
+                  value={form.est_gratuit ? '' : form.prix_inscription}
+                  disabled={form.est_gratuit}
+                  onChange={e => setForm(p => ({ ...p, prix_inscription: e.target.value }))}
+                />
+                <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-on-surface-variant font-medium pt-1">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.est_gratuit)}
+                    onChange={e => setForm(p => ({
+                      ...p,
+                      est_gratuit: e.target.checked,
+                      prix_inscription: e.target.checked ? '' : p.prix_inscription,
+                    }))}
+                    className="w-4 h-4 rounded text-secondary focus:ring-secondary/30 accent-secondary"
+                  />
+                  <span>Formation gratuite (accès libre pour les participants)</span>
+                </label>
+              </div>
             </Field>
           </div>
 

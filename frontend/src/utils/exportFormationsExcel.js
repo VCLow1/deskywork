@@ -80,7 +80,11 @@ export async function exportFormationsToExcel(formations = []) {
     const formateurName = f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : '—';
     const dateDebut = f.date_debut ? new Date(f.date_debut).toLocaleDateString('fr-FR') : '—';
     const inscritsStr = `${f.nb_inscrits ?? 0} / ${f.capacite_max || '∞'}`;
-    const prixStr = f.prix_inscription > 0 ? `${f.prix_inscription} DT` : 'Gratuit';
+    const prixStr = f.prix_inscription > 0
+      ? `${f.prix_inscription} DT`
+      : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+      ? 'Gratuit'
+      : 'Non défini';
     const statutStr = f.statut === 'planifiee' ? 'Planifiée' : f.statut === 'en_cours' ? 'En cours' : f.statut === 'terminee' ? 'Terminée' : 'Annulée';
 
     const values = [f.titre, formateurName, f.espaces?.nom || '—', dateDebut, inscritsStr, prixStr, statutStr];

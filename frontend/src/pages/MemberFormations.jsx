@@ -338,8 +338,12 @@ export default function MemberFormations({ session }) {
                             <span className="text-[10px] font-bold uppercase tracking-widest text-secondary bg-secondary/8 px-2 py-0.5 rounded-full truncate max-w-[140px]">
                               {f.espaces?.nom || 'Atelier'}
                             </span>
-                            <span className={`text-xs font-bold shrink-0 ${f.prix_inscription > 0 ? 'text-primary' : 'text-emerald-600'}`}>
-                              {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
+                            <span className={`text-xs font-bold shrink-0 ${f.prix_inscription > 0 ? 'text-primary' : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? 'text-emerald-600' : 'text-slate-400 italic'}`}>
+                              {f.prix_inscription > 0
+                                ? `${Number(f.prix_inscription).toFixed(3)} DT`
+                                : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                                ? 'Gratuit'
+                                : 'Non défini'}
                             </span>
                           </div>
 
@@ -473,8 +477,8 @@ export default function MemberFormations({ session }) {
                             </span>
                           </div>
                         ) : (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
-                            Gratuit
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${(my.formations?.est_gratuit || my.formations?.programme?.includes('[SESSION_GRATUITE]')) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {(my.formations?.est_gratuit || my.formations?.programme?.includes('[SESSION_GRATUITE]')) ? 'Gratuit' : 'Tarif non défini'}
                           </span>
                         )}
 

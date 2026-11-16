@@ -59,18 +59,37 @@ async function createInscription(req, res) {
 
     const placesRestantes = formation.capacite_max - (nbInscrits || 0);
 
+    const isFree = (parseFloat(formation.prix_inscription) || 0) <= 0 && Boolean(formation.programme?.includes('[SESSION_GRATUITE]'));
+    const initialPaymentStatut = formation.prix_inscription > 0 ? 'en_attente' : (isFree ? 'gratuit' : 'en_attente');
+
     if (placesRestantes <= 0) {
       const { data: attente, error: atErr } = await supabaseAdmin
         .from('inscriptions_formations')
-        .upsert({ formation_id: formationId, user_id: req.user.id, statut: 'en_attente', statut_paiement: formation.prix_inscription > 0 ? 'en_attente' : 'gratuit', updated_at: new Date().toISOString() }, { onConflict: 'formation_id,user_id' })
+        .upsert({ formation_id: formationId, user_id: req.user.id, statut: 'en_attente', statut_paiement: initialPaymentStatut, updated_at: new Date().toISOString() }, { onConflict: 'formation_id,user_id' })
         .select().single();
       if (atErr) return res.status(400).json({ error: atErr.message });
+
+      // Notifications temps réel pour liste d'attente
+      if (formation.formateur_id) {
+        const notif = {
+          user_id: formation.formateur_id,
+          type: 'nouvelle_inscription_formation',
+          canal: 'Dashboard',
+          message: `⏳ Nouveau membre en liste d'attente pour « ${formation.titre} » : ${req.profile.prenom} ${req.profile.nom}.`,
+        };
+        await supabaseAdmin.from('notifications').insert(notif);
+        try {
+          const { emitNotification } = require('../services/socketService');
+          emitNotification(formation.formateur_id, notif);
+        } catch {}
+      }
+
       return res.status(201).json({ inscription: attente, message: 'Formation complète — ajouté en liste d\'attente.', liste_attente: true });
     }
 
     const { data: inscription, error: insErr } = await supabaseAdmin
       .from('inscriptions_formations')
-      .upsert({ formation_id: formationId, user_id: req.user.id, statut: 'confirmee', statut_paiement: formation.prix_inscription > 0 ? 'en_attente' : 'gratuit', updated_at: new Date().toISOString() }, { onConflict: 'formation_id,user_id' })
+      .upsert({ formation_id: formationId, user_id: req.user.id, statut: 'confirmee', statut_paiement: initialPaymentStatut, updated_at: new Date().toISOString() }, { onConflict: 'formation_id,user_id' })
       .select().single();
 
     if (insErr) return res.status(400).json({ error: insErr.message });
@@ -109,16 +128,69 @@ async function createInscription(req, res) {
       inscription.paiement_id = payment.id;
     }
 
+    // Notifications temps réel pour formateur, staff/coworking et membre
     try {
       await notifyInscriptionFormation(supabaseAdmin,
         { id: formationId, titre: formation.titre, date_debut: formation.date_debut, date_fin: formation.date_fin },
         { id: req.user.id, nom: req.profile.nom, prenom: req.profile.prenom, email: req.user.email }
       );
+
+      // 1. Notification au Formateur
+      if (formation.formateur_id) {
+        const trainerNotif = {
+          user_id: formation.formateur_id,
+          type: 'nouvelle_inscription_formation',
+          canal: 'Dashboard',
+          message: `🎓 Nouvelle réservation pour votre formation « ${formation.titre} » : ${req.profile.prenom} ${req.profile.nom}.`,
+        };
+        await supabaseAdmin.from('notifications').insert(trainerNotif);
+        try {
+          const { emitNotification } = require('../services/socketService');
+          emitNotification(formation.formateur_id, trainerNotif);
+        } catch {}
+      }
+
+      // 2. Notification aux admins du Coworking
+      if (formation.tenant_id) {
+        const { data: admins } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .in('role', ['admin', 'staff'])
+          .eq('tenant_id', formation.tenant_id);
+        for (const admin of admins || []) {
+          const adminNotif = {
+            user_id: admin.id,
+            type: 'nouvelle_inscription_formation',
+            canal: 'Dashboard',
+            message: `🎓 Nouvelle réservation formation « ${formation.titre} » : ${req.profile.prenom} ${req.profile.nom}.`,
+          };
+          await supabaseAdmin.from('notifications').insert(adminNotif);
+          try {
+            const { emitNotification } = require('../services/socketService');
+            emitNotification(admin.id, adminNotif);
+          } catch {}
+        }
+      }
+
+      // 3. Notification Dashboard au Membre
+      const memberNotif = {
+        user_id: req.user.id,
+        type: 'inscription_formation',
+        canal: 'Dashboard',
+        message: `🎓 Votre réservation pour la formation « ${formation.titre} » a été confirmée.`,
+      };
+      await supabaseAdmin.from('notifications').insert(memberNotif);
+      try {
+        const { emitNotification } = require('../services/socketService');
+        emitNotification(req.user.id, memberNotif);
+      } catch {}
     } catch (notifErr) { console.warn('⚠️ Notif inscription formation:', notifErr.message); }
 
     const confirmMsg = formation.prix_inscription > 0
       ? 'Inscription confirmée ! Règlement à effectuer sur place (espèces, chèque ou virement) lors de votre arrivée.'
-      : 'Inscription confirmée avec succès !';
+      : isFree
+      ? 'Inscription confirmée avec succès (session gratuite) !'
+      : 'Inscription confirmée ! Tarif à confirmer auprès de l\'établissement.';
 
     res.status(201).json({
       inscription,

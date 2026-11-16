@@ -67,7 +67,12 @@ async function listFormations(req, res) {
         .select('*', { count: 'exact', head: true })
         .eq('formation_id', f.id)
         .neq('statut', 'annulee');
-      return { ...f, nb_inscrits: count || 0, places_restantes: f.capacite_max - (count || 0) };
+      return {
+        ...f,
+        est_gratuit: Boolean(f.programme?.includes('[SESSION_GRATUITE]')),
+        nb_inscrits: count || 0,
+        places_restantes: f.capacite_max - (count || 0),
+      };
     }));
 
     res.json({ formations: formatted });
@@ -96,7 +101,12 @@ async function getFormation(req, res) {
     const isFormateur = req.profile.role === 'formateur' && data.formateur_id === req.user.id;
 
     res.json({
-      formation: { ...data, nb_inscrits: count || 0, places_restantes: data.capacite_max - (count || 0) },
+      formation: {
+        ...data,
+        est_gratuit: Boolean(data.programme?.includes('[SESSION_GRATUITE]')),
+        nb_inscrits: count || 0,
+        places_restantes: data.capacite_max - (count || 0),
+      },
       participants: (isStaff || isFormateur) ? (inscrits || []) : [],
     });
   } catch (err) {
@@ -148,22 +158,54 @@ async function createFormation(req, res) {
       if (bookingTenantId) targetTenantId = bookingTenantId;
 
       try {
-        const { data: admins } = await supabaseAdmin
+        let adminsQuery = supabaseAdmin
           .from('profiles')
           .select('id')
-          .in('role', ['admin', 'staff'])
-          .eq('tenant_id', reservation.tenant_id || targetTenantId);
+          .in('role', ['admin', 'staff']);
+        if (reservation.tenant_id || targetTenantId) {
+          adminsQuery = adminsQuery.eq('tenant_id', reservation.tenant_id || targetTenantId);
+        }
+        const { data: admins } = await adminsQuery;
         for (const admin of admins || []) {
-          await supabaseAdmin.from('notifications').insert({
+          const notif = {
             user_id: admin.id,
             type: 'nouvelle_demande_reservation',
             canal: 'Dashboard',
-            message: `📋 Réservation (sur place) liée à la formation « ${titre} » — ${reservation.espaces?.nom || 'espace'} (en attente de confirmation).`,
-          });
+            message: `📋 Réservation (formation) « ${titre} » — ${reservation.espaces?.nom || 'espace'} (en attente de confirmation).`,
+          };
+          await supabaseAdmin.from('notifications').insert(notif);
+          try {
+            const { emitNotification } = require('../services/socketService');
+            emitNotification(admin.id, notif);
+          } catch {}
         }
+
+        const trainerNotif = {
+          user_id: req.user.id,
+          type: 'demande_reservation_envoyee',
+          canal: 'Dashboard',
+          message: `📋 Votre demande de réservation pour la formation « ${titre} » a été transmise au coworking.`,
+        };
+        await supabaseAdmin.from('notifications').insert(trainerNotif);
+        try {
+          const { emitNotification } = require('../services/socketService');
+          emitNotification(req.user.id, trainerNotif);
+        } catch {}
       } catch (notifErr) {
         console.error('⚠️ Notification réservation formation:', notifErr.message);
       }
+    }
+
+    const isExplicitlyFree = req.body.est_gratuit === true || req.body.is_gratuit === true;
+    let numericPrice = parseFloat(prix_inscription);
+    if (isNaN(numericPrice) || numericPrice < 0) numericPrice = 0;
+    if (isExplicitlyFree) numericPrice = 0;
+
+    let finalProg = programme || '';
+    if (isExplicitlyFree && !finalProg.includes('[SESSION_GRATUITE]')) {
+      finalProg = `🎓 [SESSION_GRATUITE]\n${finalProg}`.trim();
+    } else if (!isExplicitlyFree && finalProg.includes('[SESSION_GRATUITE]')) {
+      finalProg = finalProg.replace(/🎓 \[SESSION_GRATUITE\]\n?/, '').trim();
     }
 
     const insertPayload = {
@@ -174,8 +216,8 @@ async function createFormation(req, res) {
       date_debut,
       date_fin,
       capacite_max: parseInt(capacite_max),
-      prix_inscription: parseFloat(prix_inscription || 0),
-      programme: programme || null,
+      prix_inscription: numericPrice,
+      programme: finalProg || null,
       prerequis: prerequis || null,
       materiel: materiel || null,
       statut: 'planifiee',
@@ -238,6 +280,26 @@ async function updateFormation(req, res) {
     const updates = { updated_at: new Date().toISOString() };
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    if (req.body.est_gratuit !== undefined || updates.prix_inscription !== undefined) {
+      const isFree = req.body.est_gratuit === true || req.body.is_gratuit === true;
+      if (isFree) {
+        updates.prix_inscription = 0;
+        let prog = updates.programme !== undefined ? (updates.programme || '') : (existing.programme || '');
+        if (!prog.includes('[SESSION_GRATUITE]')) {
+          updates.programme = `🎓 [SESSION_GRATUITE]\n${prog}`.trim();
+        }
+      } else {
+        if (updates.prix_inscription !== undefined) {
+          const np = parseFloat(updates.prix_inscription);
+          updates.prix_inscription = (!isNaN(np) && np >= 0) ? np : 0;
+        }
+        let prog = updates.programme !== undefined ? (updates.programme || '') : (existing.programme || '');
+        if (prog.includes('[SESSION_GRATUITE]')) {
+          updates.programme = prog.replace(/🎓 \[SESSION_GRATUITE\]\n?/, '').trim();
+        }
+      }
     }
 
     const newDebut = updates.date_debut || existing.date_debut;

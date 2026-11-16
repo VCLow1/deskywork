@@ -663,7 +663,11 @@ export default function AdminFormations({ session }) {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>
-                          {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : 'Gratuit'}
+                          {f.prix_inscription > 0
+                            ? `${Number(f.prix_inscription).toFixed(3)} DT`
+                            : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                            ? <span className="text-emerald-600 font-semibold">Gratuit</span>
+                            : <span className="text-slate-400 font-medium italic">Non défini</span>}
                         </div>
                       </div>
                       <div className="flex gap-2 pt-2 border-t border-outline-variant/10 flex-wrap">
@@ -730,7 +734,13 @@ export default function AdminFormations({ session }) {
                               </div>
                             </td>
                             <td className="p-4 font-semibold text-primary text-xs">
-                              {f.prix_inscription > 0 ? `${Number(f.prix_inscription).toFixed(3)} DT` : <span className="text-emerald-600">Gratuit</span>}
+                              {f.prix_inscription > 0 ? (
+                                `${Number(f.prix_inscription).toFixed(3)} DT`
+                              ) : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? (
+                                <span className="text-emerald-600 font-semibold">Gratuit</span>
+                              ) : (
+                                <span className="text-slate-400 font-medium italic">Non défini</span>
+                              )}
                             </td>
                             <td className="p-4">
                               <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUT_STYLES[f.statut] || ''}`}>

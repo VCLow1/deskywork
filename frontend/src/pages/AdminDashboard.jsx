@@ -1357,7 +1357,7 @@ export default function AdminDashboard({ session }) {
                         </div>
                       </td>
                       <td className="py-3 text-right font-bold text-secondary">
-                        {f.prix_inscription > 0 ? `${f.prix_inscription} DT` : 'Gratuit'}
+                        {f.prix_inscription > 0 ? `${f.prix_inscription} DT` : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? 'Gratuit' : <span className="text-slate-400 font-medium italic">Non défini</span>}
                       </td>
                     </tr>
                   );

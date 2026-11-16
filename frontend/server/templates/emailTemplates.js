@@ -1380,7 +1380,11 @@ function templateNouvelleFormation(formation, membre, config) {
   const description = formation?.description || 'Une nouvelle opportunité d\'apprentissage est disponible.';
   const formateur = formation?.profiles ? `${formation.profiles.prenom || ''} ${formation.profiles.nom || ''}`.trim() : (formation?.formateur_nom || 'Formateur qualifié');
   const salle = formation?.espaces?.nom || 'Salle dédiée';
-  const prix = formation?.prix_inscription > 0 ? `${formation.prix_inscription} DT` : 'Gratuit';
+  const prix = formation?.prix_inscription > 0
+    ? `${formation.prix_inscription} DT`
+    : (formation?.est_gratuit || formation?.programme?.includes('[SESSION_GRATUITE]'))
+    ? 'Gratuit'
+    : 'Non défini';
   const capacite = formation?.capacite_max ? `${formation.capacite_max} places` : 'Places limitées';
 
   let dateStr = 'Date à venir';

@@ -553,7 +553,11 @@ export default function AdminAgenda({ session }) {
 
                     const active = isSessionActive(booking.id);
                     const cancelled = booking.statut === 'cancelled';
-                    const color = getSpaceColor(booking.espace_id);
+                    const isPending = booking.statut === 'pending';
+                    const isFormation = Boolean(booking.is_formation);
+                    const color = isFormation
+                      ? { bg: '#f5f3ff', border: '#8b5cf6', text: '#4c1d95', badge: '#7c3aed' }
+                      : getSpaceColor(booking.espace_id);
                     const { col, total } = overlapLayout[booking.id] || { col: 0, total: 1 };
 
                     // Largeur et position horizontale pour l'affichage côte à côte
@@ -570,11 +574,14 @@ export default function AdminAgenda({ session }) {
                           position: 'absolute',
                           top: pos.top,
                           height: pos.height,
-                          minHeight: '32px',
+                          minHeight: '34px',
                           left: `calc(${leftPct}% + ${GAP}px)`,
                           width: `calc(${widthPct}% - ${GAP * 2}px)`,
-                          backgroundColor: cancelled ? '#f1f5f9' : color.bg,
-                          borderLeft: `4px solid ${cancelled ? '#94a3b8' : color.border}`,
+                          backgroundColor: cancelled ? '#f1f5f9' : isPending ? '#fffbeb' : color.bg,
+                          borderLeft: `4px solid ${cancelled ? '#94a3b8' : isPending ? '#f59e0b' : color.border}`,
+                          borderRight: isPending ? '1px dashed #f59e0b' : undefined,
+                          borderTop: isPending ? '1px dashed #f59e0b' : undefined,
+                          borderBottom: isPending ? '1px dashed #f59e0b' : undefined,
                           borderRadius: '8px',
                           opacity: cancelled ? 0.55 : 1,
                           boxShadow: cancelled ? 'none' : '0 1px 4px rgba(0,0,0,0.10)',
@@ -588,24 +595,27 @@ export default function AdminAgenda({ session }) {
                         onMouseEnter={e => { e.currentTarget.style.opacity = cancelled ? '0.7' : '0.88'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.15)'; }}
                         onMouseLeave={e => { e.currentTarget.style.opacity = cancelled ? '0.55' : '1'; e.currentTarget.style.boxShadow = cancelled ? 'none' : '0 1px 4px rgba(0,0,0,0.10)'; }}
                       >
-                        {/* Nom de l'espace */}
+                        {/* Type / Nom */}
                         <p
-                          className="font-bold truncate leading-tight"
+                          className="font-bold truncate leading-tight flex items-center gap-1"
                           style={{
                             fontSize: '11px',
                             color: cancelled ? '#64748b' : color.text,
                             textDecoration: cancelled ? 'line-through' : 'none',
                           }}
                         >
-                          {booking.espaces?.nom || '—'}
+                          {isFormation && <span className="material-symbols-outlined text-purple-600 shrink-0" style={{ fontSize: 13 }}>school</span>}
+                          <span className="truncate">{isFormation ? (booking.formation_titre || 'Formation') : (booking.espaces?.nom || '—')}</span>
                         </p>
 
-                        {/* Membre */}
+                        {/* Salle & Formateur / Membre */}
                         <p
-                          className="truncate leading-tight"
-                          style={{ fontSize: '10px', color: cancelled ? '#94a3b8' : color.text, opacity: 0.8 }}
+                          className="truncate leading-tight font-medium"
+                          style={{ fontSize: '10px', color: cancelled ? '#94a3b8' : color.text, opacity: 0.85 }}
                         >
-                          {booking.profiles?.prenom} {booking.profiles?.nom}
+                          {isFormation
+                            ? `${booking.espaces?.nom || 'Salle'} · ${booking.profiles?.prenom || ''} ${booking.profiles?.nom || ''}`
+                            : `${booking.profiles?.prenom || ''} ${booking.profiles?.nom || ''}`}
                         </p>
 
                         {/* Heure */}
@@ -620,6 +630,14 @@ export default function AdminAgenda({ session }) {
 
                         {/* Badges statut + live */}
                         <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          {isFormation && (
+                            <span
+                              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.2 font-bold bg-purple-100 text-purple-800"
+                              style={{ fontSize: '8.5px' }}
+                            >
+                              Formation
+                            </span>
+                          )}
                           {active && (
                             <span
                               className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-bold"
@@ -632,8 +650,8 @@ export default function AdminAgenda({ session }) {
                             className="inline-flex items-center rounded-full px-1.5 py-0.5 font-semibold truncate"
                             style={{
                               fontSize: '9px',
-                              background: cancelled ? '#e2e8f0' : color.border + '22',
-                              color: cancelled ? '#64748b' : color.border,
+                              background: cancelled ? '#e2e8f0' : isPending ? '#fef3c7' : color.border + '22',
+                              color: cancelled ? '#64748b' : isPending ? '#b45309' : color.border,
                             }}
                           >
                             {STATUT_LABELS[booking.statut] || booking.statut}
@@ -654,15 +672,26 @@ export default function AdminAgenda({ session }) {
           <div className="bg-surface-container-lowest rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-xl space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-start">
               <div className="flex items-center gap-2">
-                {/* Pastille couleur de la salle */}
+                {/* Pastille couleur */}
                 <span
                   className="w-3 h-3 rounded-full shrink-0"
-                  style={{ background: getSpaceColor(selectedBooking.espace_id).border }}
+                  style={{ background: selectedBooking.is_formation ? '#8b5cf6' : getSpaceColor(selectedBooking.espace_id).border }}
                 />
-                <h2 className="font-sora text-lg font-bold text-primary">Détail réservation</h2>
+                <h2 className="font-sora text-lg font-bold text-primary">
+                  {selectedBooking.is_formation ? '🎓 Détail session formation' : 'Détail réservation'}
+                </h2>
               </div>
               <button type="button" onClick={() => setSelectedBooking(null)} className="text-on-surface-variant hover:text-primary transition-colors">✕</button>
             </div>
+
+            {/* Encart titre si formation */}
+            {selectedBooking.is_formation && (
+              <div className="rounded-2xl p-3 bg-purple-50 border border-purple-200 text-purple-950">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-purple-700">Formation réservée</p>
+                <p className="font-bold text-sm text-purple-900 mt-0.5">{selectedBooking.formation_titre || selectedBooking.titre}</p>
+              </div>
+            )}
+
             {/* Bandeau salle */}
             <div
               className="rounded-xl px-4 py-2.5 flex items-center gap-2"
@@ -673,12 +702,28 @@ export default function AdminAgenda({ session }) {
             >
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: getSpaceColor(selectedBooking.espace_id).border }}>meeting_room</span>
               <span className="font-bold text-sm" style={{ color: getSpaceColor(selectedBooking.espace_id).text }}>
-                {selectedBooking.espaces?.nom}
+                {selectedBooking.espaces?.nom || 'Salle réservée'}
               </span>
             </div>
             <div className="space-y-xs text-body-sm">
-              <p><strong>Membre :</strong> {selectedBooking.profiles?.prenom} {selectedBooking.profiles?.nom}</p>
-              <p><strong>Email :</strong> {selectedBooking.profiles?.email}</p>
+              <p>
+                <strong>{selectedBooking.is_formation ? 'Formateur :' : 'Membre :'}</strong>{' '}
+                {selectedBooking.profiles?.prenom} {selectedBooking.profiles?.nom}
+              </p>
+              {selectedBooking.profiles?.email && (
+                <p><strong>Email :</strong> {selectedBooking.profiles?.email}</p>
+              )}
+              {selectedBooking.capacite_max && (
+                <p><strong>Capacité :</strong> {selectedBooking.capacite_max} participants max</p>
+              )}
+              {selectedBooking.is_formation && (
+                <p>
+                  <strong>Tarif :</strong>{' '}
+                  {selectedBooking.prix_inscription > 0
+                    ? `${Number(selectedBooking.prix_inscription).toFixed(3)} DT`
+                    : <span className="text-slate-400 font-medium italic">Non défini</span>}
+                </p>
+              )}
               <p>
                 <strong>Créneau :</strong>{' '}
                 {new Date(selectedBooking.date_debut).toLocaleString('fr-FR')}
@@ -698,24 +743,34 @@ export default function AdminAgenda({ session }) {
                 </span>
               </p>
             </div>
-            <div className="flex flex-wrap gap-sm">
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-outline-variant/15">
               {selectedBooking.statut === 'pending' && (
                 <button
                   type="button"
                   onClick={() => handleConfirm(selectedBooking.id)}
                   disabled={actionId === selectedBooking.id}
-                  className="bg-secondary text-white px-md py-xs rounded-xl font-semibold text-label-sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm shadow-xs flex items-center gap-1.5"
                 >
-                  Confirmer
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+                  Approuver & Confirmer
                 </button>
               )}
-              {['pending', 'confirmed'].includes(selectedBooking.statut) && (
+              {selectedBooking.is_formation && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedBooking(null); navigate('/admin/formations'); }}
+                  className="border border-purple-300 text-purple-700 hover:bg-purple-50 px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm"
+                >
+                  Voir dans Formations
+                </button>
+              )}
+              {['pending', 'confirmed'].includes(selectedBooking.statut) && !selectedBooking.is_formation && (
                 <>
                   <button
                     type="button"
                     onClick={() => handleCheckIn(selectedBooking.id)}
                     disabled={actionId === selectedBooking.id}
-                    className="border border-secondary text-secondary px-md py-xs rounded-xl font-semibold text-label-sm"
+                    className="border border-secondary text-secondary px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/5"
                   >
                     Check-in
                   </button>
@@ -724,20 +779,22 @@ export default function AdminAgenda({ session }) {
                       type="button"
                       onClick={() => handleCheckOut(selectedBooking.id)}
                       disabled={actionId === selectedBooking.id}
-                      className="border border-primary text-primary px-md py-xs rounded-xl font-semibold text-label-sm"
+                      className="border border-primary text-primary px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm"
                     >
                       Check-out
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => handleCancel(selectedBooking.id)}
-                    disabled={actionId === selectedBooking.id}
-                    className="text-error font-semibold text-label-sm hover:underline"
-                  >
-                    Annuler
-                  </button>
                 </>
+              )}
+              {selectedBooking.statut !== 'cancelled' && (
+                <button
+                  type="button"
+                  onClick={() => handleCancel(selectedBooking.id)}
+                  disabled={actionId === selectedBooking.id}
+                  className="text-error font-semibold text-xs sm:text-sm hover:underline ml-auto"
+                >
+                  Annuler
+                </button>
               )}
             </div>
           </div>

@@ -681,7 +681,11 @@ export default function SuperAdminDashboard({ session }) {
                             {f.nb_inscrits ?? 0} / {f.capacite_max}
                           </td>
                           <td className="py-3 text-right font-bold text-secondary">
-                            {f.prix_inscription > 0 ? `${f.prix_inscription} DT` : 'Gratuit'}
+                            {f.prix_inscription > 0
+                              ? `${f.prix_inscription} DT`
+                              : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                              ? 'Gratuit'
+                              : <span className="text-slate-400 font-medium italic">Non défini</span>}
                           </td>
                           <td className="py-3 text-right">
                             <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight ${
