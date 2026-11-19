@@ -46,8 +46,10 @@ export default function QrCodeView({ session }) {
 
       if (prof.status === 'fulfilled') setProfile(prof.value.data);
       if (qr.status === 'fulfilled') setQrData(qr.value);
-      if (sub.status === 'fulfilled')
-        setSubscription(sub.value?.subscription ?? sub.value);
+      if (sub.status === 'fulfilled') {
+        const actualSub = sub.value?.subscription || (sub.value && sub.value.id ? sub.value : null);
+        setSubscription(actualSub);
+      }
     } catch (err) {
       setError(err.message || 'Erreur de chargement du QR code.');
     } finally {
@@ -117,9 +119,14 @@ export default function QrCodeView({ session }) {
     navigate('/');
   };
 
-  const hasAccess = !!subscription;
-  const subName = subscription?.plan_name || subscription?.name || subscription?.type || 'Abonnement actif';
-  const subExpiry = subscription?.end_date || subscription?.expires_at || subscription?.period_end;
+  const hasAccess = Boolean(subscription && (subscription.id || subscription.type || subscription.plan_name));
+  const subName = hasAccess
+    ? (subscription?.plan_name || subscription?.name || subscription?.type || 'Abonnement actif')
+    : 'Sans abonnement';
+  const subExpiry = hasAccess
+    ? (subscription?.end_date || subscription?.expires_at || subscription?.period_end)
+    : null;
+  const qrPayload = qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token;
 
   if (loading) {
     return (
@@ -193,23 +200,23 @@ export default function QrCodeView({ session }) {
 
             <div className="p-6 md:p-8 relative z-10 flex flex-col items-center">
 
-              {/* ── Green Badge ── */}
+              {/* ── Status Badge ── */}
               {hasAccess ? (
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6 animate-pulse"
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6"
                   style={{ background: 'rgba(47,190,143,0.1)' }}
                 >
                   <span className="w-2 h-2 rounded-full bg-[#2fbe8f] shadow-[0_0_8px_rgba(47,190,143,0.6)]" />
                   <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#2fbe8f]">
-                    Accès autorisé
+                    Abonnement actif
                   </span>
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6"
-                  style={{ background: 'rgba(186,26,26,0.1)' }}
+                  style={{ background: 'rgba(245,158,11,0.1)' }}
                 >
-                  <span className="w-2 h-2 rounded-full bg-[#ba1a1a] shadow-[0_0_8px_rgba(186,26,26,0.6)]" />
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#ba1a1a]">
-                    Aucun accès
+                  <span className="w-2 h-2 rounded-full bg-[#f59e0b] shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#b45309]">
+                    Sans abonnement actif
                   </span>
                 </div>
               )}
@@ -220,9 +227,9 @@ export default function QrCodeView({ session }) {
                 id="qr-svg-container"
               >
                 <div className="w-56 h-56 flex items-center justify-center bg-white relative">
-                  {qrData?.payload ? (
+                  {qrPayload ? (
                     <QRCodeSVG
-                      value={qrData.payload}
+                      value={qrPayload}
                       size={192}
                       level="H"
                       fgColor="#0a1525"

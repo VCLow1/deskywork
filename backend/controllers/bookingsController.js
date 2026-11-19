@@ -80,7 +80,7 @@ async function getBookingsCalendar(req, res) {
       let formQ = supabaseAdmin
         .from('formations')
         .select('id, titre, description, formateur_id, espace_id, date_debut, date_fin, capacite_max, prix_inscription, statut, tenant_id, reservation_id, profiles!fk_formations_formateur_profiles(id, nom, prenom, email), espaces(id, nom, type)')
-        .in('statut', ['planifiee', 'en_cours', 'terminee'])
+        .in('statut', ['planifiee', 'publiee', 'en_cours', 'terminee', 'validee'])
         .lt('date_debut', to)
         .gt('date_fin', from);
 

@@ -679,7 +679,7 @@ export default function MemberProfile({ session }) {
 
           <div className="relative mt-2 mb-4">
             {/* Pulse ring for active access */}
-            {qrData?.token && (
+            {(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token) && (
               <div
                 className="absolute inset-0 rounded-2xl"
                 style={{
@@ -692,10 +692,10 @@ export default function MemberProfile({ session }) {
               className="relative bg-white rounded-2xl p-3 flex items-center justify-center"
               style={{ width: 160, height: 160 }}
             >
-              {qrData?.token ? (
+              {(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token) ? (
                 <QRCodeSVG
                   id="member-qr-code"
-                  value={qrData.token}
+                  value={qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token}
                   size={136}
                   bgColor="#ffffff"
                   fgColor="#0d1f3c"
@@ -711,13 +711,13 @@ export default function MemberProfile({ session }) {
             </div>
           </div>
 
-          {subscription && (
+          {subscription?.id ? (
             <div className="text-center mb-4 w-full">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
                 style={{ background: 'rgba(47,190,143,0.15)', color: '#2fbe8f' }}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'pulse-dot 2s ease-in-out infinite' }} />
-                Acces actif
+                Accès actif
               </div>
               <p className="text-sm font-semibold text-white/90">
                 {SUBSCRIPTION_LABELS[subscription.type] || subscription.type}
@@ -726,12 +726,24 @@ export default function MemberProfile({ session }) {
                 Expire le {formatDate(subscription.date_fin)}
               </p>
             </div>
+          ) : (
+            <div className="text-center mb-4 w-full">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
+                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                Sans abonnement
+              </div>
+              <p className="text-xs text-white/60 mt-0.5">
+                Accès par réservation ponctuelle
+              </p>
+            </div>
           )}
 
           <div className="flex gap-2.5 w-full mt-auto">
             <button
               onClick={handleDownloadQr}
-              disabled={!qrData?.token}
+              disabled={!(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token)}
               className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-40"
               style={{ background: 'rgba(255,255,255,0.12)', color: 'white', border: '1px solid rgba(255,255,255,0.1)' }}
             >

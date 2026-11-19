@@ -560,6 +560,7 @@ export default function Landing({ session }) {
   const [searchFormationKeyword, setSearchFormationKeyword] = useState('');
   const [searchFormationVille, setSearchFormationVille] = useState('');
   const [searchFormationDate, setSearchFormationDate] = useState('');
+  const [selectedFormationModal, setSelectedFormationModal] = useState(null);
 
   /* Rotation dynamique de mot-clé H1 */
   const rotatingWords = useMemo(() => {
@@ -670,6 +671,29 @@ export default function Landing({ session }) {
     }
     return true;
   });
+
+  const filteredPublicFormations = useMemo(() => {
+    return publicFormations.filter((f) => {
+      if (searchFormationKeyword) {
+        const kw = searchFormationKeyword.toLowerCase().trim();
+        const matchesTitle = f.titre?.toLowerCase().includes(kw);
+        const matchesDesc = f.description?.toLowerCase().includes(kw);
+        const matchesProg = f.programme?.toLowerCase().includes(kw);
+        const matchesTrainer = (f.formateur_nom || f.formateur || '')?.toLowerCase().includes(kw);
+        const matchesTenant = (f.etablissement || f.tenant_nom || '')?.toLowerCase().includes(kw);
+        if (!matchesTitle && !matchesDesc && !matchesProg && !matchesTrainer && !matchesTenant) return false;
+      }
+      if (searchFormationVille) {
+        const v = searchFormationVille.toLowerCase().trim();
+        const matchesVille = f.ville?.toLowerCase().includes(v) || (f.etablissement && f.etablissement.toLowerCase().includes(v));
+        if (!matchesVille) return false;
+      }
+      if (searchFormationDate) {
+        if (!f.date_debut?.startsWith(searchFormationDate)) return false;
+      }
+      return true;
+    });
+  }, [publicFormations, searchFormationKeyword, searchFormationVille, searchFormationDate]);
 
   const buildSearchBookingLink = (esp) => {
     const tid = esp.tenant_id || '';
@@ -972,7 +996,7 @@ export default function Landing({ session }) {
 
         .hero-dock-fields {
           display:grid;
-          grid-template-columns:1.35fr 1.6fr 1.15fr 0.95fr auto auto;
+          grid-template-columns: minmax(180px, 1.4fr) minmax(220px, 1.8fr) minmax(140px, 1.15fr) minmax(110px, 0.9fr) auto auto;
           align-items:center;
           padding:8px 12px;
           gap:6px;
@@ -1768,7 +1792,7 @@ export default function Landing({ session }) {
 
               {/* ── CONTENU DYNAMIQUE SELON L'ONGLET SÉLECTIONNÉ ── */}
               {activeHeroTab === 'espaces' && (
-                <div className="hero-fly hero-fly-3" style={{ maxWidth: 1080 }}>
+                <div className="hero-fly hero-fly-3" style={{ maxWidth: 1140, width: '100%' }}>
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -2539,7 +2563,11 @@ export default function Landing({ session }) {
             <div className="row g-4">
               {rotatedTenants.map((tenant) => (
                 <div key={tenant.id} className="col-lg-4">
-                  <div className="space-card" style={{ aspectRatio: '4/3', minHeight: 280 }}>
+                  <div
+                    className="space-card cursor-pointer group"
+                    style={{ minHeight: 400, position: 'relative', borderRadius: 24, overflow: 'hidden' }}
+                    onClick={() => navigate(`/coworking/${tenant.id}`)}
+                  >
                     <Link
                       to={`/coworking/${tenant.id}`}
                       className="d-block w-100 h-100 cursor-pointer"
@@ -2550,7 +2578,7 @@ export default function Landing({ session }) {
                         alt={tenant.nom}
                         loading="lazy"
                         decoding="async"
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', height: '100%', objectFit: 'cover' }}
                       />
                       <div className="space-overlay cursor-pointer" />
                     </Link>
@@ -2558,14 +2586,15 @@ export default function Landing({ session }) {
                     {/* Badge Pack Premium « Mis en avant » (CDC v3.0 D6) */}
                     {tenant.is_featured && (
                       <div style={{
-                        position: 'absolute', top: 14, left: 14,
-                        background: '#100f0d', color: '#ffb599',
-                        border: '1px solid rgba(249,93,0,0.65)',
-                        borderRadius: 10, padding: '5px 11px',
-                        fontSize: '.68rem', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase',
-                        display: 'flex', alignItems: 'center', gap: 5, zIndex: 4,
+                        position: 'absolute', top: 16, left: 16,
+                        background: 'rgba(16,15,13,0.92)', color: '#ffb599',
+                        border: '1px solid rgba(249,93,0,0.7)',
+                        borderRadius: 10, padding: '6px 12px',
+                        fontSize: '.7rem', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase',
+                        display: 'flex', alignItems: 'center', gap: 5, zIndex: 5,
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                       }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>workspace_premium</span>
+                        <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#f95d00' }}>workspace_premium</span>
                         {t('landing.featuredBadgeTag')}
                       </div>
                     )}
@@ -2573,12 +2602,12 @@ export default function Landing({ session }) {
                     {/* Badge PROMO */}
                     {tenant.has_promo && (
                       <div style={{
-                        position: 'absolute', top: 14, right: 14,
+                        position: 'absolute', top: 16, right: 16,
                         background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                        color: '#fff', borderRadius: 10, padding: '5px 12px',
+                        color: '#fff', borderRadius: 10, padding: '6px 12px',
                         fontSize: '.7rem', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase',
                         display: 'flex', alignItems: 'center', gap: 5,
-                        boxShadow: '0 4px 14px rgba(249,93,0,.55)', zIndex: 4,
+                        boxShadow: '0 4px 14px rgba(249,93,0,.55)', zIndex: 5,
                         animation: 'promoPulse 2.4s ease-in-out infinite',
                       }}>
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>local_offer</span>
@@ -2591,32 +2620,32 @@ export default function Landing({ session }) {
                       </div>
                     )}
 
-                    <div className="space-body">
-                      <span style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 8, padding: '4px 12px', fontSize: '.72rem', fontWeight: 700, display: 'inline-block', marginBottom: 8 }}>
+                    <div className="space-body" style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(16,15,13,0.85) 35%, #100f0d 100%)', paddingTop: '3rem' }}>
+                      <span style={{ backgroundColor: '#f95d00', color: '#ffffff', borderRadius: 8, padding: '4px 12px', fontSize: '.72rem', fontWeight: 800, display: 'inline-block', marginBottom: 8, letterSpacing: '.04em' }}>
                         {tenant.ville || tenant.pays || 'Tunisie'}
                       </span>
-                      <h3 className="sora fw-bold text-white mb-2">
-                        <Link to={`/coworking/${tenant.id}`} className="text-white text-decoration-none hover-underline cursor-pointer">
+                      <h3 className="sora fw-bold mb-2" style={{ color: '#ffffff' }}>
+                        <Link to={`/coworking/${tenant.id}`} className="text-decoration-none hover-underline cursor-pointer" style={{ color: '#ffffff' }}>
                           {tenant.nom}
                         </Link>
                       </h3>
-                      <p className="mb-1" style={{ color: '#e6ded7', fontSize: '.9rem', maxWidth: 460 }}>
+                      <p className="mb-2" style={{ color: '#e6ded7', fontSize: '.88rem', maxWidth: 460, lineHeight: 1.5 }}>
                         {tenant.description || 'Établissement partenaire DeskyWork.'}
                       </p>
                       <div className="d-flex align-items-center gap-3 mb-3" style={{ color: '#cfcac3', fontSize: '.8rem' }}>
                         {tenant.adresse && (
                           <span className="d-inline-flex align-items-center gap-1">
-                            <span className="material-symbols-outlined" style={{ fontSize: 14, color: EC.cobalt }}>location_on</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>location_on</span>
                             {tenant.adresse}
                           </span>
                         )}
                       </div>
 
-                      <div className="d-flex flex-wrap gap-2">
+                      <div className="d-flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                         <Link
                           to={`/coworking/${tenant.id}`}
                           className="btn d-inline-flex align-items-center gap-2"
-                          style={{ backgroundColor: EC.cobalt, color: 'white', borderRadius: 12, padding: '10px 18px', fontWeight: 700, border: 'none', fontSize: '.88rem', transition: 'all .25s' }}
+                          style={{ backgroundColor: '#f95d00', color: '#ffffff', borderRadius: 12, padding: '10px 18px', fontWeight: 700, border: 'none', fontSize: '.88rem', transition: 'all .25s', boxShadow: '0 4px 14px rgba(249,93,0,0.35)' }}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>visibility</span>
                           {t('landing.viewEstablishment')}
@@ -2627,7 +2656,7 @@ export default function Landing({ session }) {
                             className="btn d-inline-flex align-items-center gap-2"
                             style={{
                               background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                              color: 'white', border: 'none', borderRadius: 12,
+                              color: '#ffffff', border: 'none', borderRadius: 12,
                               padding: '10px 18px', fontWeight: 700, fontSize: '.88rem',
                               cursor: 'pointer', boxShadow: '0 4px 14px rgba(249,93,0,.4)',
                             }}
@@ -2639,7 +2668,7 @@ export default function Landing({ session }) {
                           <Link
                             to={`/coworking/${tenant.id}`}
                             className="btn d-inline-flex align-items-center gap-2"
-                            style={{ backgroundColor: 'transparent', color: 'white', border: '2px solid rgba(255,255,255,.5)', borderRadius: 12, padding: '10px 18px', fontWeight: 700, fontSize: '.88rem' }}
+                            style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: '#ffffff', border: '1.5px solid rgba(255,255,255,0.7)', borderRadius: 12, padding: '10px 18px', fontWeight: 700, fontSize: '.88rem' }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>event_available</span>
                             {t('landing.bookEstablishment')}
@@ -2961,9 +2990,145 @@ export default function Landing({ session }) {
       </section>
 
       {/* ══════════════════════════════════════════════════════════════════════
+          SECTION 5.5 — POUR LES ENTREPRISES (#entreprises)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <section id="entreprises" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease', scrollMarginTop: '90px' }}>
+        <div className="container py-4">
+          <div className="row align-items-center g-5">
+            <div className="col-lg-6">
+              <span className="sec-badge" style={{ backgroundColor: 'rgba(249,93,0,0.12)', color: '#f95d00', border: '1px solid rgba(249,93,0,0.3)' }}>
+                B2B &amp; Sociétés
+              </span>
+              <h2 className="sora fw-bold mt-2 mb-3" style={{ color: EC.navy, fontSize: 'clamp(1.8rem,3vw,2.4rem)', lineHeight: 1.2 }}>
+                DeskyWork pour les Entreprises : Réservez <span style={{ color: '#f95d00' }}>sans aucun frais</span>.
+              </h2>
+              <p style={{ color: EC.muted, fontSize: '1.02rem', lineHeight: 1.7, marginBottom: '1.75rem' }}>
+                Startups, PME et grands comptes : trouvez et réservez gratuitement vos postes nomades, bureaux privatifs et salles de réunion auprès de tous les coworkings partenaires DeskyWork en Tunisie, sans surcoût ni intermédiaire.
+              </p>
+
+              <div className="d-flex flex-column gap-3 mb-4">
+                {[
+                  {
+                    icon: 'verified',
+                    title: 'Réservation 100% sans surcoût pour l\'entreprise',
+                    desc: 'Tarifs directs des établissements partenaires. Aucun frais d\'intermédiation sur vos réservations.',
+                  },
+                  {
+                    icon: 'apartment',
+                    title: 'Offres de domiciliation d\'entreprise avantageuses',
+                    desc: 'Installez votre siège social auprès d\'adresses renommées (Nero à Ennasr 2, Thirty Three au Lac 2) avec contrat direct.',
+                  },
+                  {
+                    icon: 'receipt_long',
+                    title: 'Profil B2B enrichi & Reçus fiscaux PDF',
+                    desc: 'Pré-remplissage automatique (Raison sociale, Matricule fiscal, interlocuteur) et téléchargement de vos factures et reçus.',
+                  },
+                ].map((item, idx) => (
+                  <div key={idx} className="d-flex align-items-start gap-3">
+                    <span
+                      style={{
+                        width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                        backgroundColor: 'rgba(249,93,0,0.12)', color: '#f95d00',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 20 }}>{item.icon}</span>
+                    </span>
+                    <div>
+                      <h5 className="sora fw-bold mb-1" style={{ fontSize: '.95rem', color: EC.navy }}>{item.title}</h5>
+                      <p style={{ fontSize: '.85rem', color: EC.muted, margin: 0, lineHeight: 1.5 }}>{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="d-flex flex-wrap align-items-center gap-3">
+                <Link
+                  to="/register?role=entreprise"
+                  className="btn"
+                  style={{
+                    backgroundColor: '#f95d00', color: '#ffffff',
+                    borderRadius: 14, padding: '12px 24px', fontWeight: 700, fontSize: '.95rem',
+                    boxShadow: '0 6px 20px rgba(249,93,0,0.35)', border: 'none',
+                  }}
+                >
+                  Créer un compte Entreprise (Gratuit) →
+                </Link>
+                <a
+                  href="#espaces"
+                  className="btn"
+                  style={{
+                    backgroundColor: 'transparent', color: EC.navy,
+                    border: `1.5px solid ${EC.outline}`, borderRadius: 14,
+                    padding: '12px 20px', fontWeight: 700, fontSize: '.95rem',
+                  }}
+                >
+                  Découvrir les espaces
+                </a>
+              </div>
+            </div>
+
+            <div className="col-lg-6">
+              <div
+                style={{
+                  background: dark ? 'linear-gradient(145deg, #181512 0%, #201b15 100%)' : '#ffffff',
+                  borderRadius: 24, padding: '2rem',
+                  border: `1.5px solid ${dark ? 'rgba(249,93,0,0.25)' : 'rgba(0,13,35,0.08)'}`,
+                  boxShadow: '0 16px 40px rgba(0,0,0,0.08)',
+                }}
+              >
+                <div className="d-flex align-items-center justify-content-between mb-3 pb-3 border-bottom" style={{ borderColor: EC.outline }}>
+                  <div className="d-flex align-items-center gap-2">
+                    <span className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 d-flex align-items-center justify-content-center">
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>business</span>
+                    </span>
+                    <span className="sora fw-bold" style={{ fontSize: '.95rem', color: EC.navy }}>Espace Entreprise Dédié</span>
+                  </div>
+                  <span className="badge rounded-pill bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 font-bold">
+                    Accès B2B
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="p-3 rounded-xl" style={{ backgroundColor: dark ? 'rgba(255,255,255,0.04)' : '#f8fafc', border: `1px solid ${EC.outline}` }}>
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <span className="fw-bold" style={{ fontSize: '.85rem', color: EC.navy }}>Société Test SARL</span>
+                      <span className="badge bg-orange-100 text-[#f95d00] font-bold text-[10px]">1234567/A/M/000</span>
+                    </div>
+                    <span className="text-xs text-muted">Interlocuteur : Direction Générale · Facturation centralisée B2B</span>
+                  </div>
+
+                  <div className="row g-2">
+                    <div className="col-6">
+                      <div className="p-3 rounded-xl text-center" style={{ backgroundColor: dark ? 'rgba(249,93,0,0.08)' : '#fff7ed', border: '1px solid rgba(249,93,0,0.2)' }}>
+                        <div className="sora fw-bold" style={{ fontSize: '1.25rem', color: '#f95d00' }}>0 DT</div>
+                        <div className="text-xs text-muted">Frais de plateforme</div>
+                      </div>
+                    </div>
+                    <div className="col-6">
+                      <div className="p-3 rounded-xl text-center" style={{ backgroundColor: dark ? 'rgba(99,102,241,0.08)' : '#eef2ff', border: '1px solid rgba(99,102,241,0.2)' }}>
+                        <div className="sora fw-bold" style={{ fontSize: '1.25rem', color: '#6366f1' }}>PDF</div>
+                        <div className="text-xs text-muted">Factures &amp; Reçus</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 text-center">
+                    <span className="text-xs text-muted">
+                      1 e-mail = 1 rôle Entreprise figé · Gestion de vos collaborateurs
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════
           SECTION 6 — FORMATIONS (#formations)
       ══════════════════════════════════════════════════════════════════════ */}
-      <section id="formations" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease' }}>
+      <section id="formations" className="py-5" style={{ backgroundColor: EC.bgLow, transition: 'background .3s ease', scrollMarginTop: '80px' }}>
         <div className="container py-4">
           <div className="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
             <div>
@@ -2975,73 +3140,232 @@ export default function Landing({ session }) {
                 {t('landing.formationsSubtitle')}
               </p>
             </div>
-            <Link to="/devenir-formateur" style={{ color: EC.cobalt, fontWeight: 700, textDecoration: 'none', fontSize: '.92rem' }}>
-              {t('landing.proposeTraining')}
-            </Link>
+            <div className="d-flex align-items-center gap-3">
+              {(searchFormationKeyword || searchFormationVille || searchFormationDate) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchFormationKeyword('');
+                    setSearchFormationVille('');
+                    setSearchFormationDate('');
+                  }}
+                  className="btn btn-sm"
+                  style={{
+                    backgroundColor: 'rgba(249,93,0,0.12)', color: '#f95d00',
+                    border: '1px solid rgba(249,93,0,0.25)', borderRadius: 10,
+                    fontWeight: 700, fontSize: '.78rem',
+                  }}
+                >
+                  <span className="material-symbols-outlined align-middle" style={{ fontSize: 15 }}>restart_alt</span>
+                  {' '}Réinitialiser les filtres
+                </button>
+              )}
+              <Link to="/devenir-formateur" style={{ color: EC.cobalt, fontWeight: 700, textDecoration: 'none', fontSize: '.92rem' }}>
+                {t('landing.proposeTraining')}
+              </Link>
+            </div>
           </div>
 
-          {publicFormations.length === 0 ? (
-            <div className="p-4 text-center" style={{ backgroundColor: EC.cardBg, borderRadius: 20, border: `1.5px solid ${EC.outline}` }}>
-              <p style={{ color: EC.muted, margin: 0 }}>
-                {t('landing.noTrainings')}
+          {filteredPublicFormations.length === 0 ? (
+            <div className="p-5 text-center" style={{ backgroundColor: EC.cardBg, borderRadius: 20, border: `1.5px solid ${EC.outline}` }}>
+              <div className="w-12 h-12 rounded-2xl bg-orange-100 text-[#f95d00] d-inline-flex align-items-center justify-content-center mb-3">
+                <span className="material-symbols-outlined" style={{ fontSize: 26 }}>school</span>
+              </div>
+              <h5 className="sora fw-bold mb-1" style={{ color: EC.navy }}>Aucune formation trouvée</h5>
+              <p style={{ color: EC.muted, margin: 0, fontSize: '.9rem' }}>
+                {searchFormationKeyword || searchFormationVille || searchFormationDate
+                  ? 'Aucune session ne correspond à vos critères de recherche. Essayez d\'élargir vos filtres.'
+                  : t('landing.noTrainings')}
               </p>
             </div>
           ) : (
             <div className="d-flex gap-3 pb-3" style={{ overflowX: 'auto', scrollSnapType: 'x mandatory' }}>
-              {publicFormations.map((f) => (
+              {filteredPublicFormations.map((f) => (
                 <div
                   key={f.id}
+                  onClick={() => setSelectedFormationModal(f)}
                   style={{
                     minWidth: 300, maxWidth: 340, flex: '0 0 auto', scrollSnapAlign: 'start',
                     backgroundColor: EC.cardBg, borderRadius: 20, padding: '1.5rem',
                     border: `1.5px solid ${EC.outline}`, display: 'flex', flexDirection: 'column',
                     transition: 'transform .2s ease, box-shadow .2s ease',
                   }}
-                  className="cursor-pointer"
+                  className="cursor-pointer group hover:shadow-lg hover:-translate-y-1"
                 >
-                  <Link
-                    to={session ? '/dashboard/formations' : (f.tenant_id ? `/coworking/${f.tenant_id}` : '/register')}
-                    className="d-block text-decoration-none cursor-pointer"
-                    style={{ flex: 1 }}
-                    title={`Découvrir ${f.titre}`}
-                  >
-                    <div className="d-flex justify-content-between align-items-center mb-2 gap-2">
-                      <span style={{ fontSize: '.7rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
-                        {f.ville || 'Tunisie'}
-                      </span>
-                      <span className="sora fw-bold" style={{ color: EC.cobalt, fontSize: '.95rem' }}>
-                        {f.prix_inscription > 0 ? formatDT(f.prix_inscription) : t('landing.free')}
-                      </span>
-                    </div>
-                    <h4 className="sora fw-bold mb-2" style={{ color: EC.navy, fontSize: '1.05rem' }}>{f.titre}</h4>
-                    <p style={{ color: EC.muted, fontSize: '.82rem', marginBottom: '0.75rem' }}>
-                      {f.etablissement ? `Centre : ${f.etablissement}` : 'Session de formation ouverte au public'}
-                    </p>
-                    <div style={{ fontSize: '.78rem', color: EC.muted, marginBottom: '1rem' }}>
-                      <div>{formatDateTunis(f.date_debut)} · {formatTimeTunis(f.date_debut)}</div>
-                      {f.places_restantes !== null && (
-                        <div style={{ color: f.liste_attente ? '#b45309' : '#15803d', fontWeight: 600, marginTop: 2 }}>
-                          {f.liste_attente ? t('landing.waitingList') : t('landing.spotsRemaining', { count: f.places_restantes })}
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                  <Link
-                    to={session ? '/dashboard/formations' : (f.tenant_id ? `/coworking/${f.tenant_id}` : '/register')}
+                  <div className="d-flex justify-content-between align-items-center mb-2 gap-2">
+                    <span style={{ fontSize: '.7rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999, background: EC.cobaltLight, color: dark ? '#ffb599' : '#100f0d' }}>
+                      {f.ville || 'Tunisie'}
+                    </span>
+                    <span className="sora fw-bold" style={{ color: EC.cobalt, fontSize: '.95rem' }}>
+                      {f.prix_inscription > 0 ? formatDT(f.prix_inscription) : t('landing.free')}
+                    </span>
+                  </div>
+                  <h4 className="sora fw-bold mb-2 group-hover:text-[#f95d00] transition-colors" style={{ color: EC.navy, fontSize: '1.05rem' }}>{f.titre}</h4>
+                  <p style={{ color: EC.muted, fontSize: '.82rem', marginBottom: '0.75rem', flex: 1 }}>
+                    {f.etablissement ? `Centre : ${f.etablissement}` : 'Session de formation ouverte au public'}
+                  </p>
+                  <div style={{ fontSize: '.78rem', color: EC.muted, marginBottom: '1rem' }}>
+                    <div>{formatDateTunis(f.date_debut)} · {formatTimeTunis(f.date_debut)}</div>
+                    {f.places_restantes !== null && (
+                      <div style={{ color: f.liste_attente ? '#b45309' : '#15803d', fontWeight: 600, marginTop: 2 }}>
+                        {f.liste_attente ? t('landing.waitingList') : t('landing.spotsRemaining', { count: f.places_restantes })}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedFormationModal(f);
+                    }}
                     style={{
-                      display: 'block', textAlign: 'center', textDecoration: 'none',
+                      display: 'block', width: '100%', textAlign: 'center',
                       backgroundColor: EC.cobalt, color: '#fff', borderRadius: 12, padding: '10px 0',
-                      fontWeight: 700, fontSize: '.86rem', zIndex: 2,
+                      fontWeight: 700, fontSize: '.86rem', border: 'none', cursor: 'pointer',
                     }}
                   >
                     {t('landing.discoverSession')}
-                  </Link>
+                  </button>
                 </div>
               ))}
             </div>
           )}
         </div>
       </section>
+
+      {/* ── MODALE DÉDIÉE FORMATION AVEC INSCRIPTION ── */}
+      {selectedFormationModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+          onClick={() => setSelectedFormationModal(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            className="w-full max-w-xl rounded-3xl p-6 sm:p-8 space-y-5 animate-scale-in"
+            style={{ backgroundColor: dark ? '#1a1612' : '#ffffff', color: dark ? '#fbffff' : '#100f0d', maxWidth: 620, width: '100%', borderRadius: 24, padding: '2rem', boxShadow: '0 24px 60px rgba(0,0,0,0.3)', border: `1px solid ${dark ? 'rgba(249,93,0,0.3)' : 'rgba(0,0,0,0.1)'}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* En-tête de la modale */}
+            <div className="d-flex justify-content-between align-items-start gap-3">
+              <div className="d-flex align-items-center gap-2">
+                <span style={{ fontSize: '.75rem', fontWeight: 800, padding: '5px 12px', borderRadius: 999, background: 'rgba(249,93,0,0.14)', color: '#f95d00', border: '1px solid rgba(249,93,0,0.3)' }}>
+                  {selectedFormationModal.ville || 'Tunisie'}
+                </span>
+                <span className="sora fw-bold" style={{ color: '#f95d00', fontSize: '1.1rem' }}>
+                  {selectedFormationModal.prix_inscription > 0 ? formatDT(selectedFormationModal.prix_inscription) : 'Gratuit'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedFormationModal(null)}
+                style={{ background: 'transparent', border: 'none', color: dark ? '#94a3b8' : '#64748b', cursor: 'pointer', padding: 4 }}
+                aria-label="Fermer"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 24 }}>close</span>
+              </button>
+            </div>
+
+            {/* Titre & Établissement */}
+            <div>
+              <h3 className="sora fw-bold mb-2" style={{ fontSize: '1.45rem', color: dark ? '#ffffff' : '#100f0d' }}>
+                {selectedFormationModal.titre}
+              </h3>
+              <div className="d-flex flex-wrap align-items-center gap-3 text-xs text-muted mb-1">
+                {selectedFormationModal.etablissement && (
+                  <span className="d-flex align-items-center gap-1 font-semibold" style={{ color: '#f95d00' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>apartment</span>
+                    {selectedFormationModal.etablissement}
+                  </span>
+                )}
+                {selectedFormationModal.formateur_nom && (
+                  <span className="d-flex align-items-center gap-1">
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person</span>
+                    Formateur : {selectedFormationModal.formateur_nom}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Date & Horaires & Places */}
+            <div className="p-3 rounded-2xl" style={{ backgroundColor: dark ? 'rgba(255,255,255,0.04)' : '#f8fafc', border: `1px solid ${EC.outline}` }}>
+              <div className="row g-2">
+                <div className="col-sm-6">
+                  <div className="d-flex align-items-center gap-2">
+                    <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>calendar_month</span>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted">Date &amp; Heure</div>
+                      <div className="text-xs font-semibold">{formatDateTunis(selectedFormationModal.date_debut)} à {formatTimeTunis(selectedFormationModal.date_debut)}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="col-sm-6">
+                  <div className="d-flex align-items-center gap-2">
+                    <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>group</span>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted">Disponibilité</div>
+                      <div className="text-xs font-semibold" style={{ color: selectedFormationModal.liste_attente ? '#b45309' : '#15803d' }}>
+                        {selectedFormationModal.places_restantes !== null
+                          ? `${selectedFormationModal.places_restantes} place${selectedFormationModal.places_restantes > 1 ? 's' : ''} disponible${selectedFormationModal.places_restantes > 1 ? 's' : ''}`
+                          : 'Inscriptions ouvertes'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Description & Programme */}
+            <div className="space-y-3">
+              {selectedFormationModal.description && (
+                <div>
+                  <h6 className="sora fw-bold text-xs uppercase tracking-wider text-muted mb-1">Présentation</h6>
+                  <p style={{ fontSize: '.88rem', lineHeight: 1.6, color: dark ? '#cbd5e1' : '#475569', margin: 0 }}>
+                    {selectedFormationModal.description}
+                  </p>
+                </div>
+              )}
+              {selectedFormationModal.programme && (
+                <div>
+                  <h6 className="sora fw-bold text-xs uppercase tracking-wider text-muted mb-1">Programme de la formation</h6>
+                  <p style={{ fontSize: '.85rem', lineHeight: 1.5, color: dark ? '#cbd5e1' : '#475569', margin: 0, whiteSpace: 'pre-line' }}>
+                    {selectedFormationModal.programme.replace(/\[SESSION_GRATUITE\]/g, '').trim()}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Actions d'inscription */}
+            <div className="d-flex flex-wrap items-center justify-content-between gap-3 pt-3 border-top" style={{ borderColor: EC.outline }}>
+              <button
+                type="button"
+                onClick={() => setSelectedFormationModal(null)}
+                className="btn btn-sm"
+                style={{
+                  border: `1px solid ${EC.outline}`, color: dark ? '#cbd5e1' : '#475569',
+                  borderRadius: 12, padding: '10px 18px', fontWeight: 600, fontSize: '.88rem',
+                }}
+              >
+                Fermer
+              </button>
+
+              <Link
+                to={session ? `/dashboard/formations?inscrire=${selectedFormationModal.id}` : `/register?formation=${selectedFormationModal.id}`}
+                className="btn btn-sm d-inline-flex align-items-center gap-2"
+                style={{
+                  backgroundColor: '#f95d00', color: '#ffffff',
+                  borderRadius: 12, padding: '10px 22px', fontWeight: 700, fontSize: '.9rem',
+                  border: 'none', boxShadow: '0 4px 14px rgba(249,93,0,0.35)',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>how_to_reg</span>
+                <span>{session ? 'Confirmer mon inscription' : 'S\'inscrire à cette formation'}</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 7 — TÉMOIGNAGES (#temoignages)
@@ -3080,7 +3404,7 @@ export default function Landing({ session }) {
               <div className="d-flex flex-column gap-4">
                 {[
                   { icon: 'location_on', label: 'Adresse', val: t('landing.contactAddress') },
-                  { icon: 'phone', label: 'Téléphone', val: '+216 71 000 000\n+216 52 882 880' },
+                  { icon: 'phone', label: 'Téléphone', val: '+216 52 882 880' },
                   { icon: 'mail', label: 'Email', val: t('landing.contactEmail') },
                   { icon: 'schedule', label: 'Horaires', val: t('landing.contactHours') },
                 ].map(({ icon, label, val }) => (

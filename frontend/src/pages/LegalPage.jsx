@@ -7,7 +7,7 @@ const LEGAL_CONTENT = {
   cgu: {
     badge: 'Cadre contractuel',
     title: "Conditions Générales d'Utilisation (CGU)",
-    updated: 'Novembre 2026 — DeskyWork CDC v3.0',
+    updated: 'Novembre 2026 — DeskyWork',
     sections: [
       {
         h: '1. Objet de la plateforme',
@@ -37,7 +37,7 @@ const LEGAL_CONTENT = {
         p: 'Nous collectons uniquement les données nécessaires à l’authentification (nom, prénom, e-mail, téléphone), à la gestion des réservations, aux inscriptions aux sessions de formation et à la facturation sur place.',
       },
       {
-        h: '2. Isolation multi-tenant & sécurité',
+        h: '2. Isolation des données & sécurité',
         p: 'Chaque établissement partenaire dispose d’un espace back-office isolé par identifiant d’organisation. Les données personnelles d’un membre ne sont partagées qu’avec l’établissement auprès duquel il effectue une réservation ou s’inscrit à une session de formation.',
       },
       {

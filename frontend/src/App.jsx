@@ -61,6 +61,17 @@ function BookerRoute({ children }) {
   );
 }
 
+function CompanyRoute({ children }) {
+  const session = useContext(SessionContext);
+  return (
+    <ProtectedRoute>
+      <RoleGuard session={session} requireCompany>
+        {children}
+      </RoleGuard>
+    </ProtectedRoute>
+  );
+}
+
 function SuperAdminRoute({ children }) {
   const session = useContext(SessionContext);
   return (
@@ -105,6 +116,13 @@ const MemberDocuments = lazy(() => import('./pages/MemberDocuments'));
 const MemberRGPD = lazy(() => import('./pages/MemberRGPD'));
 const QrCodeView = lazy(() => import('./pages/QrCodeView'));
 
+// Espace Entreprise B2B
+const CompanyDashboard = lazy(() => import('./pages/CompanyDashboard'));
+const CompanyProfile = lazy(() => import('./pages/CompanyProfile'));
+const CompanyInvoices = lazy(() => import('./pages/CompanyInvoices'));
+const CompanyDomiciliation = lazy(() => import('./pages/CompanyDomiciliation'));
+const CompanyCalendar = lazy(() => import('./pages/CompanyCalendar'));
+
 // Réservations membres & invités
 const BookingStep1 = lazy(() => import('./pages/BookingStep1'));
 const BookingStep2 = lazy(() => import('./pages/BookingStep2'));
@@ -144,6 +162,7 @@ const TrainerProfile = lazy(() => import('./pages/TrainerProfile'));
 const TrainerDashboard = lazy(() => import('./pages/TrainerDashboard'));
 const TrainerFormations = lazy(() => import('./pages/TrainerFormations'));
 const TrainerBookings = lazy(() => import('./pages/TrainerBookings'));
+const TrainerPayouts = lazy(() => import('./pages/TrainerPayouts'));
 
 // Espace Super Admin
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
@@ -339,6 +358,16 @@ export default function App() {
             <Route path="/member/payments" element={<MemberRoute><MemberPayments session={session} /></MemberRoute>} />
             <Route path="/member/payments/verify" element={<Navigate to="/member/payments" replace />} />
 
+            {/* ── Espace Entreprise B2B ── */}
+            <Route path="/company/dashboard" element={<CompanyRoute><CompanyDashboard session={session} /></CompanyRoute>} />
+            <Route path="/company/bookings" element={<CompanyRoute><MemberBookings session={session} /></CompanyRoute>} />
+            <Route path="/company/calendar" element={<CompanyRoute><CompanyCalendar session={session} /></CompanyRoute>} />
+            <Route path="/company/domiciliation" element={<CompanyRoute><CompanyDomiciliation session={session} /></CompanyRoute>} />
+            <Route path="/company/formations" element={<CompanyRoute><MemberFormations session={session} /></CompanyRoute>} />
+            <Route path="/company/invoices" element={<CompanyRoute><CompanyInvoices session={session} /></CompanyRoute>} />
+            <Route path="/company/profile" element={<CompanyRoute><CompanyProfile session={session} /></CompanyRoute>} />
+            <Route path="/company/messages" element={<CompanyRoute><MemberMessages session={session} /></CompanyRoute>} />
+
             {/* ── Réservations membres ── */}
             <Route path="/book/step1" element={<BookerRoute><BookingStep1 session={session} /></BookerRoute>} />
             <Route path="/book/step2" element={<BookerRoute><BookingStep2 session={session} /></BookerRoute>} />
@@ -373,7 +402,7 @@ export default function App() {
             <Route path="/trainer/profile" element={<TrainerRoute><TrainerProfile session={session} /></TrainerRoute>} />
             <Route path="/trainer/formations" element={<TrainerRoute><TrainerFormations session={session} /></TrainerRoute>} />
             <Route path="/trainer/bookings" element={<TrainerRoute><TrainerBookings session={session} /></TrainerRoute>} />
-            <Route path="/trainer/payments" element={<TrainerRoute><MemberPayments session={session} /></TrainerRoute>} />
+            <Route path="/trainer/payments" element={<TrainerRoute><TrainerPayouts session={session} /></TrainerRoute>} />
             <Route path="/trainer/payments/verify" element={<Navigate to="/trainer/payments" replace />} />
             <Route path="/trainer/messages" element={<TrainerRoute><MemberMessages session={session} /></TrainerRoute>} />
 

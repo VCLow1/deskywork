@@ -112,7 +112,7 @@ export default function AdminSubscription({ session }) {
                   )}
                 </div>
                 <h2 className="font-sora font-bold text-2xl text-primary">
-                  Pack {activePack?.name} — {Number(activePack?.prix || 0).toFixed(3)} DT <span className="text-sm font-normal text-on-surface-variant">/ mois HT</span>
+                  Pack {activePack?.key === 'premium' ? 'Premium' : activePack?.name} — {activePack?.key === 'premium' ? '220,000' : Number(activePack?.prix || 0).toFixed(3)} DT <span className="text-sm font-normal text-on-surface-variant">/ mois HT</span>
                 </h2>
               </div>
               <div className="text-right text-xs text-on-surface-variant">
@@ -161,11 +161,11 @@ export default function AdminSubscription({ session }) {
                       </div>
                       <div className="mb-4">
                         <p className="font-sora font-extrabold text-2xl text-[#f95d00]">
-                          {activePack?.is_partner && p.key === 'premium' ? '90' : p.prix} DT <span className="text-xs font-normal text-on-surface-variant">/ mois HT</span>
+                          {p.key === 'premium' ? '220,000' : p.key === 'standard' ? '150,000' : '90,000'} DT <span className="text-xs font-normal text-on-surface-variant">/ mois HT</span>
                         </p>
                         {activePack?.is_partner && p.key === 'premium' && (
                           <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                            Tarif partenaire appliqué (prix catalogue : 220 DT)
+                            Tarif partenaire appliqué : 90,000 DT / mois HT (au lieu de 220,000 DT)
                           </p>
                         )}
                       </div>

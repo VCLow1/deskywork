@@ -7,21 +7,34 @@ export const ROLE_LABELS = {
   formateur: 'Formateur',
   super_admin: 'Super Admin',
   guest: 'Invité',
+  company: 'Entreprise',
+  entreprise: 'Entreprise',
 };
 
 export function isAdminRole(role) {
   return ADMIN_ROLES.includes(role);
 }
 
+export function isCompanyRole(role, typeMembre = null) {
+  return role === 'company' || role === 'entreprise' || typeMembre === 'entreprise';
+}
+
 export function isMemberRole(role) {
-  return !isAdminRole(role) && role !== 'formateur';
+  return !isAdminRole(role) && role !== 'formateur' && !isCompanyRole(role);
 }
 
 export function canBookSpaces(role) {
-  return isMemberRole(role) || role === 'formateur';
+  return isMemberRole(role) || role === 'formateur' || isCompanyRole(role);
 }
 
-export function getBookerNav(role) {
+export function getBookerNav(role, typeMembre = null) {
+  if (isCompanyRole(role, typeMembre)) {
+    return {
+      home: '/company/dashboard',
+      bookings: '/company/bookings',
+      payments: '/company/invoices',
+    };
+  }
   if (role === 'formateur') {
     return {
       home: '/trainer-dashboard',
@@ -36,8 +49,9 @@ export function getBookerNav(role) {
   };
 }
 
-export function getHomePath(role) {
+export function getHomePath(role, typeMembre = null) {
   if (role === 'super_admin') return '/super-admin/dashboard';
+  if (isCompanyRole(role, typeMembre)) return '/company/dashboard';
   if (isAdminRole(role)) return '/admin/dashboard';
   if (role === 'formateur') return '/trainer-dashboard';
   return '/dashboard';
@@ -47,9 +61,19 @@ export async function getPostLoginPath(supabase, userId, role) {
   if (role === 'super_admin') return '/super-admin/dashboard';
 
   try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, type_membre')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (isCompanyRole(profile?.role || role, profile?.type_membre)) {
+      return '/company/dashboard';
+    }
+
     const { data: memberships } = await supabase
       .from('memberships')
-      .select('id, organization_id, role, organizations(id, nom, settings)')
+      .select('id, organization_id, role, organizations(id, nom, settings, type)')
       .eq('user_id', userId)
       .eq('statut', 'actif');
 
@@ -61,6 +85,9 @@ export async function getPostLoginPath(supabase, userId, role) {
       const m = memberships[0];
       if (m.organization_id) {
         localStorage.setItem('active_org_id', m.organization_id);
+      }
+      if (m.organizations?.type === 'entreprise') {
+        return '/company/dashboard';
       }
       if (['proprietaire', 'admin', 'staff'].includes(m.role)) {
         return '/admin/dashboard';
@@ -80,6 +107,44 @@ export function getRoleLabel(role) {
 
 // Navigation structurée par Menu / Sous-menu (conforme Spec §13 — sidebar persistante)
 // Chaque section = { group: 'Titre du menu', items: [Sous-menu] }
+// Navigation Entreprise (B2B)
+export const COMPANY_NAV = [
+  {
+    group: 'Général',
+    items: [
+      { id: 'company_dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/company/dashboard' },
+    ],
+  },
+  {
+    group: 'Réservations B2B',
+    items: [
+      { id: 'book', label: 'Réserver un espace', icon: 'calendar_today', to: '/book/step1' },
+      { id: 'company_bookings', label: 'Mes Réservations', icon: 'event_available', to: '/company/bookings' },
+      { id: 'company_calendar', label: 'Calendrier', icon: 'calendar_month', to: '/company/calendar' },
+    ],
+  },
+  {
+    group: 'Services Partenaires',
+    items: [
+      { id: 'company_domiciliation', label: 'Offres de domiciliation', icon: 'corporate_fare', to: '/company/domiciliation', badge: 'Partenaires' },
+      { id: 'company_formations', label: 'Formations', icon: 'school', to: '/company/formations' },
+    ],
+  },
+  {
+    group: 'Finance & Facturation',
+    items: [
+      { id: 'company_invoices', label: 'Mes Factures & Reçus', icon: 'receipt_long', to: '/company/invoices' },
+    ],
+  },
+  {
+    group: 'Organisation',
+    items: [
+      { id: 'company_profile', label: 'Profil Société', icon: 'business', to: '/company/profile' },
+      { id: 'company_messages', label: 'Messagerie & Notifications', icon: 'chat', to: '/company/messages' },
+    ],
+  },
+];
+
 export const MEMBER_NAV = [
   {
     group: 'Général',

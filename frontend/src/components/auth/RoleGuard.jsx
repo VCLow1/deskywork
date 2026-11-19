@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
-import { getHomePath, isAdminRole, isMemberRole, canBookSpaces, getPostLoginPath } from '../../utils/roles';
+import { getHomePath, isAdminRole, isMemberRole, isCompanyRole, canBookSpaces, getPostLoginPath } from '../../utils/roles';
 
 function getRoleFromSession(session) {
   return (
@@ -27,6 +27,7 @@ export function RoleGuard({
   requireMember = false,
   requireTrainer = false,
   requireBooker = false,
+  requireCompany = false,
   children,
 }) {
   const role = getRoleFromSession(session) ?? 'member';
@@ -49,7 +50,11 @@ export function RoleGuard({
     return <Navigate to="/admin/dashboard" replace />;
   }
 
-  if (requireMember && !isMemberRole(role)) {
+  if (requireCompany && !isCompanyRole(role)) {
+    return <Navigate to={getHomePath(role)} replace />;
+  }
+
+  if (requireMember && !isMemberRole(role) && !isCompanyRole(role)) {
     return <Navigate to={getHomePath(role)} replace />;
   }
 

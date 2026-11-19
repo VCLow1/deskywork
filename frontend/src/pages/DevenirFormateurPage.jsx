@@ -112,7 +112,7 @@ export default function DevenirFormateurPage({ session }) {
         <div className="mb-8 text-center">
           <span className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-[#f95d00]">
             <span className="material-symbols-outlined text-[16px]">school</span>
-            Espace Formateurs · CDC v3.0
+            Espace Formateurs DeskyWork
           </span>
           <h1 className="mt-3 font-sora text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
             Devenir Formateur partenaire

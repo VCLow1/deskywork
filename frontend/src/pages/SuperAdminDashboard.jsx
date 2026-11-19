@@ -95,7 +95,15 @@ function fmtDT(n) {
 }
 
 // ─── Libellés des plans / actions d'audit ────────────────────────────────────
-const PLAN_LABELS = { free: 'Free', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
+const PLAN_LABELS = {
+  free: 'Essentiel',
+  starter: 'Essentiel',
+  pro: 'Standard',
+  enterprise: 'Premium',
+  essentiel: 'Essentiel',
+  standard: 'Standard',
+  premium: 'Premium',
+};
 const ACTION_META = {
   tenant_created: { icon: 'domain_add', label: 'a enregistré un nouveau coworking' },
   tenant_updated: { icon: 'edit', label: "a mis à jour un coworking" },
@@ -353,25 +361,6 @@ export default function SuperAdminDashboard({ session }) {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <PeriodFilter value={period} onChange={setPeriod} />
-            <button
-              onClick={toggleReport}
-              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-colors ${
-                showReport
-                  ? 'text-white'
-                  : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
-              }`}
-              style={showReport ? { background: 'linear-gradient(135deg, #8b5cf6, #f95d00)', boxShadow: '0 4px 12px rgba(139,92,246,.3)' } : undefined}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>
-                {reportLoading ? 'sync' : 'auto_awesome'}
-              </span>
-              Rapport IA
-              {report?.anomalies?.length > 0 && showReport && (
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#ba1a1a] text-[9px] font-bold text-white">
-                  {report.anomalies.length}
-                </span>
-              )}
-            </button>
           </div>
         </div>
 
@@ -382,19 +371,6 @@ export default function SuperAdminDashboard({ session }) {
             <StatCard key={c.label} {...c} />
           ))}
         </div>
-
-        {/* ── Rapport intelligent (IA) ─────────────────────────────────────── */}
-        {showReport && (
-          <div className="mb-6 bento-card">
-            <AIReportPanel
-              report={report}
-              loading={reportLoading}
-              error={reportError}
-              onClose={() => setShowReport(false)}
-              onRefresh={() => loadReport(false)}
-            />
-          </div>
-        )}
 
         {/* ── Évolution des revenus + Activité récente ────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">

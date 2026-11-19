@@ -1504,6 +1504,9 @@ async function getMyContext(req, res) {
     } else if (profile.statut_compte === 'en_attente' && profile.role === 'admin') {
       redirectPath = '/register/pending-b2b';
       userContextType = 'b2b_pending';
+    } else if (profile.type_membre === 'entreprise' || profile.role === 'company' || profile.role === 'entreprise' || activeOrgs.some((o) => o.organizations?.type === 'entreprise')) {
+      redirectPath = '/company/dashboard';
+      userContextType = 'company';
     } else if (activeOrgs.length > 1) {
       redirectPath = '/select-space';
       userContextType = 'multi_org';

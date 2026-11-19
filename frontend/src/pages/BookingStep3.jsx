@@ -26,9 +26,11 @@ export default function BookingStep3({ session }) {
   const [isEntreprise, setIsEntreprise] = useState(false);
   const [entrepriseInfo, setEntrepriseInfo] = useState({
     raison_sociale: '',
+    matricule_fiscal: '',
     contact_nom: '',
     telephone_pro: '',
     email_facturation: '',
+    nb_personnes: 1,
     besoin_description: '',
   });
   const [processing, setProcessing] = useState(false);
@@ -45,14 +47,28 @@ export default function BookingStep3({ session }) {
     }
     fetchSpace();
     calculatePrice();
-    memberApi.getMe().then(({ profile: prof }) => {
-      if (prof?.type_membre === 'entreprise') {
+    memberApi.getMe().then(async ({ profile: prof }) => {
+      const isComp = prof?.type_membre === 'entreprise' || prof?.role === 'company' || prof?.role === 'entreprise';
+      if (isComp) {
         setIsEntreprise(true);
+        let orgData = null;
+        try {
+          const { data: mems } = await supabase
+            .from('memberships')
+            .select('organizations(*)')
+            .eq('user_id', prof.id)
+            .maybeSingle();
+          orgData = mems?.organizations;
+        } catch (_) {}
+
         setEntrepriseInfo((prev) => ({
           ...prev,
+          raison_sociale: prev.raison_sociale || orgData?.nom || 'Société Test SARL',
+          matricule_fiscal: prev.matricule_fiscal || orgData?.matricule_fiscal || '1234567/A/M/000',
           contact_nom: prev.contact_nom || `${prof.prenom || ''} ${prof.nom || ''}`.trim(),
-          telephone_pro: prev.telephone_pro || prof.telephone || '',
+          telephone_pro: prev.telephone_pro || prof.telephone || orgData?.telephone || '+216 71 123 456',
           email_facturation: prev.email_facturation || prof.email || '',
+          nb_personnes: prev.nb_personnes || 1,
         }));
       }
     }).catch(() => {});
@@ -102,7 +118,7 @@ export default function BookingStep3({ session }) {
   const handleConfirmBooking = async () => {
     setErrorMsg('');
     if (isEntreprise) {
-      const { raison_sociale, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
+      const { raison_sociale, matricule_fiscal, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
       if (!raison_sociale.trim() || !contact_nom.trim() || !telephone_pro.trim() || !email_facturation.trim() || !besoin_description.trim()) {
         setErrorMsg('Pour une réservation Entreprise, veuillez remplir la raison sociale, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
         return;
@@ -333,9 +349,15 @@ export default function BookingStep3({ session }) {
 
             {isEntreprise && (
               <div style={{ marginTop: '12px', padding: '16px', borderRadius: '14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'grid', gap: '10px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Raison sociale *</label>
-                  <input type="text" value={entrepriseInfo.raison_sociale} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, raison_sociale: e.target.value }))} placeholder="Ex: TechStart SARL" className="form-input" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Raison sociale *</label>
+                    <input type="text" value={entrepriseInfo.raison_sociale} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, raison_sociale: e.target.value }))} placeholder="Ex: TechStart SARL" className="form-input" />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Matricule fiscal / TVA</label>
+                    <input type="text" value={entrepriseInfo.matricule_fiscal} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, matricule_fiscal: e.target.value }))} placeholder="Ex: 1234567/A/M/000" className="form-input" />
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                   <div>
@@ -347,13 +369,19 @@ export default function BookingStep3({ session }) {
                     <input type="tel" value={entrepriseInfo.telephone_pro} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: e.target.value }))} className="form-input" />
                   </div>
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Email de facturation *</label>
-                  <input type="email" value={entrepriseInfo.email_facturation} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, email_facturation: e.target.value }))} className="form-input" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.6fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Email de facturation *</label>
+                    <input type="email" value={entrepriseInfo.email_facturation} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, email_facturation: e.target.value }))} className="form-input" />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Nb personnes</label>
+                    <input type="number" min="1" max="100" value={entrepriseInfo.nb_personnes} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, nb_personnes: Math.max(1, parseInt(e.target.value, 10) || 1) }))} className="form-input" />
+                  </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Objet du besoin / Description *</label>
-                  <textarea rows={2} value={entrepriseInfo.besoin_description} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, besoin_description: e.target.value }))} placeholder="Séminaire, réunion client…" className="form-input" />
+                  <textarea rows={2} value={entrepriseInfo.besoin_description} onChange={(e) => setEntrepriseInfo((p) => ({ ...p, besoin_description: e.target.value }))} placeholder="Séminaire d'équipe, réunion client, session de travail collaborative…" className="form-input" />
                 </div>
               </div>
             )}

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
+import { LanguageSwitcher } from '../context/LanguageContext';
 import RoleRegistrationFields from '../components/auth/RoleRegistrationFields';
 import { authUnifiedApi } from '../services/api/authUnified';
 import {
@@ -227,7 +228,7 @@ export default function Register() {
             }}
           >
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
-            Inscription guidée · v3.0
+            Inscription guidée
           </span>
 
           <h2
@@ -298,6 +299,7 @@ export default function Register() {
           </div>
 
           <div className="flex items-center gap-3">
+            <LanguageSwitcher />
             <Link to="/" className="text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900">
               Marketplace
             </Link>
@@ -341,8 +343,8 @@ export default function Register() {
             {step === 1 && (
               <section className="space-y-6" aria-labelledby="step1-title">
                 <div className="text-center max-w-xl mx-auto">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-[#f95d00] mb-3">
-                    Étape 1 sur 2 · Choix obligatoire
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3.5 py-1 text-[11px] font-bold uppercase tracking-wider text-[#f95d00] mb-3 border border-orange-200">
+                    ÉTAPE 1 SUR 3 · CHOIX DU STATUT
                   </span>
                   <h1 id="step1-title" className="font-sora text-2xl sm:text-3xl font-extrabold text-[#100f0d]">
                     Quel type de compte souhaitez-vous créer ?
@@ -429,7 +431,7 @@ export default function Register() {
                     </div>
                     <div>
                       <div className="text-[11px] font-bold uppercase tracking-wider text-[#f95d00]">
-                        Profil sélectionné
+                        ÉTAPE 2 SUR 3 · Profil sélectionné
                       </div>
                       <h1 className="font-sora text-lg sm:text-xl font-bold text-[#100f0d]">
                         {activeRoleConfig.title}

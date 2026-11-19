@@ -136,7 +136,7 @@ export default function AdminNotificationsSupport({ session }) {
               <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div>
                   <h2 className="font-sora font-bold text-base text-primary">Alertes automatiques (In-App & E-mail)</h2>
-                  <p className="text-xs text-on-surface-variant">Conforme CDC v3.0 · Aucun envoi SMS ou WhatsApp en v1</p>
+                  <p className="text-xs text-on-surface-variant">Notifications in-app et alertes e-mail</p>
                 </div>
                 <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold">
                   In-App + E-mail

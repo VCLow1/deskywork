@@ -54,13 +54,13 @@ export default function EspacesPartenairesPage({ session }) {
         <div className="mb-8 text-center">
           <span className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-[#f95d00]">
             <span className="material-symbols-outlined text-[16px]">domain</span>
-            Espaces Partenaires B2B · CDC v3.0
+            Espaces Partenaires B2B
           </span>
           <h1 className="mt-3 font-sora text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
             Digitalisez votre coworking ou centre de formation
           </h1>
           <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base">
-            Déployez votre back-office isolé multi-tenant (réservations, sessions de travail en direct, encaissement sur place avec reçu PDF numéroté, sessions de formation) et publiez vos espaces sur la marketplace DeskyWork.
+            Déployez votre back-office dédié (réservations, sessions de travail en direct, encaissement sur place avec reçu PDF numéroté, sessions de formation) et publiez vos espaces sur la marketplace DeskyWork.
           </p>
         </div>
 

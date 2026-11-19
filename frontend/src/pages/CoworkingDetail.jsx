@@ -164,7 +164,7 @@ export default function CoworkingDetail() {
     (c.slug && c.slug.toLowerCase().includes('thirty')) ||
     (c.nom && c.nom.toLowerCase().includes('thirty'))
   );
-  const effectiveLogo = c.logo_url || (isNero ? PARTNER_NERO_BASE64 : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : null));
+  const effectiveLogo = isNero ? PARTNER_NERO_BASE64 : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : (c.logo_url || null));
   const heroImg = c.cover_url || effectiveLogo || FALLBACK_IMG;
 
   return (
@@ -199,6 +199,10 @@ export default function CoworkingDetail() {
                   <img
                     src={effectiveLogo}
                     alt={c.nom}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = isNero ? PARTNER_NERO_BASE64 : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : FALLBACK_IMG);
+                    }}
                     style={{
                       height: isNero ? 46 : 56,
                       maxWidth: isNero ? 170 : 90,

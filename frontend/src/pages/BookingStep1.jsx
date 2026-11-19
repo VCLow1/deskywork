@@ -8,6 +8,7 @@ import { getBookerNav } from '../utils/roles';
 
 export default function BookingStep1({ session }) {
   const { metadata } = useSessionUser(session);
+  const isTrainer = metadata?.role === 'formateur' || metadata?.role === 'trainer';
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState('all');
@@ -157,6 +158,37 @@ export default function BookingStep1({ session }) {
       {/* Main Container */}
       <main style={{ paddingTop: '88px', maxWidth: '1240px', margin: '0 auto', paddingLeft: '16px', paddingRight: '16px' }}>
         
+        {/* Double contexte pour formateur (CDC v3.0) */}
+        {isTrainer && (
+          <div style={{ marginBottom: '24px', padding: '16px 20px', borderRadius: '16px', backgroundColor: '#fff7ed', border: '1px solid #fed7aa', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', boxShadow: '0 2px 8px rgba(249,93,0,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#f95d00', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>school</span>
+              </div>
+              <div>
+                <p style={{ fontFamily: 'Sora, sans-serif', fontWeight: 700, fontSize: '14px', color: '#100f0d', margin: 0 }}>
+                  Compte Formateur — Quel est l'objet de votre réservation ?
+                </p>
+                <p style={{ fontSize: '12px', color: '#7c2d12', margin: '2px 0 0 0' }}>
+                  Vous pouvez réserver un bureau pour votre travail personnel ou animer une session de formation officielle.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <span style={{ padding: '8px 14px', borderRadius: '10px', backgroundColor: '#ffffff', border: '2px solid #f95d00', color: '#f95d00', fontSize: '12px', fontWeight: 700, cursor: 'default' }}>
+                ✓ Réserver en tant que membre
+              </span>
+              <Link
+                to="/trainer/formations?create=1"
+                style={{ padding: '8px 16px', borderRadius: '10px', backgroundColor: '#f95d00', color: '#ffffff', fontSize: '12px', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(249,93,0,0.25)' }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_circle</span>
+                Créer / Animer une formation
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Header Section */}
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <h1 style={{ fontFamily: 'Sora, sans-serif', fontSize: 'clamp(22px, 5vw, 32px)', fontWeight: 700, color: '#100f0d', marginBottom: '10px' }}>

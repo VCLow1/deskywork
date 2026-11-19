@@ -49,7 +49,7 @@ export default function PendingB2BConfirmation() {
               <li>
                 Notification envoyée par e-mail{email ? ` à ${email}` : ''} dès l&apos;activation de votre établissement.
               </li>
-              <li>Accès complet à votre back-office multi-tenant et publication sur la marketplace.</li>
+              <li>Accès complet à votre back-office dédié et publication sur la marketplace.</li>
             </ul>
           </div>
 

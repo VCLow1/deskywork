@@ -6,6 +6,8 @@ import { supabase } from '../../supabaseClient';
 import { joinUser, onNotificationCreated, onNotificationChanged } from '../../services/socket';
 import { memberPortalApi, tenantAdminApi } from '../../services/api';
 import {
+  COMPANY_NAV,
+  isCompanyRole,
   ADMIN_NAV,
   getAdminNav,
   STAFF_NAV,
@@ -18,8 +20,9 @@ import {
   isAdminRole,
 } from '../../utils/roles';
 
-function getProfilePath(role) {
+function getProfilePath(role, typeMembre = null) {
   if (role === 'super_admin') return '/super-admin/dashboard';
+  if (isCompanyRole(role, typeMembre)) return '/company/profile';
   if (role === 'member') return '/dashboard/profile';
   if (role === 'formateur') return '/trainer/profile';
   if (isAdminRole(role)) return '/admin/profile-coworking';
@@ -564,6 +567,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
   const isStaff = profile?.role === 'staff';
   const adminView = isAdminRole(profile?.role);
   const isTrainer = profile?.role === 'formateur';
+  const isCompany = isCompanyRole(profile?.role, profile?.type_membre);
   const navSections = isSuperAdmin
     ? SUPER_ADMIN_NAV
     : isStaff
@@ -572,10 +576,12 @@ export default function PortalLayout({ children, profile, onLogout }) {
         ? getAdminNav(tenantActivite)
         : isTrainer
           ? FORMATEUR_NAV
-          : MEMBER_NAV;
+          : isCompany
+            ? COMPANY_NAV
+            : MEMBER_NAV;
   const navItems = flattenNav(navSections);
-  const homePath = getHomePath(profile?.role);
-  const profilePath = getProfilePath(profile?.role);
+  const homePath = getHomePath(profile?.role, profile?.type_membre);
+  const profilePath = getProfilePath(profile?.role, profile?.type_membre);
   const portalLabel = isSuperAdmin
     ? 'VCLOW Platform'
     : isStaff
@@ -584,7 +590,9 @@ export default function PortalLayout({ children, profile, onLogout }) {
         ? 'Administration'
         : isTrainer
           ? 'Espace Formateur'
-          : 'Espace membre';
+          : isCompany
+            ? 'Espace Entreprise'
+            : 'Espace membre';
   const pageTitle = derivePageTitle(location.pathname, navItems);
 
   const isNavActive = (to) => {

@@ -150,16 +150,28 @@ async function createInscription(req, res) {
         } catch {}
       }
 
-      // 2. Notification aux admins du Coworking
+      // 2. Notification aux admins du Coworking (via memberships et profiles)
       if (formation.tenant_id) {
-        const { data: admins } = await supabaseAdmin
+        const { data: memAdmins } = await supabaseAdmin
+          .from('memberships')
+          .select('user_id')
+          .eq('organization_id', formation.tenant_id)
+          .in('role', ['admin', 'proprietaire', 'staff'])
+          .eq('statut', 'actif');
+
+        const adminIds = new Set((memAdmins || []).map((m) => m.user_id));
+
+        const { data: profAdmins } = await supabaseAdmin
           .from('profiles')
           .select('id')
           .in('role', ['admin', 'staff'])
           .eq('tenant_id', formation.tenant_id);
-        for (const admin of admins || []) {
+
+        (profAdmins || []).forEach((p) => adminIds.add(p.id));
+
+        for (const adminId of adminIds) {
           const adminNotif = {
-            user_id: admin.id,
+            user_id: adminId,
             type: 'nouvelle_inscription_formation',
             canal: 'Dashboard',
             message: `🎓 Nouvelle réservation formation « ${formation.titre} » : ${req.profile.prenom} ${req.profile.nom}.`,
@@ -167,7 +179,7 @@ async function createInscription(req, res) {
           await supabaseAdmin.from('notifications').insert(adminNotif);
           try {
             const { emitNotification } = require('../services/socketService');
-            emitNotification(admin.id, adminNotif);
+            emitNotification(adminId, adminNotif);
           } catch {}
         }
       }

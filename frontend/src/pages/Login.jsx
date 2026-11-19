@@ -67,7 +67,7 @@ const TEST_ACCOUNTS = [
     badge: 'B2B',
     email: 'test.company@deskywork.tn',
     password: 'DeskyTest@2026!',
-    targetPath: '/dashboard',
+    targetPath: '/company/dashboard',
     defaultOrgId: 'd0000000-0000-4000-8000-000000000002',
     icon: 'business',
     chipBg: 'bg-emerald-50 hover:bg-emerald-100/90 border-emerald-200 text-emerald-700',
@@ -304,12 +304,12 @@ export default function Login() {
           </h2>
 
           <p style={{ color: 'rgba(251,255,255,0.75)', fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-            Basculez librement entre vos rôles de particulier, formateur ou gérant sans jamais avoir à recréer de compte.
+            Accédez à votre espace en tant que particulier, entreprise, formateur ou gérant d'établissement. Chaque adresse e-mail est liée à un compte et rôle figé.
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
-              { icon: 'lock', text: 'Chiffrement de bout en bout et RLS stricte' },
+              { icon: 'lock', text: 'Chiffrement et protection des données' },
               { icon: 'swap_horiz', text: 'Changement d\'organisation en 1 clic' },
               { icon: 'bolt', text: 'Accès instantané à la marketplace et aux sessions' },
             ].map(({ icon, text }) => (
@@ -335,7 +335,7 @@ export default function Login() {
             <div className="text-xs text-white/60">Accès garanti</div>
           </div>
           <div>
-            <div className="font-sora text-white text-xl font-bold">Multi-tenant</div>
+            <div className="font-sora text-white text-xl font-bold">Espaces dédiés</div>
             <div className="text-xs text-white/60">Isolation des données</div>
           </div>
         </div>
@@ -477,7 +477,7 @@ export default function Login() {
                 onClick={handleGoogleLogin}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-outline-variant/30 rounded-xl text-sm font-semibold text-on-surface hover:bg-slate-50 transition-all shadow-sm active:scale-[0.98]"
               >
-                <GoogleIcon /> {t('common.orContinueWith')} {t('login.withGoogle')}
+                <GoogleIcon /> Continuer avec Google
               </button>
 
               <div className="flex items-center gap-4">
