@@ -7,8 +7,11 @@ import BrandLogo from '../components/layout/BrandLogo';
 import { getBookerNav } from '../utils/roles';
 
 export default function BookingStep1({ session }) {
-  const { metadata } = useSessionUser(session);
-  const isTrainer = metadata?.role === 'formateur' || metadata?.role === 'trainer';
+  const { metadata, userId } = useSessionUser(session);
+  const [userRole, setUserRole] = useState(() => metadata?.role || '');
+  const [showTrainerContextModal, setShowTrainerContextModal] = useState(false);
+  const isTrainer = userRole === 'formateur' || userRole === 'trainer' || metadata?.role === 'formateur' || metadata?.role === 'trainer';
+
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState('all');
@@ -18,6 +21,26 @@ export default function BookingStep1({ session }) {
   const [nav, setNav] = useState(() => getBookerNav(metadata.role || 'member'));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // Détection du rôle formateur et ouverture du sélecteur obligatoire
+  useEffect(() => {
+    if (metadata?.role) {
+      setUserRole(metadata.role);
+    } else if (userId) {
+      supabase.from('profiles').select('role').eq('id', userId).single()
+        .then(({ data }) => { if (data?.role) setUserRole(data.role); })
+        .catch(() => {});
+    }
+  }, [userId, metadata?.role]);
+
+  useEffect(() => {
+    if (isTrainer) {
+      const alreadyChosen = sessionStorage.getItem('trainer_booking_context_chosen');
+      if (!alreadyChosen) {
+        setShowTrainerContextModal(true);
+      }
+    }
+  }, [isTrainer]);
 
   // nav déjà initialisé depuis le JWT ci-dessus, plus d'appel DB nécessaire
 
@@ -158,7 +181,161 @@ export default function BookingStep1({ session }) {
       {/* Main Container */}
       <main style={{ paddingTop: '88px', maxWidth: '1240px', margin: '0 auto', paddingLeft: '16px', paddingRight: '16px' }}>
         
-        {/* Double contexte pour formateur (CDC v3.0) */}
+        {/* Modal obligatoire de sélection de contexte pour le rôle TRAINER */}
+        {isTrainer && showTrainerContextModal && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(6px)',
+          }}>
+            <div style={{
+              maxWidth: '620px',
+              width: '100%',
+              backgroundColor: '#ffffff',
+              borderRadius: '24px',
+              padding: '32px 28px',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.3)',
+              border: '1px solid #e2e8f0',
+              textAlign: 'left',
+              position: 'relative',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '14px',
+                  backgroundColor: '#fff7ed',
+                  color: '#f95d00',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  border: '1px solid #fed7aa',
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '28px' }}>school</span>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#f95d00' }}>
+                    Compte Formateur Partenaire
+                  </span>
+                  <h2 style={{ fontFamily: 'Sora, sans-serif', fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: '2px 0 0 0' }}>
+                    Sélectionnez l'objet de votre réservation
+                  </h2>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '13.5px', color: '#64748b', lineHeight: 1.55, marginBottom: '24px' }}>
+                En tant que formateur, vous disposez d'un double statut sur DeskyWork. Veuillez indiquer la finalité de cette démarche pour être orienté vers le bon flux :
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '14px', marginBottom: '24px' }}>
+                {/* Option 1 : Réserver pour moi */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    sessionStorage.setItem('trainer_booking_context_chosen', 'member');
+                    setShowTrainerContextModal(false);
+                  }}
+                  style={{
+                    textAlign: 'left',
+                    padding: '20px',
+                    borderRadius: '18px',
+                    border: '2px solid #e2e8f0',
+                    backgroundColor: '#ffffff',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '16px',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f95d00'; e.currentTarget.style.backgroundColor = '#fffaf5'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.backgroundColor = '#ffffff'; }}
+                >
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: '#f1f5f9', color: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>person</span>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>
+                        Option 1 : Réserver pour moi (en tant que membre)
+                      </span>
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#f95d00' }}>arrow_forward</span>
+                    </div>
+                    <p style={{ fontSize: '12.5px', color: '#64748b', margin: '4px 0 0 0', lineHeight: 1.45 }}>
+                      Pour travailler en open space, réserver un bureau privé ou une salle pour vos besoins personnels. Règlement sur place selon tarifs membres.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Option 2 : Organiser / Animer une formation */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate('/trainer/formations?create=1');
+                  }}
+                  style={{
+                    textAlign: 'left',
+                    padding: '20px',
+                    borderRadius: '18px',
+                    border: '2px solid #fed7aa',
+                    backgroundColor: '#fff7ed',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '16px',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f95d00'; e.currentTarget.style.backgroundColor = '#ffedd8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#fed7aa'; e.currentTarget.style.backgroundColor = '#fff7ed'; }}
+                >
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: '#f95d00', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>school</span>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontFamily: 'Sora, sans-serif', fontSize: '15px', fontWeight: 700, color: '#7c2d12' }}>
+                        Option 2 : Organiser / Animer une formation
+                      </span>
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#f95d00' }}>arrow_forward</span>
+                    </div>
+                    <p style={{ fontSize: '12.5px', color: '#9a3412', margin: '4px 0 0 0', lineHeight: 1.45 }}>
+                      Créer une session de formation officielle avec assignation d'une salle compatible chez un coworking partenaire, définir vos dates et gérer les inscriptions d'apprenants.
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sessionStorage.setItem('trainer_booking_context_chosen', 'member');
+                    setShowTrainerContextModal(false);
+                  }}
+                  style={{
+                    fontSize: '12.5px',
+                    color: '#64748b',
+                    background: 'none',
+                    border: 'none',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                  }}
+                >
+                  Continuer vers la sélection d'espace (Option 1)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Double contexte pour formateur (CDC v3.0) — Bannière d'état */}
         {isTrainer && (
           <div style={{ marginBottom: '24px', padding: '16px 20px', borderRadius: '16px', backgroundColor: '#fff7ed', border: '1px solid #fed7aa', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', boxShadow: '0 2px 8px rgba(249,93,0,0.06)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -167,23 +344,27 @@ export default function BookingStep1({ session }) {
               </div>
               <div>
                 <p style={{ fontFamily: 'Sora, sans-serif', fontWeight: 700, fontSize: '14px', color: '#100f0d', margin: 0 }}>
-                  Compte Formateur — Quel est l'objet de votre réservation ?
+                  Compte Formateur — Contexte actif : Réserver pour moi (en tant que membre)
                 </p>
                 <p style={{ fontSize: '12px', color: '#7c2d12', margin: '2px 0 0 0' }}>
-                  Vous pouvez réserver un bureau pour votre travail personnel ou animer une session de formation officielle.
+                  Vous réservez un poste ou bureau pour votre usage propre. Vous pouvez basculer à tout moment pour animer une formation.
                 </p>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ padding: '8px 14px', borderRadius: '10px', backgroundColor: '#ffffff', border: '2px solid #f95d00', color: '#f95d00', fontSize: '12px', fontWeight: 700, cursor: 'default' }}>
-                ✓ Réserver en tant que membre
-              </span>
+              <button
+                type="button"
+                onClick={() => setShowTrainerContextModal(true)}
+                style={{ padding: '8px 14px', borderRadius: '10px', backgroundColor: '#ffffff', border: '1px solid #fed7aa', color: '#7c2d12', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Changer de contexte
+              </button>
               <Link
                 to="/trainer/formations?create=1"
                 style={{ padding: '8px 16px', borderRadius: '10px', backgroundColor: '#f95d00', color: '#ffffff', fontSize: '12px', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(249,93,0,0.25)' }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_circle</span>
-                Créer / Animer une formation
+                Organiser / Animer une formation
               </Link>
             </div>
           </div>

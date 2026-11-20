@@ -290,7 +290,7 @@ export const FORMATEUR_NAV = [
   {
     group: 'Finance',
     items: [
-      { id: 'trainer_payments', label: 'Mes reçus', icon: 'receipt_long', to: '/trainer/payments' },
+      { id: 'trainer_payments', label: 'Mes Rémunérations (Payouts)', icon: 'payments', to: '/trainer/payments' },
     ],
   },
   {

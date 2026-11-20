@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { formationApi, bookingApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
@@ -306,6 +307,7 @@ export default function TrainerFormations({ session }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterStatut, setFilterStatut] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
 
   /* Modals */
   const [showFormModal, setShowFormModal] = useState(false);
@@ -516,6 +518,17 @@ export default function TrainerFormations({ session }) {
     setError('');
     setShowFormModal(true);
   };
+
+  /* ─── Trigger Create if URL contains action=create or create=1 ─── */
+  useEffect(() => {
+    if (searchParams.get('create') === '1' || searchParams.get('action') === 'create' || searchParams.get('create') === 'true') {
+      openCreate();
+      const next = new URLSearchParams(searchParams);
+      next.delete('create');
+      next.delete('action');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams]);
 
   /* ─── Open Edit Modal ─── */
   const openEdit = (f) => {
