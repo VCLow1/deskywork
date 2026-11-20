@@ -309,3 +309,4 @@ export default function CompanyProfile({ session }) {
     </PortalLayout>
   );
 }
+

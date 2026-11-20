@@ -119,8 +119,8 @@ export default function BookingStep3({ session }) {
     setErrorMsg('');
     if (isEntreprise) {
       const { raison_sociale, matricule_fiscal, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
-      if (!raison_sociale.trim() || !contact_nom.trim() || !telephone_pro.trim() || !email_facturation.trim() || !besoin_description.trim()) {
-        setErrorMsg('Pour une réservation Entreprise, veuillez remplir la raison sociale, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
+      if (!raison_sociale?.trim() || !matricule_fiscal?.trim() || !contact_nom?.trim() || !telephone_pro?.trim() || !email_facturation?.trim() || !besoin_description?.trim()) {
+        setErrorMsg('Pour une réservation Entreprise, veuillez renseigner la raison sociale, le matricule fiscal, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
         return;
       }
     }

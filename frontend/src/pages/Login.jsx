@@ -145,6 +145,11 @@ export default function Login() {
         return;
       }
 
+      if (context.userContextType === 'company' || context.profile?.type_membre === 'entreprise' || context.profile?.role === 'company' || context.profile?.role === 'entreprise') {
+        navigate('/company/dashboard', { replace: true });
+        return;
+      }
+
       if (context.hasMultipleOrgs) {
         navigate('/select-space', { replace: true });
         return;

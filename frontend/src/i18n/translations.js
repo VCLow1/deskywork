@@ -404,7 +404,7 @@ export const translations = {
       footerCgu: 'Conditions d’utilisation (CGU)',
       footerPrivacy: 'Politique de confidentialité',
       footerLegalNotice: 'Mentions légales',
-      footerCopyright: 'DeskyWork · Tous droits réservés.',
+      footerCopyright: 'DeskyWork · Conforme CDC v3.0 · Tous droits réservés.',
     },
   },
 
@@ -812,7 +812,7 @@ export const translations = {
       footerCgu: 'Terms of Service (ToS)',
       footerPrivacy: 'Privacy Policy',
       footerLegalNotice: 'Legal Notice',
-      footerCopyright: 'DeskyWork · All rights reserved.',
+      footerCopyright: 'DeskyWork · CDC v3.0 Compliant · All rights reserved.',
     },
   },
 };

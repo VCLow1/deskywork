@@ -26,7 +26,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 async function main() {
   const { data: users } = await supabase.auth.admin.listUsers();
   const user = users.users.find(u => u.email === 'test.company@deskywork.tn');
-  console.log('Company User auth:', user?.id, user?.email);
+  console.log('Company User auth:', user?.id, user?.email, 'user_metadata:', user?.user_metadata, 'app_metadata:', user?.app_metadata);
   if (user) {
     const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
     console.log('Profile:', prof);
@@ -36,3 +36,4 @@ async function main() {
 }
 
 main().catch(console.error);
+

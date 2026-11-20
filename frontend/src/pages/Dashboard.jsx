@@ -14,7 +14,7 @@ import {
 import PortalLayout from '../components/layout/PortalLayout';
 import PeriodFilter from '../components/dashboard/PeriodFilter';
 import { DEFAULT_PERIOD, periodWindow, windowLabel } from '../utils/dashboardPeriod';
-import { ROLE_LABELS } from '../utils/roles';
+import { ROLE_LABELS, isCompanyRole } from '../utils/roles';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { QRCodeSVG } from 'qrcode.react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -153,6 +153,14 @@ export default function Dashboard({ session }) {
   const [success, setSuccess] = useState('');
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [memberQr, setMemberQr] = useState(null);
+
+  // Redirection immédiate des comptes entreprise vers leur espace dédié
+  useEffect(() => {
+    const isComp = isCompanyRole(metadata?.role, metadata?.type_membre) || isCompanyRole(profile?.role, profile?.type_membre);
+    if (isComp) {
+      navigate('/company/dashboard', { replace: true });
+    }
+  }, [metadata, profile, navigate]);
 
   /* ── Session state ── */
   const [activeSession, setActiveSession] = useState(null);

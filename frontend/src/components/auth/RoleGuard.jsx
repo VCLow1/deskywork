@@ -4,9 +4,14 @@ import { supabase } from '../../supabaseClient';
 import { getHomePath, isAdminRole, isMemberRole, isCompanyRole, canBookSpaces, getPostLoginPath } from '../../utils/roles';
 
 function getRoleFromSession(session) {
+  const meta = session?.user?.user_metadata || {};
+  const appMeta = session?.user?.app_metadata || {};
+  if (meta.role === 'company' || meta.role === 'entreprise' || meta.type_membre === 'entreprise') {
+    return 'company';
+  }
   return (
-    session?.user?.user_metadata?.role ||
-    session?.user?.app_metadata?.role ||
+    meta.role ||
+    appMeta.role ||
     null
   );
 }
@@ -30,7 +35,10 @@ export function RoleGuard({
   requireCompany = false,
   children,
 }) {
+  const meta = session?.user?.user_metadata || {};
+  const typeMembre = meta.type_membre || null;
   const role = getRoleFromSession(session) ?? 'member';
+  const isCompany = isCompanyRole(role, typeMembre);
 
   // Blocage strict : aucun accès dashboard tant que l'e-mail n'est pas vérifié
   if (isSessionEmailUnverified(session)) {
@@ -39,31 +47,36 @@ export function RoleGuard({
   }
 
   if (requireSuperAdmin && role !== 'super_admin') {
-    return <Navigate to={getHomePath(role)} replace />;
+    return <Navigate to={getHomePath(role, typeMembre)} replace />;
   }
 
   if (requireAdmin && !isAdminRole(role)) {
-    return <Navigate to={getHomePath(role)} replace />;
+    return <Navigate to={getHomePath(role, typeMembre)} replace />;
   }
 
   if (requireManagerOnly && role !== 'admin' && role !== 'super_admin') {
     return <Navigate to="/admin/dashboard" replace />;
   }
 
-  if (requireCompany && !isCompanyRole(role)) {
-    return <Navigate to={getHomePath(role)} replace />;
+  if (requireCompany && !isCompany) {
+    return <Navigate to={getHomePath(role, typeMembre)} replace />;
   }
 
-  if (requireMember && !isMemberRole(role) && !isCompanyRole(role)) {
-    return <Navigate to={getHomePath(role)} replace />;
+  if (requireMember) {
+    if (isCompany) {
+      return <Navigate to="/company/dashboard" replace />;
+    }
+    if (!isMemberRole(role, typeMembre)) {
+      return <Navigate to={getHomePath(role, typeMembre)} replace />;
+    }
   }
 
   if (requireTrainer && role !== 'formateur') {
-    return <Navigate to={getHomePath(role)} replace />;
+    return <Navigate to={getHomePath(role, typeMembre)} replace />;
   }
 
-  if (requireBooker && !canBookSpaces(role)) {
-    return <Navigate to={getHomePath(role)} replace />;
+  if (requireBooker && !canBookSpaces(role, typeMembre)) {
+    return <Navigate to={getHomePath(role, typeMembre)} replace />;
   }
 
   return children;
@@ -131,6 +144,11 @@ export function HomeRedirect({ session, fallback = null }) {
             path: `/verify-email${email ? `?email=${encodeURIComponent(email)}` : ''}`,
             renderFallback: false,
           });
+          return;
+        }
+
+        if (isCompanyRole(effectiveRole, profile.type_membre)) {
+          setState({ loading: false, path: '/company/dashboard', renderFallback: false });
           return;
         }
 

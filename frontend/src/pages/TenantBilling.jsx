@@ -284,7 +284,7 @@ export default function TenantBilling({ session }) {
         </div>
 
         <div class="footer">
-          Document officiel généré par DeskyWork · Règlement par virement bancaire ou espèces sur place
+          Document officiel généré par DeskyWork · Règlement par virement bancaire ou espèces sur place · Conforme CDC v3.0
         </div>
       </body>
       </html>
