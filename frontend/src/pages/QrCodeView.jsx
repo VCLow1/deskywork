@@ -40,16 +40,39 @@ export default function QrCodeView({ session }) {
           .select('*')
           .eq('id', session.user.id)
           .single(),
-        memberApi.getQr(),
+        memberApi.getQr().catch(() => null),
         subscriptionApi.getActive().catch(() => ({ subscription: null })),
       ]);
 
-      if (prof.status === 'fulfilled') setProfile(prof.value.data);
-      if (qr.status === 'fulfilled') setQrData(qr.value);
-      if (sub.status === 'fulfilled') {
-        const actualSub = sub.value?.subscription || (sub.value && sub.value.id ? sub.value : null);
-        setSubscription(actualSub);
+      let profData = null;
+      if (prof.status === 'fulfilled' && prof.value?.data) {
+        profData = prof.value.data;
+        setProfile(profData);
       }
+
+      if (qr.status === 'fulfilled' && qr.value) {
+        setQrData(qr.value);
+      }
+
+      // Source de vérité unique pour l'abonnement
+      let actualSub = null;
+      if (sub.status === 'fulfilled' && sub.value?.subscription?.id) {
+        actualSub = sub.value.subscription;
+      } else {
+        // Fallback Supabase direct en base pour garantir l'exactitude
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const { data: dbSub } = await supabase
+          .from('abonnements')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .eq('statut', 'active')
+          .gte('date_fin', todayStr)
+          .order('date_fin', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        actualSub = dbSub || null;
+      }
+      setSubscription(actualSub);
     } catch (err) {
       setError(err.message || 'Erreur de chargement du QR code.');
     } finally {
@@ -96,8 +119,10 @@ export default function QrCodeView({ session }) {
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   }, []);
 
+  const qrPayload = qrData?.payload || qrData?.qr_token || qrData?.token || (profile?.qr_token ? JSON.stringify({ user_id: session?.user?.id || profile?.id, qr_token: profile.qr_token }) : (session?.user?.id ? JSON.stringify({ user_id: session.user.id }) : 'deskywork-pass'));
+
   const handleShare = useCallback(async () => {
-    if (navigator.share && qrData?.payload) {
+    if (navigator.share && qrPayload) {
       try {
         await navigator.share({
           title: 'Mon Pass d\'Accès DeskyWork',
@@ -112,21 +137,27 @@ export default function QrCodeView({ session }) {
       );
       window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
     }
-  }, [qrData]);
+  }, [qrPayload]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate('/');
   };
 
-  const hasAccess = Boolean(subscription && (subscription.id || subscription.type || subscription.plan_name));
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const hasAccess = Boolean(
+    subscription &&
+    subscription.id &&
+    (subscription.statut === 'active' || subscription.status === 'active') &&
+    (!subscription.date_fin || subscription.date_fin >= todayIso)
+  );
+
   const subName = hasAccess
     ? (subscription?.plan_name || subscription?.name || subscription?.type || 'Abonnement actif')
     : 'Sans abonnement';
   const subExpiry = hasAccess
-    ? (subscription?.end_date || subscription?.expires_at || subscription?.period_end)
+    ? (subscription?.date_fin || subscription?.end_date || subscription?.expires_at || subscription?.period_end)
     : null;
-  const qrPayload = qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token;
 
   if (loading) {
     return (

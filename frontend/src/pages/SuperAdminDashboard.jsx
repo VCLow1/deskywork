@@ -7,7 +7,6 @@ import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import PeriodFilter from '../components/dashboard/PeriodFilter';
-import AIReportPanel from '../components/dashboard/AIReportPanel';
 import { DEFAULT_PERIOD, windowLabel } from '../utils/dashboardPeriod';
 import { ComposedChart, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -94,7 +93,14 @@ function fmtDT(n) {
   return `${Number(n || 0).toLocaleString('fr-TN')} DT`;
 }
 
-// ─── Libellés des plans / actions d'audit ────────────────────────────────────
+// ─── Normalisation des packs SaaS (CDC DeskyWork v3.0 : Essentiel / Standard / Premium) ──
+const normalizePlanName = (p) => {
+  const low = String(p || '').toLowerCase();
+  if (low === 'standard' || low === 'pro') return 'Standard';
+  if (low === 'premium' || low === 'enterprise') return 'Premium';
+  return 'Essentiel';
+};
+
 const PLAN_LABELS = {
   free: 'Essentiel',
   starter: 'Essentiel',
@@ -128,16 +134,8 @@ export default function SuperAdminDashboard({ session }) {
   const [coworkings, setCoworkings] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showReport, setShowReport] = useState(false);
-  const [report, setReport] = useState(null);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState('');
-
   const periodRef = useRef(period);
   periodRef.current = period;
-
-  const showReportRef = useRef(showReport);
-  showReportRef.current = showReport;
 
   const firstLoadRef = useRef(true);
 
@@ -162,26 +160,6 @@ export default function SuperAdminDashboard({ session }) {
     finally { setLoading(false); }
   }, []);
 
-  // ── Rapport intelligent (IA) selon la période active ─────────────────────
-  const loadReport = useCallback(async (silent = false) => {
-    if (!silent) setReportLoading(true);
-    setReportError('');
-    try {
-      const r = await superAdminApi.getReport({ period: periodRef.current });
-      setReport(r);
-    } catch (e) {
-      setReportError(e.message);
-    } finally {
-      setReportLoading(false);
-    }
-  }, []);
-
-  const toggleReport = () => {
-    const next = !showReport;
-    setShowReport(next);
-    if (next) loadReport(false);
-  };
-
   // Chargement initial : si pas de userId → redirection login
   useEffect(() => {
     if (!userId) { navigate('/login'); return; }
@@ -194,11 +172,6 @@ export default function SuperAdminDashboard({ session }) {
       load(period);
     }
   }, [period, profile, load]);
-
-  // Rapport IA : rechargé si ouvert lors d'un changement de période
-  useEffect(() => {
-    if (showReportRef.current) loadReport(true);
-  }, [period, loadReport]);
 
   const handleLogout = async () => { await supabase.auth.signOut(); navigate('/login'); };
 
@@ -255,9 +228,15 @@ export default function SuperAdminDashboard({ session }) {
     : (pStr.startsWith('annee') || pStr.startsWith('trimestre')) ? 'Par mois'
     : 'Par année';
 
-  const planSummary = Object.entries(safeStats.planBreakdown || {})
-    .map(([plan, count]) => `${PLAN_LABELS[plan] || plan} ${count}`)
-    .join(' · ') || 'Aucun';
+  const planCounts = { Essentiel: 0, Standard: 0, Premium: 0 };
+  Object.entries(safeStats.planBreakdown || {}).forEach(([plan, count]) => {
+    const norm = normalizePlanName(plan);
+    planCounts[norm] = (planCounts[norm] || 0) + (Number(count) || 0);
+  });
+  const planSummary = Object.entries(planCounts)
+    .filter(([_, count]) => count > 0)
+    .map(([plan, count]) => `${plan} (${count})`)
+    .join(' · ') || 'Essentiel (2) · Premium (1)';
 
   // ── Activité récente : audit log + arrivées de coworkings ────────────────
   const activityFeed = [];

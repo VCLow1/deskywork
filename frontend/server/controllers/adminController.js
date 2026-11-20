@@ -561,18 +561,14 @@ function resolveTenantPack(tenant) {
       ? 'standard'
       : 'essentiel';
   const base = SAAS_PACKS[key];
-  const customPrix = isPartner
-    ? 90
-    : Number(tenant?.montant_mensuel !== null && tenant?.montant_mensuel !== undefined ? tenant.montant_mensuel : base.prix);
   return {
     ...base,
-    name: isPartner ? 'Premium (Partenaire Officiel)' : base.name,
+    name: base.name,
     is_partner: isPartner,
     max_espaces: isPartner ? null : (tenant?.limite_espaces ?? base.max_espaces),
     max_membres: isPartner ? null : (tenant?.limite_membres ?? base.max_membres),
     max_staff: isPartner ? 10 : (tenant?.settings?.limite_staff ?? base.max_staff),
-    prix: customPrix,
-    remise_partenaire: isPartner ? 'Tarif préférentiel partenaire : 90 DT / mois (au lieu de 220 DT)' : null,
+    prix: base.prix,
   };
 }
 

@@ -121,37 +121,72 @@ export default function MemberProfile({ session }) {
 
       setUserEmail(session?.user?.email || '');
 
-      const [{ profile: prof }, qr, sub] = await Promise.all([
-        memberApi.getMe(),
-        memberApi.getQr().catch(() => null),
-        import('../services/api').then((m) =>
-          m.subscriptionApi.getActive().catch(() => ({ subscription: null }))
-        ),
-      ]);
+      // 1. Profil : API avec fallback direct Supabase
+      let prof = null;
+      try {
+        const meRes = await memberApi.getMe();
+        prof = meRes?.profile || meRes;
+      } catch (_) {
+        if (session?.user?.id) {
+          const { data: dbP } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+          prof = dbP;
+        }
+      }
+      if (!prof && session?.user?.id) {
+        const { data: dbP } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        prof = dbP;
+      }
 
       setProfile(prof);
-      setForm({
-        prenom: prof.prenom || '',
-        nom: prof.nom || '',
-        telephone: prof.telephone || '',
-        cin: prof.cin || '',
-        type_membre: prof.type_membre || 'individuel',
-      });
-      setDocuments(prof.documents || []);
-      setMemberSince(prof.created_at || prof.date_creation || '');
-
-      if (qr) setQrData(qr);
-      if (sub?.subscription) setSubscription(sub.subscription);
-
-      setCanalNotification(prof.canal_notification || prof.notifications?.canal || 'email');
-
-      if (prof.notifications) {
-        setNotifications({
-          email_reservations: prof.notifications.email_reservations ?? true,
-          email_abonnements: prof.notifications.email_abonnements ?? true,
-          email_formations: prof.notifications.email_formations ?? true,
+      if (prof) {
+        setForm({
+          prenom: prof.prenom || '',
+          nom: prof.nom || '',
+          telephone: prof.telephone || '',
+          cin: prof.cin || '',
+          type_membre: prof.type_membre || 'individuel',
         });
+        setDocuments(prof.documents || []);
+        setMemberSince(prof.created_at || prof.date_creation || '');
+        setCanalNotification(prof.canal_notification || prof.notifications?.canal || 'email');
+
+        if (prof.notifications) {
+          setNotifications({
+            email_reservations: prof.notifications.email_reservations ?? true,
+            email_abonnements: prof.notifications.email_abonnements ?? true,
+            email_formations: prof.notifications.email_formations ?? true,
+          });
+        }
       }
+
+      // 2. QR Code : API avec fallback token du profil
+      let qr = null;
+      try {
+        qr = await memberApi.getQr();
+      } catch (_) {}
+      if (qr) setQrData(qr);
+
+      // 3. Abonnement actif (source de vérité unique en base)
+      let activeSub = null;
+      try {
+        const sub = await subscriptionApi.getActive();
+        if (sub?.subscription?.id) activeSub = sub.subscription;
+      } catch (_) {}
+
+      if (!activeSub && session?.user?.id) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const { data: dbSub } = await supabase
+          .from('abonnements')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .eq('statut', 'active')
+          .gte('date_fin', todayStr)
+          .order('date_fin', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        activeSub = dbSub || null;
+      }
+      setSubscription(activeSub);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -448,8 +483,10 @@ export default function MemberProfile({ session }) {
     }
   };
 
+  const effectiveQr = qrData?.payload || qrData?.qr_token || qrData?.token || (profile?.qr_token ? JSON.stringify({ user_id: session?.user?.id || profile?.id, qr_token: profile.qr_token }) : (session?.user?.id ? JSON.stringify({ user_id: session.user.id }) : ''));
+
   const handleDownloadQr = () => {
-    if (!qrData?.token) return;
+    if (!effectiveQr) return;
     const svg = document.getElementById('member-qr-code');
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -457,11 +494,11 @@ export default function MemberProfile({ session }) {
     const ctx = canvas.getContext('2d');
     const img = new Image();
     img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
+      canvas.width = 1024;
+      canvas.height = 1024;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 1024, 1024);
+      ctx.drawImage(img, 64, 64, 896, 896);
       const a = document.createElement('a');
       a.download = `qr-access-${profile?.prenom || 'membre'}.png`;
       a.href = canvas.toDataURL('image/png');
@@ -471,16 +508,19 @@ export default function MemberProfile({ session }) {
   };
 
   const handleShareQr = async () => {
-    if (!qrData?.token) return;
-    const shareData = {
-      title: 'Mon QR d\'acces',
-      text: `QR d'acces coworking — Token: ${qrData.token}`,
-    };
+    if (!effectiveQr) return;
+    const shareUrl = `${window.location.origin}/dashboard/qr`;
     if (navigator.share) {
-      try { await navigator.share(shareData); } catch {}
+      try {
+        await navigator.share({
+          title: "Mon Pass d'Accès DeskyWork",
+          text: "Voici mon pass d'accès DeskyWork pour les espaces partenaires.",
+          url: shareUrl,
+        });
+      } catch {}
     } else {
-      await navigator.clipboard.writeText(shareData.text);
-      setSuccess('Token copie dans le presse-papier.');
+      await navigator.clipboard.writeText(shareUrl);
+      setSuccess("Lien vers votre pass d'accès copié dans le presse-papier.");
       setTimeout(() => setSuccess(''), 3500);
     }
   };
@@ -679,7 +719,7 @@ export default function MemberProfile({ session }) {
 
           <div className="relative mt-2 mb-4">
             {/* Pulse ring for active access */}
-            {(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token) && (
+            {effectiveQr && (
               <div
                 className="absolute inset-0 rounded-2xl"
                 style={{
@@ -692,10 +732,10 @@ export default function MemberProfile({ session }) {
               className="relative bg-white rounded-2xl p-3 flex items-center justify-center"
               style={{ width: 160, height: 160 }}
             >
-              {(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token) ? (
+              {effectiveQr ? (
                 <QRCodeSVG
                   id="member-qr-code"
-                  value={qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token}
+                  value={effectiveQr}
                   size={136}
                   bgColor="#ffffff"
                   fgColor="#0d1f3c"
@@ -705,54 +745,68 @@ export default function MemberProfile({ session }) {
               ) : (
                 <div className="flex flex-col items-center gap-2 text-on-surface-variant/50">
                   <span className="material-symbols-outlined" style={{ fontSize: 40 }}>qr_code_2</span>
-                  <span className="text-xs font-medium">Aucun QR</span>
+                  <span className="text-xs font-medium">Chargement QR...</span>
                 </div>
               )}
             </div>
           </div>
 
-          {subscription?.id ? (
-            <div className="text-center mb-4 w-full">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
-                style={{ background: 'rgba(47,190,143,0.15)', color: '#2fbe8f' }}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'pulse-dot 2s ease-in-out infinite' }} />
-                Accès actif
+          {(() => {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const isSubActive = Boolean(
+              subscription &&
+              subscription.id &&
+              (subscription.statut === 'active' || subscription.status === 'active') &&
+              (!subscription.date_fin || subscription.date_fin >= todayStr)
+            );
+
+            if (isSubActive) {
+              return (
+                <div className="text-center mb-4 w-full">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
+                    style={{ background: 'rgba(47,190,143,0.15)', color: '#2fbe8f' }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'pulse-dot 2s ease-in-out infinite' }} />
+                    Accès actif
+                  </div>
+                  <p className="text-sm font-semibold text-white/90">
+                    {SUBSCRIPTION_LABELS[subscription.type] || subscription.type}
+                  </p>
+                  <p className="text-xs text-white/50 mt-0.5">
+                    Expire le {formatDate(subscription.date_fin)}
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="text-center mb-4 w-full">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
+                  style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  Sans abonnement
+                </div>
+                <p className="text-xs text-white/60 mt-0.5">
+                  Accès par réservation ponctuelle
+                </p>
               </div>
-              <p className="text-sm font-semibold text-white/90">
-                {SUBSCRIPTION_LABELS[subscription.type] || subscription.type}
-              </p>
-              <p className="text-xs text-white/50 mt-0.5">
-                Expire le {formatDate(subscription.date_fin)}
-              </p>
-            </div>
-          ) : (
-            <div className="text-center mb-4 w-full">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
-                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                Sans abonnement
-              </div>
-              <p className="text-xs text-white/60 mt-0.5">
-                Accès par réservation ponctuelle
-              </p>
-            </div>
-          )}
+            );
+          })()}
 
           <div className="flex gap-2.5 w-full mt-auto">
             <button
               onClick={handleDownloadQr}
-              disabled={!(qrData?.payload || qrData?.qr_token || qrData?.token || profile?.qr_token)}
+              disabled={!effectiveQr}
               className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-40"
               style={{ background: 'rgba(255,255,255,0.12)', color: 'white', border: '1px solid rgba(255,255,255,0.1)' }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>download</span>
-              Telecharger
+              Télécharger
             </button>
             <button
               onClick={handleShareQr}
-              disabled={!qrData?.token}
+              disabled={!effectiveQr}
               className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-40"
               style={{ background: '#f95d00', color: 'white' }}
             >

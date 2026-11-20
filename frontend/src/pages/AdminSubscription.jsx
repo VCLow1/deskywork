@@ -33,6 +33,13 @@ function Gauge({ label, used, max, icon }) {
 
 const PACK_RANK = { essentiel: 1, standard: 2, premium: 3 };
 
+const resolvePackInfo = (pack) => {
+  const rawKey = String(pack?.key || pack?.name || '').toLowerCase();
+  if (rawKey.includes('prem')) return { key: 'premium', name: 'Premium', price: '220,000' };
+  if (rawKey.includes('stand') || rawKey.includes('pro')) return { key: 'standard', name: 'Standard', price: '150,000' };
+  return { key: 'essentiel', name: 'Essentiel', price: '90,000' };
+};
+
 export default function AdminSubscription({ session }) {
   const { userId, email, metadata } = useSessionUser(session);
   const profile = useMemo(
@@ -107,13 +114,18 @@ export default function AdminSubscription({ session }) {
                   {activePack?.is_partner && (
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-500/30">
                       <span className="material-symbols-outlined" style={{ fontSize: 15 }}>verified</span>
-                      Partenaire Officiel — Remise Exceptionnelle (90.000 DT / mois HT au lieu de 220 DT)
+                      Partenaire Officiel DeskyWork · Accès Pack Premium
                     </span>
                   )}
                 </div>
-                <h2 className="font-sora font-bold text-2xl text-primary">
-                  Pack {activePack?.key === 'premium' ? 'Premium' : activePack?.name} — {activePack?.key === 'premium' ? '220,000' : Number(activePack?.prix || 0).toFixed(3)} DT <span className="text-sm font-normal text-on-surface-variant">/ mois HT</span>
-                </h2>
+                {(() => {
+                  const currentPack = resolvePackInfo(activePack);
+                  return (
+                    <h2 className="font-sora font-bold text-2xl text-primary">
+                      Pack {currentPack.name} — {currentPack.price} DT <span className="text-sm font-normal text-on-surface-variant">/ mois HT</span>
+                    </h2>
+                  );
+                })()}
               </div>
               <div className="text-right text-xs text-on-surface-variant">
                 <p>Échéance suivante : <strong className="text-primary">{data?.tenant?.prochaine_echeance ? new Date(data.tenant.prochaine_echeance).toLocaleDateString('fr-FR') : 'Mensuelle'}</strong></p>
@@ -163,11 +175,6 @@ export default function AdminSubscription({ session }) {
                         <p className="font-sora font-extrabold text-2xl text-[#f95d00]">
                           {p.key === 'premium' ? '220,000' : p.key === 'standard' ? '150,000' : '90,000'} DT <span className="text-xs font-normal text-on-surface-variant">/ mois HT</span>
                         </p>
-                        {activePack?.is_partner && p.key === 'premium' && (
-                          <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                            Tarif partenaire appliqué : 90,000 DT / mois HT (au lieu de 220,000 DT)
-                          </p>
-                        )}
                       </div>
                       <ul className="space-y-2 mb-5">
                         {(p.features || []).map((f, idx) => (

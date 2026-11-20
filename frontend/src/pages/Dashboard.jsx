@@ -278,27 +278,67 @@ export default function Dashboard({ session }) {
     try {
       setLoading(true);
       setError('');
-      const [{ profile: prof }, { subscription }, { subscriptions }, { reservations }, myFormationsRes, availableFormationsRes] = await Promise.all([
-        memberApi.getMe(),
-        subscriptionApi.getActive(),
-        subscriptionApi.getMine(),
-        bookingApi.getAll(),
-        formationApi.getMesFormations(),
-        formationApi.getAll({ statut: 'planifiee' }),
-      ]);
+      let prof = null;
+      let subscription = null;
+      let subscriptions = [];
+      let reservations = [];
+      let myFormations = [];
+      let availableFormations = [];
+
+      try {
+        const [profRes, subRes, mySubsRes, bkRes, myFRes, avFRes] = await Promise.allSettled([
+          memberApi.getMe(),
+          subscriptionApi.getActive().catch(() => ({ subscription: null })),
+          subscriptionApi.getMine().catch(() => ({ subscriptions: [] })),
+          bookingApi.getAll().catch(() => ({ reservations: [] })),
+          formationApi.getMesFormations().catch(() => ({ inscriptions: [] })),
+          formationApi.getAll({ statut: 'planifiee' }).catch(() => ({ formations: [] })),
+        ]);
+
+        if (profRes.status === 'fulfilled') prof = profRes.value?.profile || profRes.value;
+        if (subRes.status === 'fulfilled' && subRes.value?.subscription?.id) subscription = subRes.value.subscription;
+        if (mySubsRes.status === 'fulfilled') subscriptions = mySubsRes.value?.subscriptions || [];
+        if (bkRes.status === 'fulfilled') reservations = bkRes.value?.reservations || (Array.isArray(bkRes.value) ? bkRes.value : []);
+        if (myFRes.status === 'fulfilled') myFormations = myFRes.value?.inscriptions || [];
+        if (avFRes.status === 'fulfilled') availableFormations = avFRes.value?.formations || [];
+      } catch (_) {}
+
+      // Fallback profil Supabase si l'API a retourné null
+      if (!prof && session?.user?.id) {
+        const { data: dbProf } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        prof = dbProf;
+      }
+
+      // Fallback abonnement actif Supabase (source de vérité vérifiée en base)
+      if (!subscription && session?.user?.id) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const { data: dbSub } = await supabase
+          .from('abonnements')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .eq('statut', 'active')
+          .gte('date_fin', todayStr)
+          .order('date_fin', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        subscription = dbSub || null;
+      }
+
       setProfile(prof);
       setActiveSubscription(subscription);
-      setSubscriptionHistory(subscriptions || []);
-      setBookings(reservations || []);
-      setMyFormations(myFormationsRes.inscriptions || []);
-      setAvailableFormations(availableFormationsRes.formations || []);
-      setForm({
-        nom: prof.nom || '',
-        prenom: prof.prenom || '',
-        telephone: prof.telephone || '',
-        cin: prof.cin || '',
-        type_membre: prof.type_membre || 'individuel',
-      });
+      setSubscriptionHistory(subscriptions);
+      setBookings(reservations);
+      setMyFormations(myFormations);
+      setAvailableFormations(availableFormations);
+      if (prof) {
+        setForm({
+          nom: prof.nom || '',
+          prenom: prof.prenom || '',
+          telephone: prof.telephone || '',
+          cin: prof.cin || '',
+          type_membre: prof.type_membre || 'individuel',
+        });
+      }
 
       try {
         const { session: sess } = await sessionApi.getActive();
@@ -871,7 +911,11 @@ export default function Dashboard({ session }) {
               </div>
               <div className="w-40 h-40 flex items-center justify-center">
                 <QRCodeSVG
-                  value={memberQr?.payload || profile?.email || session?.user?.email || profile?.id || 'member'}
+                  value={
+                    memberQr?.payload ||
+                    memberQr?.qr_token ||
+                    (profile?.qr_token ? JSON.stringify({ user_id: session?.user?.id || profile?.id, qr_token: profile.qr_token }) : (profile?.id ? JSON.stringify({ user_id: profile.id }) : 'deskywork-pass'))
+                  }
                   size={160}
                   bgColor="transparent"
                   fgColor="#000d23"

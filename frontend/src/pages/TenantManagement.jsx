@@ -6,7 +6,7 @@ import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 
-const PLAN_LABELS = { free: 'Free', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
+const PLAN_LABELS = { free: 'Essentiel', starter: 'Essentiel', pro: 'Standard', enterprise: 'Premium', essentiel: 'Essentiel', standard: 'Standard', premium: 'Premium' };
 const TIER_COLORS = { A: 'bg-secondary/10 text-secondary', B: 'bg-[#f95d00]/10 text-[#f95d00]', C: 'bg-surface-container text-on-surface-variant' };
 const STATUT_STYLES = {
   actif: 'bg-[#2fbe8f1a] text-[#2fbe8f]',
@@ -214,8 +214,8 @@ export default function TenantManagement({ session }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: '#44474d', marginBottom: 4, display: 'block' }}>Plan</label>
-                  <select value={form.plan || 'starter'} onChange={(e) => setForm({ ...form, plan: e.target.value })} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid #c5c6ce', fontSize: 14, background: '#f5f3f6', boxSizing: 'border-box' }}>
-                    <option value="free">Free</option><option value="starter">Starter</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option>
+                  <select value={form.plan || 'essentiel'} onChange={(e) => setForm({ ...form, plan: e.target.value })} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid #c5c6ce', fontSize: 14, background: '#f5f3f6', boxSizing: 'border-box' }}>
+                    <option value="essentiel">Essentiel (90 DT HT)</option><option value="standard">Standard (150 DT HT)</option><option value="premium">Premium (220 DT HT)</option>
                   </select>
                 </div>
                 <div>

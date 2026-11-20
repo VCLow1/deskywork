@@ -211,6 +211,21 @@ export default function TenantBilling({ session }) {
     }
   };
 
+  // Action : Suspendre ou Réactiver un établissement
+  const handleToggleTenantStatus = async (tenantId, currentStatus, tenantName) => {
+    const isCurrentlyActive = currentStatus === 'actif';
+    const action = isCurrentlyActive ? 'suspendre' : 'réactiver';
+    if (!confirm(`Confirmez-vous vouloir ${action} l'établissement "${tenantName}" ?`)) return;
+
+    try {
+      const nextStatus = isCurrentlyActive ? 'suspendu' : 'actif';
+      await superAdminApi.updateTenant(tenantId, { statut: nextStatus });
+      await load();
+    } catch (err) {
+      alert(`Erreur lors de la mise à jour de l'établissement : ${err.message}`);
+    }
+  };
+
   // Action : Générer Reçu PDF (fenêtre d'impression propre)
   const handlePrintReceipt = (inv) => {
     const printWindow = window.open('', '_blank');
@@ -411,7 +426,14 @@ export default function TenantBilling({ session }) {
                     </td>
                     <td className="px-5 py-4">
                       <div>
-                        <p className="font-bold text-primary text-sm">{inv.tenant_nom}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-primary text-sm">{inv.tenant_nom}</p>
+                          {tenants.find(t => t.id === inv.tenant_id)?.statut === 'suspendu' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                              Suspendu
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[11px] text-on-surface-variant">{inv.tenant_ville || 'Tunis'}</p>
                       </div>
                     </td>
@@ -481,6 +503,27 @@ export default function TenantBilling({ session }) {
                           <span className="material-symbols-outlined text-[15px] text-[#f95d00]">picture_as_pdf</span>
                           PDF
                         </button>
+                        {tenants.find(t => t.id === inv.tenant_id)?.statut === 'suspendu' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleTenantStatus(inv.tenant_id, 'suspendu', inv.tenant_nom)}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors flex items-center gap-1"
+                            title="Réactiver cet établissement"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">check_circle</span>
+                            Réactiver
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleTenantStatus(inv.tenant_id, 'actif', inv.tenant_nom)}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-rose-300 text-rose-700 hover:bg-rose-50 transition-colors flex items-center gap-1"
+                            title="Suspendre cet établissement"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">block</span>
+                            Suspendre
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
