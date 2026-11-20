@@ -665,6 +665,8 @@ router.get('/public/formations', async (req, res) => {
           id: f.id,
           titre: f.titre,
           description: f.description || null,
+          programme: f.programme || null,
+          formateur_nom: f.formateur_nom || (f.formateur_id ? 'Formateur Certifié' : null),
           date_debut: f.date_debut,
           date_fin: f.date_fin,
           prix_inscription: Number(f.prix_inscription ?? f.prix ?? 0),

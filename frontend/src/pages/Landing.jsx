@@ -163,8 +163,14 @@ function PricingCard({ badge, title, price, period, desc, features, highlighted,
         <h4 style={{ fontFamily: 'Sora,sans-serif', fontWeight: 700, color: highlighted ? '#fbffff' : EC.navy, marginBottom: '.4rem' }}>{title}</h4>
         <p style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginBottom: '1.5rem' }}>{desc}</p>
         <div style={{ marginBottom: '1.5rem' }}>
-          <span style={{ fontSize: '2.6rem', fontWeight: 800, fontFamily: 'Sora,sans-serif', color: highlighted ? '#fbffff' : EC.navy }}>{price}</span>
-          {period && <span style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginLeft: 6 }}>{period}</span>}
+          <span style={{ fontSize: '2.6rem', fontWeight: 800, fontFamily: 'Sora,sans-serif', color: highlighted ? '#fbffff' : EC.navy }}>
+            {String(price || '').replace(/\s*DT\s*/gi, '').trim()} DT
+          </span>
+          {period && (
+            <span style={{ color: highlighted ? '#cfcac3' : EC.muted, fontSize: '.875rem', marginLeft: 6 }}>
+              {String(period).replace(/\s*DT\s*/gi, '').trim()}
+            </span>
+          )}
         </div>
         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1.75rem 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {features.map((f, i) => (
@@ -722,14 +728,24 @@ export default function Landing({ session }) {
   /* Rotation équitable des établissements mis en avant (pack Premium) à chaque chargement de page */
   const rotatedTenants = useMemo(() => {
     if (!tenants || tenants.length === 0) return [];
-    const featured = tenants.filter((t) => t.is_featured);
-    const others = tenants.filter((t) => !t.is_featured);
+    // Filtrer pour éliminer les fiches de test (amira, Société Test SARL, Test & Demo Space)
+    const realTenants = tenants.filter((t) => {
+      const nom = (t.nom || '').toLowerCase();
+      const slug = (t.slug || '').toLowerCase();
+      const id = String(t.id || '').toLowerCase();
+      if (t.statut === 'inactif') return false;
+      if (nom.includes('amira') || slug.includes('amira') || id.includes('4108662f')) return false;
+      if (nom.includes('test') || slug.includes('test') || id.startsWith('d0000000')) return false;
+      return true;
+    });
+    const featured = realTenants.filter((t) => t.is_featured);
+    const others = realTenants.filter((t) => !t.is_featured);
     if (featured.length > 1) {
       const offset = Math.floor(Math.random() * featured.length);
       const shuffledFeatured = [...featured.slice(offset), ...featured.slice(0, offset)];
       return [...shuffledFeatured, ...others];
     }
-    return tenants;
+    return realTenants;
   }, [tenants]);
 
   /* CDC v3.0 — 6 Atouts réels DeskyWork SaaS & Marketplace */
@@ -996,7 +1012,7 @@ export default function Landing({ session }) {
 
         .hero-dock-fields {
           display:grid;
-          grid-template-columns: minmax(180px, 1.4fr) minmax(220px, 1.8fr) minmax(140px, 1.15fr) minmax(110px, 0.9fr) auto auto;
+          grid-template-columns: minmax(220px, 1.5fr) minmax(260px, 1.8fr) minmax(130px, 0.9fr) minmax(110px, 0.8fr) auto auto;
           align-items:center;
           padding:8px 12px;
           gap:6px;
@@ -1792,7 +1808,7 @@ export default function Landing({ session }) {
 
               {/* ── CONTENU DYNAMIQUE SELON L'ONGLET SÉLECTIONNÉ ── */}
               {activeHeroTab === 'espaces' && (
-                <div className="hero-fly hero-fly-3" style={{ maxWidth: 1140, width: '100%' }}>
+                <div className="hero-fly hero-fly-3" style={{ maxWidth: 1240, width: '100%' }}>
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -2565,99 +2581,118 @@ export default function Landing({ session }) {
                 <div key={tenant.id} className="col-lg-4">
                   <div
                     className="space-card cursor-pointer group"
-                    style={{ minHeight: 400, position: 'relative', borderRadius: 24, overflow: 'hidden' }}
+                    style={{
+                      borderRadius: 24,
+                      overflow: 'hidden',
+                      background: '#161412',
+                      border: '1.5px solid rgba(255,255,255,0.1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+                      transition: 'transform .25s ease, box-shadow .25s ease',
+                      height: '100%',
+                    }}
                     onClick={() => navigate(`/coworking/${tenant.id}`)}
                   >
-                    <Link
-                      to={`/coworking/${tenant.id}`}
-                      className="d-block w-100 h-100 cursor-pointer"
-                      title={`Voir la fiche de ${tenant.nom}`}
-                    >
+                    {/* Conteneur Photo (hauteur 220px, badges au dessus) */}
+                    <div style={{ position: 'relative', height: 220, width: '100%', overflow: 'hidden' }}>
                       <img
                         src={tenant.cover_url || tenant.logo_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop'}
                         alt={tenant.nom}
                         loading="lazy"
                         decoding="async"
-                        style={{ cursor: 'pointer', height: '100%', objectFit: 'cover' }}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform .4s ease' }}
+                        className="group-hover:scale-105"
                       />
-                      <div className="space-overlay cursor-pointer" />
-                    </Link>
+                      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(22,20,18,0.7) 100%)' }} />
 
-                    {/* Badge Pack Premium « Mis en avant » (CDC v3.0 D6) */}
-                    {tenant.is_featured && (
-                      <div style={{
-                        position: 'absolute', top: 16, left: 16,
-                        background: 'rgba(16,15,13,0.92)', color: '#ffb599',
-                        border: '1px solid rgba(249,93,0,0.7)',
-                        borderRadius: 10, padding: '6px 12px',
-                        fontSize: '.7rem', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase',
-                        display: 'flex', alignItems: 'center', gap: 5, zIndex: 5,
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                      }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#f95d00' }}>workspace_premium</span>
-                        {t('landing.featuredBadgeTag')}
+                      {/* Badge Pack Premium « Mis en avant » */}
+                      {tenant.is_featured && (
+                        <div style={{
+                          position: 'absolute', top: 14, left: 14,
+                          background: 'rgba(16,15,13,0.92)', color: '#ffb599',
+                          border: '1px solid rgba(249,93,0,0.7)',
+                          borderRadius: 10, padding: '5px 12px',
+                          fontSize: '.7rem', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase',
+                          display: 'flex', alignItems: 'center', gap: 5, zIndex: 5,
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                        }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#f95d00' }}>workspace_premium</span>
+                          {t('landing.featuredBadgeTag')}
+                        </div>
+                      )}
+
+                      {/* Badge PROMO */}
+                      {tenant.has_promo && (
+                        <div style={{
+                          position: 'absolute', top: 14, right: 14,
+                          background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
+                          color: '#fff', borderRadius: 10, padding: '5px 12px',
+                          fontSize: '.7rem', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase',
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          boxShadow: '0 4px 14px rgba(249,93,0,.55)', zIndex: 5,
+                          animation: 'promoPulse 2.4s ease-in-out infinite',
+                        }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>local_offer</span>
+                          {t('landing.promoTag')}
+                          {tenant.promo_count > 1 && (
+                            <span style={{ background: 'rgba(255,255,255,.3)', borderRadius: 6, padding: '1px 6px', fontSize: '.65rem', fontWeight: 700 }}>
+                              ×{tenant.promo_count}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Corps de la carte avec fond solide foncé et contraste élevé */}
+                    <div style={{ padding: '20px 22px', flex: 1, display: 'flex', flexDirection: 'column', background: '#161412' }}>
+                      <div className="d-flex align-items-center justify-content-between mb-2">
+                        <span style={{ backgroundColor: '#f95d00', color: '#ffffff', borderRadius: 8, padding: '4px 12px', fontSize: '.72rem', fontWeight: 800, display: 'inline-block', letterSpacing: '.04em' }}>
+                          {tenant.ville || tenant.pays || 'Tunisie'}
+                        </span>
                       </div>
-                    )}
 
-                    {/* Badge PROMO */}
-                    {tenant.has_promo && (
-                      <div style={{
-                        position: 'absolute', top: 16, right: 16,
-                        background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
-                        color: '#fff', borderRadius: 10, padding: '6px 12px',
-                        fontSize: '.7rem', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase',
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        boxShadow: '0 4px 14px rgba(249,93,0,.55)', zIndex: 5,
-                        animation: 'promoPulse 2.4s ease-in-out infinite',
-                      }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>local_offer</span>
-                        {t('landing.promoTag')}
-                        {tenant.promo_count > 1 && (
-                          <span style={{ background: 'rgba(255,255,255,.3)', borderRadius: 6, padding: '1px 6px', fontSize: '.65rem', fontWeight: 700 }}>
-                            ×{tenant.promo_count}
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="space-body" style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(16,15,13,0.85) 35%, #100f0d 100%)', paddingTop: '3rem' }}>
-                      <span style={{ backgroundColor: '#f95d00', color: '#ffffff', borderRadius: 8, padding: '4px 12px', fontSize: '.72rem', fontWeight: 800, display: 'inline-block', marginBottom: 8, letterSpacing: '.04em' }}>
-                        {tenant.ville || tenant.pays || 'Tunisie'}
-                      </span>
-                      <h3 className="sora fw-bold mb-2" style={{ color: '#ffffff' }}>
+                      <h3 className="sora fw-bold mb-2" style={{ color: '#ffffff', fontSize: '1.25rem', lineHeight: 1.3 }}>
                         <Link to={`/coworking/${tenant.id}`} className="text-decoration-none hover-underline cursor-pointer" style={{ color: '#ffffff' }}>
                           {tenant.nom}
                         </Link>
                       </h3>
-                      <p className="mb-2" style={{ color: '#e6ded7', fontSize: '.88rem', maxWidth: 460, lineHeight: 1.5 }}>
-                        {tenant.description || 'Établissement partenaire DeskyWork.'}
-                      </p>
-                      <div className="d-flex align-items-center gap-3 mb-3" style={{ color: '#cfcac3', fontSize: '.8rem' }}>
-                        {tenant.adresse && (
-                          <span className="d-inline-flex align-items-center gap-1">
-                            <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f95d00' }}>location_on</span>
-                            {tenant.adresse}
-                          </span>
-                        )}
+
+                      <div className="d-flex align-items-center gap-2 mb-2" style={{ color: '#cfcac3', fontSize: '.82rem' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 15, color: '#f95d00', flexShrink: 0 }}>location_on</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {tenant.adresse || 'Tunis, Tunisie'}
+                        </span>
                       </div>
 
-                      <div className="d-flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                      <p className="mb-4" style={{ color: '#a8a29e', fontSize: '.86rem', lineHeight: 1.55, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {tenant.description || 'Établissement partenaire DeskyWork.'}
+                      </p>
+
+                      {/* Boutons d'action à fort contraste */}
+                      <div className="d-flex flex-wrap gap-2 pt-2" style={{ marginTop: 'auto' }} onClick={(e) => e.stopPropagation()}>
                         <Link
                           to={`/coworking/${tenant.id}`}
-                          className="btn d-inline-flex align-items-center gap-2"
-                          style={{ backgroundColor: '#f95d00', color: '#ffffff', borderRadius: 12, padding: '10px 18px', fontWeight: 700, border: 'none', fontSize: '.88rem', transition: 'all .25s', boxShadow: '0 4px 14px rgba(249,93,0,0.35)' }}
+                          className="btn d-inline-flex align-items-center justify-content-center gap-2 flex-1"
+                          style={{
+                            backgroundColor: '#ffffff', color: '#100f0d',
+                            borderRadius: 12, padding: '11px 18px', fontWeight: 800,
+                            border: 'none', fontSize: '.88rem', transition: 'all .2s',
+                            boxShadow: '0 4px 12px rgba(255,255,255,0.15)',
+                          }}
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>visibility</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>visibility</span>
                           {t('landing.viewEstablishment')}
                         </Link>
+
                         {tenant.has_promo ? (
                           <button
                             onClick={() => setPromoTenant(tenant)}
-                            className="btn d-inline-flex align-items-center gap-2"
+                            className="btn d-inline-flex align-items-center justify-content-center gap-2"
                             style={{
                               background: 'linear-gradient(135deg,#f95d00,#ff8a3d)',
                               color: '#ffffff', border: 'none', borderRadius: 12,
-                              padding: '10px 18px', fontWeight: 700, fontSize: '.88rem',
+                              padding: '11px 18px', fontWeight: 800, fontSize: '.88rem',
                               cursor: 'pointer', boxShadow: '0 4px 14px rgba(249,93,0,.4)',
                             }}
                           >
@@ -2667,8 +2702,13 @@ export default function Landing({ session }) {
                         ) : (
                           <Link
                             to={`/coworking/${tenant.id}`}
-                            className="btn d-inline-flex align-items-center gap-2"
-                            style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: '#ffffff', border: '1.5px solid rgba(255,255,255,0.7)', borderRadius: 12, padding: '10px 18px', fontWeight: 700, fontSize: '.88rem' }}
+                            className="btn d-inline-flex align-items-center justify-content-center gap-2 flex-1"
+                            style={{
+                              backgroundColor: '#f95d00', color: '#ffffff',
+                              borderRadius: 12, padding: '11px 18px', fontWeight: 800,
+                              fontSize: '.88rem', border: 'none',
+                              boxShadow: '0 4px 14px rgba(249,93,0,0.35)',
+                            }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>event_available</span>
                             {t('landing.bookEstablishment')}
@@ -3052,7 +3092,7 @@ export default function Landing({ session }) {
                     boxShadow: '0 6px 20px rgba(249,93,0,0.35)', border: 'none',
                   }}
                 >
-                  Créer un compte Entreprise (Gratuit) →
+                  Créer un compte Entreprise →
                 </Link>
                 <a
                   href="#espaces"
@@ -3092,7 +3132,7 @@ export default function Landing({ session }) {
                 <div className="space-y-3">
                   <div className="p-3 rounded-xl" style={{ backgroundColor: dark ? 'rgba(255,255,255,0.04)' : '#f8fafc', border: `1px solid ${EC.outline}` }}>
                     <div className="d-flex justify-content-between align-items-center mb-1">
-                      <span className="fw-bold" style={{ fontSize: '.85rem', color: EC.navy }}>Société Test SARL</span>
+                      <span className="fw-bold" style={{ fontSize: '.85rem', color: EC.navy }}>Tech Solutions SARL</span>
                       <span className="badge bg-orange-100 text-[#f95d00] font-bold text-[10px]">1234567/A/M/000</span>
                     </div>
                     <span className="text-xs text-muted">Interlocuteur : Direction Générale · Facturation centralisée B2B</span>

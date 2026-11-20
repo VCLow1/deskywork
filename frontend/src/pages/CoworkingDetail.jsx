@@ -153,19 +153,25 @@ export default function CoworkingDetail() {
   }
 
   const c = coworking;
+  const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isNero = Boolean(
     c.id === 'nero-coworking' ||
-    (c.slug && c.slug.toLowerCase().includes('nero')) ||
-    (c.nom && c.nom.toLowerCase().includes('nero')) ||
-    (c.subdomain && c.subdomain.toLowerCase().includes('nero'))
+    c.id === 'a1111111-1111-4111-8111-111111111111' ||
+    c.id === '72a4aedb-3355-4ccd-b8bd-832a3472cdec' ||
+    norm(c.slug).includes('nero') ||
+    norm(c.nom).includes('nero') ||
+    norm(c.subdomain).includes('nero')
   );
   const isThirtyThree = Boolean(
     c.id === 'thirty-three-space' ||
-    (c.slug && c.slug.toLowerCase().includes('thirty')) ||
-    (c.nom && c.nom.toLowerCase().includes('thirty'))
+    c.id === 'a3333333-3333-4333-8333-333333333333' ||
+    norm(c.slug).includes('thirty') ||
+    norm(c.nom).includes('thirty')
   );
-  const effectiveLogo = isNero ? PARTNER_NERO_BASE64 : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : (c.logo_url || null));
-  const heroImg = c.cover_url || effectiveLogo || FALLBACK_IMG;
+  const effectiveLogo = isNero
+    ? PARTNER_NERO_BASE64
+    : (isThirtyThree ? PARTNER_THIRTY_THREE_BASE64 : (c.logo_url || null));
+  const heroImg = c.cover_url || (isNero ? 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80' : (effectiveLogo || FALLBACK_IMG));
 
   return (
     <div style={{ minHeight: '100vh', background: EC.bg, color: EC.navy, fontFamily: 'Inter, sans-serif', paddingBottom: 64, transition: 'background .3s ease, color .3s ease' }}>

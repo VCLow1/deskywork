@@ -309,14 +309,14 @@ export default function Login() {
           </h2>
 
           <p style={{ color: 'rgba(251,255,255,0.75)', fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-            Accédez à votre espace en tant que particulier, entreprise, formateur ou gérant d'établissement. Chaque adresse e-mail est liée à un compte et rôle figé.
+            Accédez facilement à votre espace dédié : particulier, entreprise, formateur ou gérant d'établissement coworking.
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
-              { icon: 'lock', text: 'Chiffrement et protection des données' },
-              { icon: 'swap_horiz', text: 'Changement d\'organisation en 1 clic' },
-              { icon: 'bolt', text: 'Accès instantané à la marketplace et aux sessions' },
+              { icon: 'verified_user', text: 'Espace 100% sécurisé et protégé' },
+              { icon: 'apartment', text: 'Réseau de coworking partenaires certifié' },
+              { icon: 'event_available', text: 'Réservations et inscriptions instantanées' },
             ].map(({ icon, text }) => (
               <div key={icon} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span
@@ -340,8 +340,8 @@ export default function Login() {
             <div className="text-xs text-white/60">Accès garanti</div>
           </div>
           <div>
-            <div className="font-sora text-white text-xl font-bold">Espaces dédiés</div>
-            <div className="text-xs text-white/60">Isolation des données</div>
+            <div className="font-sora text-white text-xl font-bold">100% Vérifié</div>
+            <div className="text-xs text-white/60">Réseau partenaires</div>
           </div>
         </div>
       </div>
