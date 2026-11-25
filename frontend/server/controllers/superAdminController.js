@@ -193,7 +193,7 @@ async function onboardTenant(req, res) {
 
   const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
     data: { role: 'admin', tenant_id: tenant.id, nom: nom || tenant.nom, prenom: prenom || 'Admin', telephone: telephone || '' },
-    redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`,
+    redirectTo: `${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/login`,
   });
 
   if (authErr) return res.status(400).json({ error: authErr.message });
@@ -234,7 +234,7 @@ async function getStats(req, res) {
 
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // ── Abonnements VC LOW des coworkings ────────────────────────────────
+    // ── Abonnements DeskyWork des coworkings ────────────────────────────────
     const actifs = (tenants || []).filter((t) => t.statut === 'actif');
     const planBreakdown = {};
     actifs.forEach((t) => {

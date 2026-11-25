@@ -41,12 +41,6 @@ const DEFAULT_TARIFS = [
   { id: 'def-17', type_abonnement: 'bureau_prive', plan_tarifaire: 'entreprise', prix: 1200.00, tva_pct: 19, actif: true },
 ];
 
-const DEFAULT_PROMOS = [
-  { id: 'promo-1', code: 'WELCOME10', type_reduction: 'percent', valeur: 10, actif: true },
-  { id: 'promo-2', code: 'ETUDIANT20', type_reduction: 'percent', valeur: 20, actif: true },
-  { id: 'promo-3', code: '33SPACE50', type_reduction: 'fixed', valeur: 50, actif: true },
-];
-
 async function findActiveTarif(typeAbonnement, planTarifaire, tenantId, typeEspace) {
   const today = todayISO();
   try {
@@ -100,10 +94,9 @@ async function findValidPromoCode(code, tenantId) {
       return data;
     }
   } catch (err) {
-    console.warn('findValidPromoCode fallback due to error:', err.message);
+    console.warn('findValidPromoCode error:', err.message);
   }
-  const promo = DEFAULT_PROMOS.find((p) => p.code === upper && p.actif);
-  return promo || null;
+  return null;
 }
 
 function sanitizeProfileForClient(profile, isStaff) {
@@ -498,5 +491,4 @@ module.exports = {
   FORMATION_ROOM_UNAVAILABLE,
   addDays,
   DEFAULT_TARIFS,
-  DEFAULT_PROMOS,
 };

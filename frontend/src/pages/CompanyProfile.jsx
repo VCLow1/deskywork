@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { supabase } from '../supabaseClient';
-import { memberApi } from '../services/api';
+import { apiFetch } from '../services/api';
 
 export default function CompanyProfile({ session }) {
   const { userId, email, metadata } = useSessionUser(session);
@@ -18,7 +18,7 @@ export default function CompanyProfile({ session }) {
   const [orgId, setOrgId] = useState(null);
   const [formData, setFormData] = useState({
     raison_sociale: '',
-    secteur_activite: 'Services & Technologies',
+    secteur_activite: '',
     matricule_fiscal: '',
     adresse: '',
     ville: 'Tunis',
@@ -49,15 +49,15 @@ export default function CompanyProfile({ session }) {
         if (org) setOrgId(org.id);
 
         setFormData({
-          raison_sociale: org?.nom || 'Société Test SARL',
-          secteur_activite: org?.settings?.secteur_activite || 'Technologies & Conseil',
-          matricule_fiscal: org?.matricule_fiscal || '1234567/A/M/000',
-          adresse: org?.adresse || 'Rue du Lac Biwa, Les Berges du Lac 2',
+          raison_sociale: org?.nom || metadata?.raison_sociale || '',
+          secteur_activite: org?.settings?.secteur_activite || '',
+          matricule_fiscal: org?.matricule_fiscal || metadata?.matricule_fiscal || '',
+          adresse: org?.adresse || '',
           ville: org?.ville || 'Tunis',
           pays: org?.pays || 'Tunisie',
-          contact_nom: prof?.nom || 'Entreprise',
-          contact_prenom: prof?.prenom || 'Test',
-          telephone_pro: prof?.telephone || org?.telephone || '+216 71 123 456',
+          contact_nom: prof?.nom || metadata?.nom || '',
+          contact_prenom: prof?.prenom || metadata?.prenom || '',
+          telephone_pro: prof?.telephone || org?.telephone || '',
           email_pro: prof?.email || email || '',
         });
       } catch (err) {
@@ -76,33 +76,11 @@ export default function CompanyProfile({ session }) {
     setErrorMsg('');
 
     try {
-      // 1. Mettre à jour profiles
-      await supabase
-        .from('profiles')
-        .update({
-          nom: formData.contact_nom,
-          prenom: formData.contact_prenom,
-          telephone: formData.telephone_pro,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId);
-
-      // 2. Mettre à jour l'organisation si elle existe
-      if (orgId) {
-        await supabase
-          .from('organizations')
-          .update({
-            nom: formData.raison_sociale,
-            matricule_fiscal: formData.matricule_fiscal,
-            adresse: formData.adresse,
-            ville: formData.ville,
-            pays: formData.pays,
-            telephone: formData.telephone_pro,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orgId);
-      }
-
+      const res = await apiFetch('/api/members/me/company', {
+        method: 'PUT',
+        body: JSON.stringify(formData),
+      });
+      if (res?.organization?.id) setOrgId(res.organization.id);
       setSuccessMsg('Profil société enregistré avec succès !');
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {

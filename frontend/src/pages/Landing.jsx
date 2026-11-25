@@ -373,13 +373,13 @@ function PromoModal({ tenant, onClose, dark }) {
 
 const STATIC_FALLBACK_TENANTS = [
   {
-    id: 'thirty-three-space',
+    id: 'a3333333-3333-4333-8333-333333333333',
     nom: 'Thirty Three Space',
     slug: 'thirty-three-space',
     ville: 'Tunis',
     adresse: 'Les Berges du Lac 2, Tunis',
     description: 'Espace de coworking moderne, bureaux privatifs et communauté innovante au Lac 2.',
-    cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop',
+    cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?auto=format&fit=crop&w=1600&q=80',
     logo_url: partnerThirtyThree,
     is_featured: true,
     space_count: 6,
@@ -387,38 +387,25 @@ const STATIC_FALLBACK_TENANTS = [
     has_promo: true,
   },
   {
-    id: 'nero-coworking',
-    nom: 'Néro Coworking Space',
+    id: 'a1111111-1111-4111-8111-111111111111',
+    nom: 'Nero Coworking Space',
     slug: 'nero-coworking',
     ville: 'Tunis',
     adresse: 'Avenue Hédi Nouira, Ennasr 2, Tunis',
     description: 'Coworking premium, salles de réunion high-tech et flex office pour créatifs et équipes.',
-    cover_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
+    cover_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80',
     logo_url: partnerNero,
     is_featured: true,
     space_count: 8,
     member_count: 68,
     has_promo: true,
   },
-  {
-    id: 'the-hive-coworking',
-    nom: 'The Hive Coworking Space',
-    slug: 'the-hive-coworking',
-    ville: 'Sousse',
-    adresse: 'Zone Touristique El Kantaoui, Sousse',
-    description: 'Espace stimulant au bord de mer avec postes nomades, formations et réseau d\'entrepreneurs.',
-    cover_url: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&h=600&fit=crop',
-    is_featured: true,
-    space_count: 5,
-    member_count: 35,
-    has_promo: false,
-  },
 ];
 
 const STATIC_FALLBACK_ESPACES = [
   {
     id: 'esp-open-33',
-    tenant_id: 'thirty-three-space',
+    tenant_id: 'a3333333-3333-4333-8333-333333333333',
     nom: 'Poste Nomade (Open Space)',
     type: 'open_space',
     capacite: 30,
@@ -429,18 +416,18 @@ const STATIC_FALLBACK_ESPACES = [
   },
   {
     id: 'esp-bureau-nero',
-    tenant_id: 'nero-coworking',
+    tenant_id: 'a1111111-1111-4111-8111-111111111111',
     nom: 'Bureau Privatif 4 Personnes',
     type: 'private_office',
     capacite: 4,
     tarif_horaire: 22,
     photo_url: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?w=800&h=600&fit=crop',
     equipements: ['Wi-Fi Fibre', 'Climatisation', 'Écran 4K', 'Tableau blanc'],
-    tenants: { nom: 'Néro Coworking Space', ville: 'Tunis' },
+    tenants: { nom: 'Nero Coworking Space', ville: 'Tunis' },
   },
   {
     id: 'esp-reunion-33',
-    tenant_id: 'thirty-three-space',
+    tenant_id: 'a3333333-3333-4333-8333-333333333333',
     nom: 'Salle de Réunion Vision',
     type: 'meeting_room',
     capacite: 10,
@@ -728,16 +715,7 @@ export default function Landing({ session }) {
   /* Rotation équitable des établissements mis en avant (pack Premium) à chaque chargement de page */
   const rotatedTenants = useMemo(() => {
     if (!tenants || tenants.length === 0) return [];
-    // Filtrer pour éliminer les fiches de test (amira, Société Test SARL, Test & Demo Space)
-    const realTenants = tenants.filter((t) => {
-      const nom = (t.nom || '').toLowerCase();
-      const slug = (t.slug || '').toLowerCase();
-      const id = String(t.id || '').toLowerCase();
-      if (t.statut === 'inactif') return false;
-      if (nom.includes('amira') || slug.includes('amira') || id.includes('4108662f')) return false;
-      if (nom.includes('test') || slug.includes('test') || id.startsWith('d0000000')) return false;
-      return true;
-    });
+    const realTenants = tenants.filter((t) => t.statut !== 'inactif');
     const featured = realTenants.filter((t) => t.is_featured);
     const others = realTenants.filter((t) => !t.is_featured);
     if (featured.length > 1) {

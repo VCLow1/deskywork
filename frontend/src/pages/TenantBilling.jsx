@@ -19,6 +19,11 @@ const PLAN_LABELS = {
 
 const MONTHS = ['JAN', 'FÉV', 'MAR', 'AVR', 'MAI', 'JUN'];
 
+function getCurrentMonthLabel() {
+  const raw = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
 export default function TenantBilling({ session }) {
   const navigate = useNavigate();
   const { userId, email, metadata } = useSessionUser(session);
@@ -43,7 +48,7 @@ export default function TenantBilling({ session }) {
   // Formulaire Émettre Facture
   const [emitForm, setEmitForm] = useState({
     tenant_id: '',
-    mois: 'Novembre 2026',
+    mois: getCurrentMonthLabel(),
     montant: 90,
     date_echeance: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
     notes: 'Abonnement SaaS DeskyWork mensuel',
@@ -57,6 +62,11 @@ export default function TenantBilling({ session }) {
     notes: 'Paiement vérifié et encaissé',
   });
 
+  const showNotice = (type, text) => {
+    setNotice({ type, text });
+    setTimeout(() => setNotice(null), 5000);
+  };
+
   const load = useCallback(async () => {
     try {
       const [data, s] = await Promise.all([
@@ -68,40 +78,25 @@ export default function TenantBilling({ session }) {
       setPagination(data?.pagination || { total: 0 });
       if (s) setStats(s);
 
-      // Collecter les factures enregistrées dans les settings de chaque tenant
+      // Collecter les factures réelles enregistrées dans les settings de chaque tenant
+      const todayISO = new Date().toISOString().slice(0, 10);
       const allInvoices = [];
       loadedTenants.forEach((t) => {
         const tenantInvoices = Array.isArray(t.settings?.factures_deskywork) ? t.settings.factures_deskywork : [];
-        if (tenantInvoices.length > 0) {
-          tenantInvoices.forEach((inv) => {
-            allInvoices.push({
-              ...inv,
-              tenant_nom: t.nom,
-              tenant_ville: t.ville,
-              tenant_email: t.email,
-              tenant_id: t.id,
-            });
-          });
-        } else {
-          // Si aucune facture n'est encore générée, créer une facture type pour le mois en cours
-          const isPartner = t.slug === 'nero-coworking' || t.slug === 'thirty-three-space' || t.settings?.partenaire_officiel;
-          const defaultAmount = isPartner ? 90 : (parseFloat(t.montant_mensuel) || 90);
+        tenantInvoices.forEach((inv) => {
+          const computedStatut =
+            inv.statut === 'emise' && inv.date_echeance && inv.date_echeance < todayISO
+              ? 'retard'
+              : inv.statut;
           allInvoices.push({
-            id: `FAC-${t.id.slice(0, 4)}-${new Date().getFullYear()}-11`,
-            numero: `FAC-DW-2026-${t.id.slice(0, 4).toUpperCase()}`,
-            tenant_id: t.id,
+            ...inv,
+            statut: computedStatut,
             tenant_nom: t.nom,
             tenant_ville: t.ville,
             tenant_email: t.email,
-            mois: 'Novembre 2026',
-            montant: defaultAmount,
-            statut: t.statut === 'actif' ? 'payee' : 'retard',
-            mode_paiement: isPartner ? 'Virement bancaire' : 'Espèces',
-            reference_paiement: isPartner ? 'VIR-PARTENAIRE-2026' : null,
-            date_emission: '2026-11-01',
-            date_reglement: t.statut === 'actif' ? '2026-11-05' : null,
+            tenant_id: t.id,
           });
-        }
+        });
       });
       setInvoices(allInvoices);
     } catch (e) {
@@ -133,9 +128,10 @@ export default function TenantBilling({ session }) {
     const targetTenant = tenants.find(t => t.id === emitForm.tenant_id);
     if (!targetTenant) return;
 
+    const year = new Date().getFullYear();
     const newInvoice = {
       id: `FAC-${Date.now()}`,
-      numero: `FAC-DW-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+      numero: `FAC-DW-${year}-${Math.floor(1000 + Math.random() * 9000)}`,
       tenant_id: targetTenant.id,
       tenant_nom: targetTenant.nom,
       tenant_ville: targetTenant.ville,
@@ -152,20 +148,18 @@ export default function TenantBilling({ session }) {
     const updatedFactures = [newInvoice, ...existingFactures];
 
     try {
-      await supabase
-        .from('tenants')
-        .update({
-          settings: {
-            ...(targetTenant.settings || {}),
-            factures_deskywork: updatedFactures,
-          },
-        })
-        .eq('id', targetTenant.id);
+      await superAdminApi.updateTenant(targetTenant.id, {
+        settings: {
+          ...(targetTenant.settings || {}),
+          factures_deskywork: updatedFactures,
+        },
+      });
 
       setShowEmitModal(false);
+      showNotice('success', `Facture ${newInvoice.numero} émise pour ${targetTenant.nom}.`);
       load();
     } catch (err) {
-      alert('Erreur enregistrement facture : ' + err.message);
+      showNotice('error', 'Erreur enregistrement facture : ' + err.message);
     }
   };
 
@@ -183,7 +177,7 @@ export default function TenantBilling({ session }) {
         return {
           ...inv,
           statut: 'payee',
-          mode_paiement: paymentForm.mode === 'virement' ? 'Virement bancaire' : 'Espèces',
+          mode_paiement: paymentForm.mode === 'virement' ? 'Virement bancaire' : paymentForm.mode === 'cheque' ? 'Chèque bancaire' : 'Espèces',
           reference_paiement: paymentForm.reference || 'RECU-MANUEL',
           date_reglement: paymentForm.date_reglement,
         };
@@ -192,22 +186,20 @@ export default function TenantBilling({ session }) {
     });
 
     try {
-      await supabase
-        .from('tenants')
-        .update({
-          statut: 'actif',
-          settings: {
-            ...(targetTenant.settings || {}),
-            factures_deskywork: updatedFactures,
-          },
-        })
-        .eq('id', targetTenant.id);
+      await superAdminApi.updateTenant(targetTenant.id, {
+        statut: 'actif',
+        settings: {
+          ...(targetTenant.settings || {}),
+          factures_deskywork: updatedFactures,
+        },
+      });
 
       setShowPaymentModal(false);
       setSelectedInvoice(null);
+      showNotice('success', `Règlement enregistré pour la facture ${selectedInvoice.numero}.`);
       load();
     } catch (err) {
-      alert('Erreur enregistrement règlement : ' + err.message);
+      showNotice('error', 'Erreur enregistrement règlement : ' + err.message);
     }
   };
 
@@ -220,9 +212,10 @@ export default function TenantBilling({ session }) {
     try {
       const nextStatus = isCurrentlyActive ? 'suspendu' : 'actif';
       await superAdminApi.updateTenant(tenantId, { statut: nextStatus });
+      showNotice('success', `Établissement "${tenantName}" mis à jour (${nextStatus}).`);
       await load();
     } catch (err) {
-      alert(`Erreur lors de la mise à jour de l'établissement : ${err.message}`);
+      showNotice('error', `Erreur lors de la mise à jour de l'établissement : ${err.message}`);
     }
   };
 
@@ -316,13 +309,38 @@ export default function TenantBilling({ session }) {
     return invoices.filter(i => i.statut === activeFilter);
   }, [invoices, activeFilter]);
 
-  const barData = [32000, 35500, 38200, 41000, 43800, mrr || 45200];
-  const maxBar = Math.max(...barData);
+  const barData = useMemo(() => {
+    const growth = Array.isArray(stats?.monthlyGrowth) ? stats.monthlyGrowth : [];
+    if (growth.length >= 6) {
+      return growth.slice(-6).map((g) => Number(g.mrr ?? g.ca ?? g.value ?? 0));
+    }
+    return [0, 0, 0, 0, 0, mrr || 0];
+  }, [stats, mrr]);
 
   if (!profile) return null;
 
   return (
     <PortalLayout profile={profile} onLogout={handleLogout}>
+      {notice && (
+        <div
+          className={`mb-4 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-3 border ${
+            notice.type === 'error'
+              ? 'bg-rose-50 text-rose-800 border-rose-200'
+              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px]">
+              {notice.type === 'error' ? 'error' : 'check_circle'}
+            </span>
+            {notice.text}
+          </span>
+          <button type="button" onClick={() => setNotice(null)} className="opacity-70 hover:opacity-100">
+            <span className="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+      )}
+
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-sora text-xl sm:text-2xl font-bold text-primary">Facturation & Abonnements Coworkings</h1>
@@ -333,7 +351,7 @@ export default function TenantBilling({ session }) {
             onClick={() => {
               setEmitForm({
                 tenant_id: tenants[0]?.id || '',
-                mois: 'Novembre 2026',
+                mois: getCurrentMonthLabel(),
                 montant: 90,
                 date_echeance: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
                 notes: 'Abonnement mensuel DeskyWork',
@@ -351,7 +369,7 @@ export default function TenantBilling({ session }) {
       {/* Cartes KPI */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
         {[
-          { label: 'MRR Total Actif', value: `${mrr.toLocaleString('fr-TN')} DT`, icon: 'payments', color: '#f95d00', sub: 'Chiffre récurrent mensuel' },
+          { label: 'MRR Total Actif', value: formatDT(mrr), icon: 'payments', color: '#f95d00', sub: 'Chiffre récurrent mensuel' },
           { label: 'Coworkings Actifs', value: stats?.activeTenants ?? tenants.length, icon: 'domain', color: '#f95d00', sub: `${tenants.filter(t => t.statut === 'suspendu').length} suspendus` },
           { label: 'Factures Émises', value: invoices.filter(i => i.statut === 'emise').length, icon: 'pending_actions', color: '#3b82f6', sub: 'En attente de paiement' },
           { label: 'Factures En Retard', value: invoices.filter(i => i.statut === 'retard').length, icon: 'warning', color: '#ba1a1a', sub: 'Relance requise' },

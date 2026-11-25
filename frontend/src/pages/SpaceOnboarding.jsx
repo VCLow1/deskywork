@@ -100,7 +100,7 @@ export default function SpaceOnboarding() {
                 Statut : En cours de validation (Brouillon)
               </div>
               <p>
-                Vous avez accès immédiat à votre tableau de bord administrateur pour configurer vos salles, bureaux et tarifs. L'espace apparaîtra sur la marketplace dès sa validation par VClow.
+                Vous avez accès immédiat à votre tableau de bord administrateur pour configurer vos salles, bureaux et tarifs. L'espace apparaîtra sur la marketplace dès sa validation par DeskyWork.
               </p>
             </div>
 

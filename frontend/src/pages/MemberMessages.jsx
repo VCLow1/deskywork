@@ -164,7 +164,7 @@ export default function MemberMessages({ session }) {
         const createRes = await fetch(`${SOCKET_URL}/api/conversations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ title: 'Support 33S', type: 'support' }),
+          body: JSON.stringify({ title: 'Support DeskyWork', type: 'support' }),
         });
         const createData = await createRes.json();
         if (createData.conversation) {
@@ -202,7 +202,7 @@ export default function MemberMessages({ session }) {
         const createRes = await fetch(`${SOCKET_URL}/api/conversations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ title: 'Support 33S', type: 'support' }),
+          body: JSON.stringify({ title: 'Support DeskyWork', type: 'support' }),
         });
         const createData = await createRes.json();
         if (createData.conversation) {

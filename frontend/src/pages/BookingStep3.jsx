@@ -63,10 +63,10 @@ export default function BookingStep3({ session }) {
 
         setEntrepriseInfo((prev) => ({
           ...prev,
-          raison_sociale: prev.raison_sociale || orgData?.nom || 'Société Test SARL',
-          matricule_fiscal: prev.matricule_fiscal || orgData?.matricule_fiscal || '1234567/A/M/000',
+          raison_sociale: prev.raison_sociale || orgData?.nom || prof.raison_sociale || '',
+          matricule_fiscal: prev.matricule_fiscal || orgData?.matricule_fiscal || prof.matricule_fiscal || '',
           contact_nom: prev.contact_nom || `${prof.prenom || ''} ${prof.nom || ''}`.trim(),
-          telephone_pro: prev.telephone_pro || prof.telephone || orgData?.telephone || '+216 71 123 456',
+          telephone_pro: prev.telephone_pro || prof.telephone || orgData?.telephone || '',
           email_facturation: prev.email_facturation || prof.email || '',
           nb_personnes: prev.nb_personnes || 1,
         }));

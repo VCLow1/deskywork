@@ -1,7 +1,7 @@
-// middleware/requireSuperAdmin.js — Guard super admin VCLOW
+// middleware/requireSuperAdmin.js — Guard super admin DeskyWork
 function requireSuperAdmin(req, res, next) {
   if (req.profile.role !== 'super_admin') {
-    return res.status(403).json({ error: 'Réservé au Super Admin (VCLOW).' });
+    return res.status(403).json({ error: 'Réservé au Super Admin DeskyWork.' });
   }
   next();
 }

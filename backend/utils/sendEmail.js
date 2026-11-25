@@ -302,7 +302,7 @@ function buildReceiptEmailHTML(payment, config) {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr>
                 <td align="center">
-                  <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard"
+                  <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard"
                      style="display:inline-block;background:${SECONDARY};color:${WHITE};text-decoration:none;padding:14px 32px;border-radius:10px;font-size:14px;font-weight:700;">
                     Accéder à mon portail
                   </a>
@@ -321,7 +321,7 @@ function buildReceiptEmailHTML(payment, config) {
         <tr>
           <td style="background:${PRIMARY};padding:20px 40px;text-align:center;">
             <p style="margin:0;color:#C7D2FE;font-size:11px;">
-              ${config.coworkingName} · Propulsé par <strong style="color:${WHITE};">VC LOW</strong> · contact@vclow.tn
+              ${config.coworkingName} · Propulsé par <strong style="color:${WHITE};">DeskyWork</strong> · contact@deskywork.tn
             </p>
             <p style="margin:6px 0 0;color:#6B7280;font-size:10px;">
               Cet email est généré automatiquement, merci de ne pas y répondre directement.
@@ -429,7 +429,7 @@ function buildReminderEmailHTML(payment, joursRetard, config) {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr>
                 <td align="center">
-                  <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard"
+                  <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard"
                      style="display:inline-block;background:${urgenceColor};color:${WHITE};text-decoration:none;padding:14px 32px;border-radius:10px;font-size:14px;font-weight:700;">
                     Régulariser mon paiement
                   </a>
@@ -448,7 +448,7 @@ function buildReminderEmailHTML(payment, joursRetard, config) {
         <tr>
           <td style="background:${PRIMARY};padding:18px 40px;text-align:center;">
             <p style="margin:0;color:#C7D2FE;font-size:11px;">
-              ${config.coworkingName} · Propulsé par <strong style="color:${WHITE};">VC LOW</strong>
+              ${config.coworkingName} · Propulsé par <strong style="color:${WHITE};">DeskyWork</strong>
             </p>
           </td>
         </tr>

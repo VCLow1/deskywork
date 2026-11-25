@@ -69,6 +69,180 @@ async function updateMe(req, res) {
   }
 }
 
+async function updateMyCompany(req, res) {
+  try {
+    const {
+      raison_sociale,
+      secteur_activite,
+      matricule_fiscal,
+      adresse,
+      ville,
+      pays,
+      contact_nom,
+      contact_prenom,
+      telephone_pro,
+    } = req.body || {};
+
+    if (
+      !String(raison_sociale || '').trim() ||
+      !String(matricule_fiscal || '').trim() ||
+      !String(adresse || '').trim() ||
+      !String(contact_nom || '').trim() ||
+      !String(contact_prenom || '').trim() ||
+      !String(telephone_pro || '').trim()
+    ) {
+      return res.status(400).json({
+        error: 'Raison sociale, matricule fiscal, adresse, interlocuteur et téléphone professionnel sont obligatoires.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const cleanRaison = String(raison_sociale).trim();
+    const cleanMF = String(matricule_fiscal).trim();
+    const cleanAdresse = String(adresse).trim();
+    const cleanVille = String(ville || 'Tunis').trim();
+    const cleanPays = String(pays || 'Tunisie').trim();
+    const cleanNom = String(contact_nom).trim();
+    const cleanPrenom = String(contact_prenom).trim();
+    const cleanTel = String(telephone_pro).trim();
+    const cleanSecteur = String(secteur_activite || '').trim();
+
+    const { data: updatedProfile, error: profErr } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        nom: cleanNom,
+        prenom: cleanPrenom,
+        telephone: cleanTel,
+        updated_at: now,
+      })
+      .eq('id', req.user.id)
+      .select()
+      .single();
+
+    if (profErr) return res.status(400).json({ error: profErr.message });
+
+    // Rechercher l'organisation entreprise existante
+    const { data: mems } = await supabaseAdmin
+      .from('memberships')
+      .select('id, organization_id, organizations(*)')
+      .eq('user_id', req.user.id);
+
+    let existingOrg = mems?.[0]?.organizations || null;
+    if (!existingOrg && updatedProfile?.tenant_id) {
+      const { data: byTenant } = await supabaseAdmin
+        .from('organizations')
+        .select('*')
+        .eq('id', updatedProfile.tenant_id)
+        .maybeSingle();
+      existingOrg = byTenant || null;
+    }
+
+    let organization = null;
+    if (existingOrg) {
+      const mergedSettings = {
+        ...(existingOrg.settings || {}),
+        secteur_activite: cleanSecteur,
+      };
+      const { data: upOrg, error: orgErr } = await supabaseAdmin
+        .from('organizations')
+        .update({
+          nom: cleanRaison,
+          matricule_fiscal: cleanMF,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          settings: mergedSettings,
+          updated_at: now,
+        })
+        .eq('id', existingOrg.id)
+        .select()
+        .single();
+      if (orgErr) return res.status(400).json({ error: orgErr.message });
+      organization = upOrg;
+
+      // Synchroniser l'entrée miroir dans tenants si elle existe
+      await supabaseAdmin
+        .from('tenants')
+        .update({
+          nom: cleanRaison,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          updated_at: now,
+        })
+        .eq('id', existingOrg.id);
+    } else {
+      const slugBase = cleanRaison
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 42) || 'entreprise';
+      const slug = `${slugBase}-${String(req.user.id).replace(/-/g, '').slice(0, 6)}`;
+
+      const { data: newOrg, error: newOrgErr } = await supabaseAdmin
+        .from('organizations')
+        .insert({
+          type: 'entreprise',
+          nom: cleanRaison,
+          slug,
+          matricule_fiscal: cleanMF,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          email: updatedProfile.email,
+          statut: 'valide',
+          owner_id: req.user.id,
+          settings: { secteur_activite: cleanSecteur },
+        })
+        .select()
+        .single();
+      if (newOrgErr) return res.status(400).json({ error: newOrgErr.message });
+      organization = newOrg;
+
+      await supabaseAdmin
+        .from('memberships')
+        .insert({
+          user_id: req.user.id,
+          organization_id: newOrg.id,
+          role: 'proprietaire',
+          statut: 'actif',
+        });
+
+      await supabaseAdmin
+        .from('profiles')
+        .update({ tenant_id: newOrg.id, updated_at: now })
+        .eq('id', req.user.id);
+    }
+
+    // Mettre à jour user_metadata Auth pour cohérence session
+    try {
+      const existingMeta = req.user?.user_metadata || {};
+      await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+        user_metadata: {
+          ...existingMeta,
+          nom: cleanNom,
+          prenom: cleanPrenom,
+          raison_sociale: cleanRaison,
+          matricule_fiscal: cleanMF,
+        },
+      });
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      organization,
+      profile: sanitizeProfileForClient(updatedProfile, false),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function addDocument(req, res) {
   try {
     const { name, url, type } = req.body;
@@ -120,6 +294,180 @@ async function deleteDocument(req, res) {
 
     if (error) return res.status(400).json({ error: error.message });
     res.json({ profile: sanitizeProfileForClient(data, false) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function updateMyCompany(req, res) {
+  try {
+    const {
+      raison_sociale,
+      secteur_activite,
+      matricule_fiscal,
+      adresse,
+      ville,
+      pays,
+      contact_nom,
+      contact_prenom,
+      telephone_pro,
+    } = req.body || {};
+
+    if (
+      !String(raison_sociale || '').trim() ||
+      !String(matricule_fiscal || '').trim() ||
+      !String(adresse || '').trim() ||
+      !String(contact_nom || '').trim() ||
+      !String(contact_prenom || '').trim() ||
+      !String(telephone_pro || '').trim()
+    ) {
+      return res.status(400).json({
+        error: 'Raison sociale, matricule fiscal, adresse, interlocuteur et téléphone professionnel sont obligatoires.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const cleanRaison = String(raison_sociale).trim();
+    const cleanMF = String(matricule_fiscal).trim();
+    const cleanAdresse = String(adresse).trim();
+    const cleanVille = String(ville || 'Tunis').trim();
+    const cleanPays = String(pays || 'Tunisie').trim();
+    const cleanNom = String(contact_nom).trim();
+    const cleanPrenom = String(contact_prenom).trim();
+    const cleanTel = String(telephone_pro).trim();
+    const cleanSecteur = String(secteur_activite || '').trim();
+
+    const { data: updatedProfile, error: profErr } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        nom: cleanNom,
+        prenom: cleanPrenom,
+        telephone: cleanTel,
+        updated_at: now,
+      })
+      .eq('id', req.user.id)
+      .select()
+      .single();
+
+    if (profErr) return res.status(400).json({ error: profErr.message });
+
+    // Rechercher l'organisation entreprise existante
+    const { data: mems } = await supabaseAdmin
+      .from('memberships')
+      .select('id, organization_id, organizations(*)')
+      .eq('user_id', req.user.id);
+
+    let existingOrg = mems?.[0]?.organizations || null;
+    if (!existingOrg && updatedProfile?.tenant_id) {
+      const { data: byTenant } = await supabaseAdmin
+        .from('organizations')
+        .select('*')
+        .eq('id', updatedProfile.tenant_id)
+        .maybeSingle();
+      existingOrg = byTenant || null;
+    }
+
+    let organization = null;
+    if (existingOrg) {
+      const mergedSettings = {
+        ...(existingOrg.settings || {}),
+        secteur_activite: cleanSecteur,
+      };
+      const { data: upOrg, error: orgErr } = await supabaseAdmin
+        .from('organizations')
+        .update({
+          nom: cleanRaison,
+          matricule_fiscal: cleanMF,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          settings: mergedSettings,
+          updated_at: now,
+        })
+        .eq('id', existingOrg.id)
+        .select()
+        .single();
+      if (orgErr) return res.status(400).json({ error: orgErr.message });
+      organization = upOrg;
+
+      // Synchroniser l'entrée miroir dans tenants si elle existe
+      await supabaseAdmin
+        .from('tenants')
+        .update({
+          nom: cleanRaison,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          updated_at: now,
+        })
+        .eq('id', existingOrg.id);
+    } else {
+      const slugBase = cleanRaison
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 42) || 'entreprise';
+      const slug = `${slugBase}-${String(req.user.id).replace(/-/g, '').slice(0, 6)}`;
+
+      const { data: newOrg, error: newOrgErr } = await supabaseAdmin
+        .from('organizations')
+        .insert({
+          type: 'entreprise',
+          nom: cleanRaison,
+          slug,
+          matricule_fiscal: cleanMF,
+          adresse: cleanAdresse,
+          ville: cleanVille,
+          pays: cleanPays,
+          telephone: cleanTel,
+          email: updatedProfile.email,
+          statut: 'valide',
+          owner_id: req.user.id,
+          settings: { secteur_activite: cleanSecteur },
+        })
+        .select()
+        .single();
+      if (newOrgErr) return res.status(400).json({ error: newOrgErr.message });
+      organization = newOrg;
+
+      await supabaseAdmin
+        .from('memberships')
+        .insert({
+          user_id: req.user.id,
+          organization_id: newOrg.id,
+          role: 'proprietaire',
+          statut: 'actif',
+        });
+
+      await supabaseAdmin
+        .from('profiles')
+        .update({ tenant_id: newOrg.id, updated_at: now })
+        .eq('id', req.user.id);
+    }
+
+    // Mettre à jour user_metadata Auth pour cohérence session
+    try {
+      const existingMeta = req.user?.user_metadata || {};
+      await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+        user_metadata: {
+          ...existingMeta,
+          nom: cleanNom,
+          prenom: cleanPrenom,
+          raison_sociale: cleanRaison,
+          matricule_fiscal: cleanMF,
+        },
+      });
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      organization,
+      profile: sanitizeProfileForClient(updatedProfile, false),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -347,6 +695,7 @@ async function testNotification(req, res) {
 module.exports = {
   getMe,
   updateMe,
+  updateMyCompany,
   addDocument,
   deleteDocument,
   getMyQr,

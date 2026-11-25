@@ -117,7 +117,7 @@ async function createConversation(req, res) {
 
     const { data: conv, error } = await supabaseAdmin
       .from('conversations')
-      .insert({ title: title || 'Support 33S', type, created_by: req.user.id, tenant_id: req.tenantId })
+      .insert({ title: title || 'Support DeskyWork', type, created_by: req.user.id, tenant_id: req.tenantId })
       .select()
       .single();
 

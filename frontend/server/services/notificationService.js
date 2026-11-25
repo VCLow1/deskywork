@@ -61,7 +61,7 @@ function getCoworkingConfig() {
     coworkingEmail:   process.env.COWORKING_EMAIL || 'contact@deskywork.tn',
     coworkingTel:     process.env.COWORKING_TEL   || '+216 52 882 880 / +216 52 882 930',
     coworkingAdresse: process.env.COWORKING_ADRESSE || 'Tunis, Tunisie',
-    frontendUrl:      process.env.FRONTEND_URL    || 'http://localhost:5173',
+    frontendUrl:      process.env.FRONTEND_URL    || 'https://deskywork-jet.vercel.app',
   };
 }
 

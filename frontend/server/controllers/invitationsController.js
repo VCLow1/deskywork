@@ -79,7 +79,7 @@ async function createInvitation(req, res) {
     if (invErr) return res.status(400).json({ error: invErr.message });
 
     // 5. Envoyer l'email d'invitation avec lien unique
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
     const inviteLink = `${frontendUrl}/invite/${token}`;
     const appName = process.env.COWORKING_NAME || 'DeskyWork';
     const roleLabels = {

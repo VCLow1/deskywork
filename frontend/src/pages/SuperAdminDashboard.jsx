@@ -236,12 +236,12 @@ export default function SuperAdminDashboard({ session }) {
   const planSummary = Object.entries(planCounts)
     .filter(([_, count]) => count > 0)
     .map(([plan, count]) => `${plan} (${count})`)
-    .join(' · ') || 'Essentiel (2) · Premium (1)';
+    .join(' · ') || 'Aucun établissement actif';
 
   // ── Activité récente : audit log + arrivées de coworkings ────────────────
   const activityFeed = [];
   (auditLogs || []).forEach((log) => {
-    const who = log.profiles ? `${log.profiles.prenom || ''} ${log.profiles.nom || ''}`.trim() : 'VC LOW';
+    const who = log.profiles ? `${log.profiles.prenom || ''} ${log.profiles.nom || ''}`.trim() : 'DeskyWork';
     const meta = ACTION_META[log.action] || { icon: 'event', label: `a réalisé l'action "${log.action}"` };
     activityFeed.push({
       id: log.id,

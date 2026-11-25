@@ -182,8 +182,8 @@ export default function CompanyDashboard({ session }) {
   const totalHistoryCount = bookings.length;
   const totalSpent = payments.filter((p) => p.statut === 'paid').reduce((acc, p) => acc + (parseFloat(p.montant) || 0), 0);
 
-  const raisonSociale = companyOrg?.nom || metadata?.raison_sociale || 'Société Test SARL';
-  const matricule = companyOrg?.matricule_fiscal || metadata?.matricule_fiscal || '1234567/A/M/000';
+  const raisonSociale = companyOrg?.nom || metadata?.raison_sociale || `${profile?.prenom || ''} ${profile?.nom || ''}`.trim() || 'Mon Entreprise';
+  const matricule = companyOrg?.matricule_fiscal || metadata?.matricule_fiscal || 'Non renseigné';
 
   return (
     <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>

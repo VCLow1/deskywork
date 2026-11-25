@@ -46,7 +46,7 @@ const LEGAL_CONTENT = {
       },
       {
         h: '4. Droits d’accès et de suppression (RGPD)',
-        p: 'Tout utilisateur connecté peut exporter ses données ou demander la suppression de son compte directement depuis son portail (/dashboard/rgpd) ou par e-mail à contact@vclow.com.',
+        p: 'Tout utilisateur connecté peut exporter ses données ou demander la suppression de son compte directement depuis son portail (/dashboard/rgpd) ou par e-mail à contact@deskywork.tn.',
       },
     ],
   },

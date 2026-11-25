@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { supabase } from '../supabaseClient';
+import { apiFetch, guestApi } from '../services/api';
 import { formatDT } from '../utils/currency';
 
-const OFFERS = [
+const BASE_OFFERS = [
   {
     id: 'dom-nero',
     partnerName: 'Nero Coworking Space',
@@ -29,7 +30,7 @@ const OFFERS = [
     partnerName: 'Thirty Three Space',
     partnerSlug: 'thirty-three-space',
     partnerId: 'a3333333-3333-4333-8333-333333333333',
-    address: 'Rue du Lac Biwa, Les Berges du Lac 2, Tunis',
+    address: 'Les Berges du Lac 2, Tunis',
     packName: 'Pack Domiciliation Prestige Lac 2',
     price: 85,
     features: [
@@ -39,8 +40,8 @@ const OFFERS = [
       'Gestion et réexpédition de courriers recommandés',
       'Tarifs préférentiels sur la location de bureaux privatifs et salles VIP',
     ],
-    email: 'contact@thirtythreespace.tn',
-    phone: '+216 71 333 444',
+    email: 'contact@thirtythreespace.com',
+    phone: '+216 71 999 333',
     badge: 'Standing Prestige',
   },
 ];
@@ -51,18 +52,123 @@ export default function CompanyDomiciliation({ session }) {
     ? { id: userId, email, role: 'company', type_membre: 'entreprise', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata }
     : null;
 
+  const [offers, setOffers] = useState(BASE_OFFERS);
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [requestSent, setRequestSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [formState, setFormState] = useState({
+    raison_sociale: metadata?.raison_sociale || '',
+    matricule_fiscal: metadata?.matricule_fiscal || '',
+    telephone_pro: metadata?.telephone || '',
+    date_souhaitee: new Date().toISOString().slice(0, 10),
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLiveContext() {
+      // 1. Charger les données réelles société/profil de l'utilisateur connecté
+      if (userId) {
+        try {
+          const [{ data: prof }, { data: mems }] = await Promise.all([
+            supabase.from('profiles').select('telephone').eq('id', userId).maybeSingle(),
+            supabase.from('memberships').select('organizations(nom, matricule_fiscal, telephone)').eq('user_id', userId),
+          ]);
+          const org = mems?.[0]?.organizations || null;
+          if (!cancelled) {
+            setFormState((prev) => ({
+              ...prev,
+              raison_sociale: prev.raison_sociale || org?.nom || '',
+              matricule_fiscal: prev.matricule_fiscal || org?.matricule_fiscal || '',
+              telephone_pro: prev.telephone_pro || prof?.telephone || org?.telephone || '',
+            }));
+          }
+        } catch (_) {}
+      }
+
+      // 2. Enrichir les offres avec les établissements actifs issus de l'API publique
+      try {
+        const res = await guestApi.getCoworkings();
+        const list = res?.coworkings || [];
+        if (!cancelled && list.length > 0) {
+          setOffers((prevOffers) => {
+            const updated = prevOffers.map((base) => {
+              const live = list.find(
+                (t) => t.id === base.partnerId || t.slug === base.partnerSlug
+              );
+              if (!live) return base;
+              return {
+                ...base,
+                partnerId: live.id,
+                partnerName: live.nom || base.partnerName,
+                address: live.adresse || base.address,
+                email: live.email || base.email,
+                phone: live.telephone || base.phone,
+                price: live.domiciliation?.tarif_mensuel ?? base.price,
+                packName: live.domiciliation?.titre || base.packName,
+              };
+            });
+
+            // Ajouter tout autre établissement actif ayant activé la domiciliation en base
+            list.forEach((t) => {
+              if (!t.has_domiciliation || !t.domiciliation) return;
+              const already = updated.some((o) => o.partnerId === t.id || o.partnerSlug === t.slug);
+              if (!already) {
+                updated.push({
+                  id: `dom-${t.id}`,
+                  partnerName: t.nom,
+                  partnerSlug: t.slug,
+                  partnerId: t.id,
+                  address: [t.adresse, t.ville].filter(Boolean).join(', '),
+                  packName: t.domiciliation.titre || 'Offre de Domiciliation Entreprise',
+                  price: Number(t.domiciliation.tarif_mensuel || 80),
+                  features: Array.isArray(t.domiciliation.avantages) && t.domiciliation.avantages.length > 0
+                    ? t.domiciliation.avantages
+                    : [
+                        'Adresse commerciale et fiscale officielle',
+                        'Réception et gestion du courrier professionnel',
+                        'Accès préférentiel aux salles de réunion',
+                      ],
+                  email: t.email || 'contact@deskywork.tn',
+                  phone: t.telephone || '',
+                  badge: t.ville || 'Partenaire',
+                });
+              }
+            });
+            return updated;
+          });
+        }
+      } catch (_) {}
+    }
+    loadLiveContext();
+    return () => { cancelled = true; };
+  }, [userId]);
 
   const handleRequest = async (e) => {
     e.preventDefault();
+    if (!selectedOffer) return;
     setSubmitting(true);
-    // Simuler l'envoi de la demande de domiciliation au partenaire
-    setTimeout(() => {
-      setSubmitting(false);
+    setErrorMsg('');
+    try {
+      await apiFetch('/api/domiciliation/request', {
+        method: 'POST',
+        body: JSON.stringify({
+          partner_id: selectedOffer.partnerId,
+          partner_name: selectedOffer.partnerName,
+          pack_name: selectedOffer.packName,
+          price: selectedOffer.price,
+          raison_sociale: formState.raison_sociale,
+          matricule_fiscal: formState.matricule_fiscal,
+          telephone_pro: formState.telephone_pro,
+          date_souhaitee: formState.date_souhaitee,
+        }),
+      });
       setRequestSent(true);
-    }, 600);
+    } catch (err) {
+      setErrorMsg(err.message || 'Impossible de transmettre votre demande de domiciliation.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -82,7 +188,7 @@ export default function CompanyDomiciliation({ session }) {
 
         {/* Grille des offres partenaires */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {OFFERS.map((off) => (
+          {offers.map((off) => (
             <div
               key={off.id}
               className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs flex flex-col justify-between hover:border-[#f95d00]/40 transition-all group"
@@ -125,14 +231,15 @@ export default function CompanyDomiciliation({ session }) {
               </div>
 
               <div className="pt-4 border-t border-slate-100 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedOffer(off);
-                    setRequestSent(false);
-                  }}
-                  className="flex-1 py-3 px-4 rounded-xl bg-[#f95d00] hover:bg-[#e05300] text-white font-bold text-xs text-center shadow-md shadow-orange-500/15 transition-all"
-                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedOffer(off);
+                      setRequestSent(false);
+                      setErrorMsg('');
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl bg-[#f95d00] hover:bg-[#e05300] text-white font-bold text-xs text-center shadow-md shadow-orange-500/15 transition-all"
+                  >
                   Souscrire / Demander un devis
                 </button>
                 <a
@@ -188,12 +295,20 @@ export default function CompanyDomiciliation({ session }) {
                     <p className="text-xs text-slate-500">{selectedOffer.packName} · {formatDT(selectedOffer.price)} HT / mois</p>
                   </div>
 
+                  {errorMsg && (
+                    <div className="p-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold">
+                      {errorMsg}
+                    </div>
+                  )}
+
                   <div className="space-y-3 text-xs">
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Raison sociale</label>
                       <input
                         type="text"
-                        defaultValue="Société Test SARL"
+                        value={formState.raison_sociale}
+                        onChange={(e) => setFormState((p) => ({ ...p, raison_sociale: e.target.value }))}
+                        placeholder="Nom de votre société"
                         required
                         className="w-full px-3.5 py-2 rounded-xl border border-slate-200"
                       />
@@ -202,7 +317,9 @@ export default function CompanyDomiciliation({ session }) {
                       <label className="block font-bold text-slate-700 mb-1">Matricule fiscal / TVA</label>
                       <input
                         type="text"
-                        defaultValue="1234567/A/M/000"
+                        value={formState.matricule_fiscal}
+                        onChange={(e) => setFormState((p) => ({ ...p, matricule_fiscal: e.target.value }))}
+                        placeholder="Ex: 1234567/A/M/000"
                         required
                         className="w-full px-3.5 py-2 rounded-xl border border-slate-200 font-mono"
                       />
@@ -212,7 +329,9 @@ export default function CompanyDomiciliation({ session }) {
                         <label className="block font-bold text-slate-700 mb-1">Téléphone pro</label>
                         <input
                           type="tel"
-                          defaultValue="+216 71 123 456"
+                          value={formState.telephone_pro}
+                          onChange={(e) => setFormState((p) => ({ ...p, telephone_pro: e.target.value }))}
+                          placeholder="+216 XX XXX XXX"
                           required
                           className="w-full px-3.5 py-2 rounded-xl border border-slate-200"
                         />
@@ -221,7 +340,8 @@ export default function CompanyDomiciliation({ session }) {
                         <label className="block font-bold text-slate-700 mb-1">Date souhaitée</label>
                         <input
                           type="date"
-                          defaultValue={new Date().toISOString().slice(0, 10)}
+                          value={formState.date_souhaitee}
+                          onChange={(e) => setFormState((p) => ({ ...p, date_souhaitee: e.target.value }))}
                           required
                           className="w-full px-3.5 py-2 rounded-xl border border-slate-200"
                         />

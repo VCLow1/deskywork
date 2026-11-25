@@ -1,4 +1,4 @@
-// routes/superAdmin.routes.js — Routes Super Admin VCLOW
+// routes/superAdmin.routes.js — Routes Super Admin DeskyWork
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');

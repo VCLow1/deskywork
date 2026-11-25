@@ -1,5 +1,5 @@
 // backend/services/whatsappService.js
-// Service de notification WhatsApp pour la plateforme DeskyWork / VC LOW
+// Service de notification WhatsApp pour la plateforme DeskyWork
 // Supporte UltraMsg, Twilio, Meta Cloud API, GreenAPI et simulateur de développement
 
 const https = require('https');
@@ -281,7 +281,7 @@ function generateWhatsAppMessage(type, data, config) {
   const app = config.appName || process.env.COWORKING_NAME || 'DeskyWork';
   const cName = config.coworkingName || process.env.COWORKING_NAME || 'DeskyWork';
   const cTel = config.coworkingTel || process.env.COWORKING_TEL || '+216 52 882 880 / +216 52 882 930';
-  const url = config.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
+  const url = config.frontendUrl || process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
   const prenom = data.membre?.prenom || data.formateur?.prenom || data.nom || 'Membre';
 
   switch (type) {

@@ -8,6 +8,7 @@ const ctrl = require('../controllers/membersController');
 // Routes profil connecté
 router.get('/members/me', authenticate, ctrl.getMe);
 router.put('/members/me', authenticate, ctrl.updateMe);
+router.put('/members/me/company', authenticate, ctrl.updateMyCompany);
 router.post('/members/me/test-notification', authenticate, ctrl.testNotification);
 router.post('/members/me/documents', authenticate, ctrl.addDocument);
 router.delete('/members/me/documents/:index', authenticate, ctrl.deleteDocument);

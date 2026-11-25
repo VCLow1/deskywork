@@ -20,7 +20,7 @@ function buildHeader(config) {
   const coworkingName = config?.coworkingName || 'DeskyWork';
   const coworkingEmail = config?.coworkingEmail || process.env.COWORKING_EMAIL || 'contact@deskywork.tn';
   const coworkingTel = config?.coworkingTel || process.env.COWORKING_TEL || '+216 52 882 880 / +216 52 882 930';
-  const frontendUrl = config?.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = config?.frontendUrl || process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
 
   let telHtml = '';
   if (coworkingTel) {
@@ -118,7 +118,7 @@ function buildHeader(config) {
 function buildFooter(config) {
   const coworkingName = config?.coworkingName || 'DeskyWork';
   const coworkingTel = config?.coworkingTel || process.env.COWORKING_TEL || '+216 52 882 880 / +216 52 882 930';
-  const frontendUrl = config?.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = config?.frontendUrl || process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
   const year = new Date().getFullYear();
 
   return `
@@ -257,7 +257,7 @@ function templateNouveauMembre(membre, config) {
             </ul>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/login" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/login" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Accéder à mon portail
                 </a>
@@ -356,7 +356,7 @@ function templateConfirmationReservation(reservation, membre, config) {
             <!-- Bouton d'action DeskyWork -->
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/bookings" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/bookings" 
                    style="display:inline-block;background-color:${SECONDARY};background:linear-gradient(135deg, #f95d00 0%, #ff7a28 100%);color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;box-shadow:0 4px 14px rgba(249,93,0,0.35);">
                   Accéder à mes réservations
                 </a>
@@ -424,7 +424,7 @@ function templateRappelReservationJ1(reservation, membre, config) {
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Voir ma réservation
                 </a>
@@ -481,7 +481,7 @@ function templateAlerte15MinAvantFin(session, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard" 
                    style="display:inline-block;background:${WARNING};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Prolonger ma session
                 </a>
@@ -593,7 +593,7 @@ function templateDepassementSession(session, membre, minutesDepassement, config)
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard" 
                    style="display:inline-block;background:${DANGER};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Voir ma facture
                 </a>
@@ -660,7 +660,7 @@ function templateAbonnementExpirantJ7(abonnement, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/abonnement" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/abonnement" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Renouveler mon abonnement
                 </a>
@@ -726,7 +726,7 @@ function templateAbonnementExpire(abonnement, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/abonnement" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/abonnement" 
                    style="display:inline-block;background:${DANGER};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Renouveler maintenant
                 </a>
@@ -805,7 +805,7 @@ function templatePaiementEnregistre(payment, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/factures" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/factures" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Voir mes factures
                 </a>
@@ -882,7 +882,7 @@ function templatePaiementRetardJ3(payment, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/factures" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/factures" 
                    style="display:inline-block;background:#D97706;color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Régulariser mon paiement
                 </a>
@@ -965,7 +965,7 @@ function templatePaiementRetardJ7(payment, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/factures" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/factures" 
                    style="display:inline-block;background:${WARNING};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Régulariser MAINTENANT
                 </a>
@@ -1053,7 +1053,7 @@ function templateAnnulationReservation(reservation, membre, config) {
             <!-- Bouton d'action DeskyWork -->
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/bookings" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/bookings" 
                    style="display:inline-block;background-color:${SECONDARY};background:linear-gradient(135deg, #f95d00 0%, #ea580c 100%);color:#ffffff;text-decoration:none;padding:14px 34px;border-radius:12px;font-size:14px;font-weight:700;box-shadow:0 4px 14px rgba(249,93,0,0.35);">
                   Faire une nouvelle réservation
                 </a>
@@ -1078,7 +1078,7 @@ function templateNouveauFormateur(formateur, config) {
   const nom = formateur.nom || '';
   const email = formateur.email || '—';
   const temporaryPassword = formateur.temporaryPassword || '—';
-  const loginUrl = formateur.loginUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
+  const loginUrl = formateur.loginUrl || process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
   const resetLink = formateur.resetLink || `${loginUrl}/forgot-password`;
 
   return `<!DOCTYPE html>
@@ -1212,7 +1212,7 @@ function templateInscriptionFormation(formation, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/formations" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/formations" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Voir mes formations
                 </a>
@@ -1284,7 +1284,7 @@ function templateRappelFormationJ1(formation, membre, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/formations" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/formations" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Voir ma formation
                 </a>
@@ -1354,7 +1354,7 @@ function templateNouveauMessagePortail(message, expediteur, config) {
             </table>
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/admin/messages" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/admin/messages" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;">
                   Répondre au message
                 </a>
@@ -1473,7 +1473,7 @@ function templateNouvelleFormation(formation, membre, config) {
 
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
               <tr><td align="center">
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/formations" 
+                <a href="${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/dashboard/formations" 
                    style="display:inline-block;background:${SECONDARY};color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:0.2px;box-shadow:0 4px 14px rgba(249,93,0,0.35);">
                   Découvrir & S'inscrire
                 </a>

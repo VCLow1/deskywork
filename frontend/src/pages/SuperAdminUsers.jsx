@@ -246,7 +246,7 @@ export default function SuperAdminUsers({ session }) {
           </div>
           <h1 className="font-sora text-xl sm:text-2xl font-bold text-primary">Gestion des Utilisateurs</h1>
         </div>
-        <p className="text-on-surface-variant text-sm">Gérez tous les utilisateurs de la plateforme VCLOW</p>
+        <p className="text-on-surface-variant text-sm">Gérez tous les utilisateurs de la plateforme DeskyWork</p>
       </div>
 
       {/* Résumé par rôle */}

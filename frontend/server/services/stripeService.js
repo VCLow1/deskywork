@@ -14,7 +14,7 @@ function isStripeConfigured() {
 }
 
 function getFrontendUrl() {
-  return process.env.FRONTEND_URL || 'http://localhost:5173';
+  return process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
 }
 
 function toStripeAmount(montant) {

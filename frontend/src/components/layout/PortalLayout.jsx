@@ -583,7 +583,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
   const homePath = getHomePath(profile?.role, profile?.type_membre);
   const profilePath = getProfilePath(profile?.role, profile?.type_membre);
   const portalLabel = isSuperAdmin
-    ? 'VCLOW Platform'
+    ? 'DeskyWork Platform'
     : isStaff
       ? 'Réception'
       : adminView

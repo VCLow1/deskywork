@@ -81,7 +81,7 @@ export default function TrainerOnboarding() {
             <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left text-xs space-y-1 text-amber-900">
               <div className="font-bold flex items-center gap-1.5">
                 <span className="material-symbols-outlined text-[16px]">info</span>
-                Statut : En cours de validation par VClow
+                Statut : En cours de validation par DeskyWork
               </div>
               <p>
                 Vous pouvez d'ores et déjà préparer vos formations dans votre espace formateur. Elles seront rendues publiques et réservables dès l'approbation de votre profil.

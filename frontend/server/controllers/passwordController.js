@@ -33,7 +33,7 @@ async function requestPasswordReset(req, res) {
   };
 
   try {
-    const redirectTo = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password`;
+    const redirectTo = `${process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app'}/reset-password`;
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery', email, options: { redirectTo },
     });

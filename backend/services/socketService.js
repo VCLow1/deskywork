@@ -6,7 +6,7 @@ let io = null;
 
 function initSocket(server, supabaseUrl, supabaseServiceKey) {
   // Accepte plusieurs origines séparées par une virgule dans FRONTEND_URL
-  const rawOrigins = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const rawOrigins = process.env.FRONTEND_URL || 'https://deskywork-jet.vercel.app';
   const allowedOrigins = rawOrigins.split(',').map(o => o.trim());
 
   io = new Server(server, {

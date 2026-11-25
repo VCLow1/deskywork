@@ -1504,7 +1504,7 @@ async function getMyContext(req, res) {
     } else if (profile.statut_compte === 'en_attente' && profile.role === 'admin') {
       redirectPath = '/register/pending-b2b';
       userContextType = 'b2b_pending';
-    } else if (profile.type_membre === 'entreprise' || profile.role === 'company' || profile.role === 'entreprise' || activeOrgs.some((o) => o.organizations?.type === 'entreprise')) {
+    } else if (profile.type_membre === 'entreprise' || profile.role === 'company' || profile.role === 'entreprise' || activeOrgs.some((o) => o.organization?.type === 'entreprise')) {
       redirectPath = '/company/dashboard';
       userContextType = 'company';
     } else if (activeOrgs.length > 1) {
@@ -1519,6 +1519,9 @@ async function getMyContext(req, res) {
         redirectPath = '/trainer-dashboard';
         userContextType = 'formateur';
       }
+    } else if (profile.role === 'admin' || profile.role === 'staff') {
+      redirectPath = '/admin/dashboard';
+      userContextType = 'org_admin';
     } else if (profile.role === 'formateur' || trainerProfile) {
       redirectPath = '/trainer-dashboard';
       userContextType = 'formateur';
