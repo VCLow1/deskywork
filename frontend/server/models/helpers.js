@@ -284,7 +284,60 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
     throw new Error('Espace introuvable.');
   }
 
+  // CDC v3.0 : Open Space et Hot Desk = postes partagés (capacité max) ; les autres types sont exclusifs.
+  const isOpenSpace = SHARED_SPACE_TYPES.includes(espace.type);
+  const exclusive = options.exclusive === true || !isOpenSpace;
+  const capacity = Math.max(1, parseInt(espace.capacite, 10) || 1);
+
   let overlappingCount = await countOverlappingBookings(espaceId, dateDebut, dateFin, excludeId);
+
+  // Vérification ciblée d'un poste / salle sur le plan 2D (zéro conflit par floor_plan_item_id)
+  if (options.floorPlanItemId) {
+    let itemResQ = supabaseAdmin
+      .from('reservations')
+      .select('id, floor_plan_item_id, notes')
+      .eq('espace_id', espaceId)
+      .in('statut', ['confirmed', 'pending'])
+      .lt('date_debut', dateFin)
+      .gt('date_fin', dateDebut);
+    if (excludeId) itemResQ = itemResQ.neq('id', excludeId);
+    let { data: itemOverlaps, error: itemOvErr } = await itemResQ;
+    if (itemOvErr) {
+      let fbQ = supabaseAdmin
+        .from('reservations')
+        .select('id, notes')
+        .eq('espace_id', espaceId)
+        .in('statut', ['confirmed', 'pending'])
+        .lt('date_debut', dateFin)
+        .gt('date_fin', dateDebut);
+      if (excludeId) fbQ = fbQ.neq('id', excludeId);
+      const fbRes = await fbQ;
+      itemOverlaps = fbRes.data || [];
+    }
+    const targetItemId = String(options.floorPlanItemId);
+    const hasExactItemConflict = (itemOverlaps || []).some((row) => {
+      if (row.floor_plan_item_id && String(row.floor_plan_item_id) === targetItemId) return true;
+      if (row.notes) {
+        try {
+          const parsed = typeof row.notes === 'string' ? JSON.parse(row.notes) : row.notes;
+          if (parsed?.floor_plan_item_id && String(parsed.floor_plan_item_id) === targetItemId) return true;
+        } catch (_) {}
+      }
+      return false;
+    });
+    if (hasExactItemConflict) {
+      return {
+        isAvailable: false,
+        shared: isOpenSpace && !exclusive,
+        spaceType: espace.type,
+        spaceName: espace.nom,
+        capacity,
+        overlappingCount: Math.max(1, overlappingCount),
+        remaining: Math.max(0, capacity - overlappingCount),
+        conflictMessage: 'Ce poste ou cette salle est déjà réservé sur ce créneau. Veuillez choisir un autre emplacement sur le plan.',
+      };
+    }
+  }
 
   // CDC v3.0 D3 : vérifier si une session de travail en cours/en dépassement occupe
   // encore cet espace sans avoir été libérée manuellement (« C'est bon, libérée »).
@@ -295,15 +348,16 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
     if (reqStartMs <= nowMs + 2 * 3600 * 1000) {
       const { data: openRes } = await supabaseAdmin
         .from('reservations')
-        .select('id')
+        .select('id, floor_plan_item_id, notes')
         .eq('espace_id', espaceId)
         .in('statut', ['confirmed', 'pending'])
         .lte('date_debut', dateFin);
-      const resIds = (openRes || []).map((r) => r.id).filter((id) => id !== excludeId);
+      const resRows = (openRes || []).filter((r) => r.id !== excludeId);
+      const resIds = resRows.map((r) => r.id);
       if (resIds.length > 0) {
-        const { count: activeSessCount } = await supabaseAdmin
+        const { data: activeSessRows, count: activeSessCount } = await supabaseAdmin
           .from('sessions')
-          .select('id', { count: 'exact', head: true })
+          .select('id, reservation_id', { count: 'exact' })
           .in('reservation_id', resIds)
           .in('statut', ['active', 'overtime'])
           .is('check_out', null);
@@ -313,11 +367,37 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
             shared: false,
             spaceType: espace.type,
             spaceName: espace.nom,
-            capacity: Math.max(1, parseInt(espace.capacite, 10) || 1),
+            capacity,
             overlappingCount: Math.max(1, overlappingCount),
             remaining: 0,
             conflictMessage: "Ressource encore occupée : la session de travail en cours n'a pas encore été libérée manuellement par l'accueil.",
           };
+        }
+        if (options.floorPlanItemId && Array.isArray(activeSessRows) && activeSessRows.length > 0) {
+          const activeResIdSet = new Set(activeSessRows.map((s) => s.reservation_id));
+          const targetItemId = String(options.floorPlanItemId);
+          const itemStillOccupied = resRows.some((r) => {
+            if (!activeResIdSet.has(r.id)) return false;
+            if (r.floor_plan_item_id && String(r.floor_plan_item_id) === targetItemId) return true;
+            try {
+              const parsed = typeof r.notes === 'string' ? JSON.parse(r.notes) : r.notes;
+              return parsed?.floor_plan_item_id && String(parsed.floor_plan_item_id) === targetItemId;
+            } catch {
+              return false;
+            }
+          });
+          if (itemStillOccupied) {
+            return {
+              isAvailable: false,
+              shared: isOpenSpace && !exclusive,
+              spaceType: espace.type,
+              spaceName: espace.nom,
+              capacity,
+              overlappingCount: Math.max(1, overlappingCount),
+              remaining: Math.max(0, capacity - overlappingCount),
+              conflictMessage: "Ce poste est encore occupé : la session de travail en cours n'a pas encore été libérée.",
+            };
+          }
         }
       }
     }
@@ -328,10 +408,6 @@ async function getBookingAvailability(espaceId, dateDebut, dateFin, excludeId = 
     dateFin,
     options.excludeFormationId || null
   );
-  // CDC v3.0 : Open Space et Hot Desk = postes partagés (capacité max) ; les autres types sont exclusifs.
-  const isOpenSpace = SHARED_SPACE_TYPES.includes(espace.type);
-  const exclusive = options.exclusive === true || !isOpenSpace;
-  const capacity = Math.max(1, parseInt(espace.capacite, 10) || 1);
 
   let isAvailable;
   let remaining;

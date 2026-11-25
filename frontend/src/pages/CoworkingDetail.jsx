@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { guestApi } from '../services/api';
+import { guestApi, floorPlansApi } from '../services/api';
+import { supabase } from '../supabaseClient';
 import BrandLogo from '../components/layout/BrandLogo';
+import FloorPlanBookingView from '../components/floorplan/FloorPlanBookingView';
 import { useTheme } from '../context/ThemeContext';
 import { formatDT } from '../utils/format';
 import { PARTNER_THIRTY_THREE_BASE64, PARTNER_NERO_BASE64 } from '../assets/partners/partnerLogos';
@@ -95,6 +97,50 @@ export default function CoworkingDetail() {
   const [coworking, setCoworking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [floorPlans, setFloorPlans] = useState([]);
+  const [spacesViewMode, setSpacesViewMode] = useState('list'); // 'list' par défaut si aucun plan
+
+  useEffect(() => {
+    const tid = coworking?.id;
+    if (!tid) return;
+    floorPlansApi.getPublic(tid)
+      .then((res) => {
+        const list = res?.floor_plans || [];
+        setFloorPlans(list);
+        if (list.length > 0) setSpacesViewMode('plan');
+      })
+      .catch(() => {
+        setFloorPlans([]);
+      });
+  }, [coworking?.id]);
+
+  const handleReserveFromPlan = async ({ espaceId, itemId, itemLabel, date, start, end }) => {
+    if (!espaceId) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const qs = new URLSearchParams({
+        espaceId,
+        date,
+        start,
+        end,
+        itemId: itemId || '',
+        itemLabel: itemLabel || '',
+      }).toString();
+      if (session?.user) {
+        navigate(`/book/step3?${qs}`);
+        return;
+      }
+    } catch (_) {}
+    const guestQs = new URLSearchParams({
+      tenantId: coworking?.id || id,
+      espaceId,
+      debut: `${date}T${start}`,
+      fin: `${date}T${end}`,
+      itemId: itemId || '',
+      itemLabel: itemLabel || '',
+    }).toString();
+    navigate(`/book-guest?${guestQs}`);
+  };
 
   useEffect(() => {
     async function load() {
@@ -422,7 +468,70 @@ export default function CoworkingDetail() {
           </div>
         ) : null}
 
-        {!c.espaces || c.espaces.length === 0 ? (
+        {floorPlans.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 style={{ fontFamily: 'Sora', fontWeight: 800, color: EC.navy, fontSize: '1.25rem', margin: 0 }}>
+                Disponibilités &amp; Emplacements
+              </h3>
+              <p style={{ color: EC.muted, fontSize: '.85rem', margin: '4px 0 0' }}>
+                Visualisez les postes et salles libres sur le plan 2D ou parcourez la liste complète.
+              </p>
+            </div>
+            <div style={{ display: 'inline-flex', padding: 4, borderRadius: 14, background: EC.cardBg, border: `1.5px solid ${EC.outline}`, gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => setSpacesViewMode('plan')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 14px',
+                  borderRadius: 10,
+                  border: 'none',
+                  fontSize: '.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  background: spacesViewMode === 'plan' ? '#f95d00' : 'transparent',
+                  color: spacesViewMode === 'plan' ? '#ffffff' : EC.muted,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>map</span>
+                Vue Plan 2D
+              </button>
+              <button
+                type="button"
+                onClick={() => setSpacesViewMode('list')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 14px',
+                  borderRadius: 10,
+                  border: 'none',
+                  fontSize: '.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  background: spacesViewMode === 'list' ? '#f95d00' : 'transparent',
+                  color: spacesViewMode === 'list' ? '#ffffff' : EC.muted,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>view_module</span>
+                Vue Liste
+              </button>
+            </div>
+          </div>
+        )}
+
+        {spacesViewMode === 'plan' && floorPlans.length > 0 ? (
+          <div className="mb-4">
+            <FloorPlanBookingView
+              tenantId={coworking.id}
+              initialPlans={floorPlans}
+              onReserve={handleReserveFromPlan}
+            />
+          </div>
+        ) : !c.espaces || c.espaces.length === 0 ? (
           <div className="text-center" style={{ background: EC.cardBg, border: `1.5px solid ${EC.outline}`, borderRadius: 20, padding: '3rem' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 40, color: EC.outline }}>room</span>
             <p style={{ color: EC.muted, margin: '12px 0 0' }}>Aucun espace publié pour le moment.</p>

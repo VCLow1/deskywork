@@ -15,6 +15,8 @@ export default function GuestBookingPage() {
   const espaceParam = searchParams.get('espaceId');
   const debutParam = searchParams.get('debut') || '';
   const finParam = searchParams.get('fin') || '';
+  const itemIdParam = searchParams.get('itemId') || '';
+  const itemLabelParam = searchParams.get('itemLabel') || '';
 
   const [step, setStep]         = useState(1); // 1=espace 2=infos 3=confirmation
   const [coworking, setCoworking] = useState(null); // coworking sélectionné (image + coordonnées)
@@ -52,7 +54,10 @@ export default function GuestBookingPage() {
             tenantLoaded = true;
             if (espaceParam) {
               const match = spaces.find((s) => s.id === espaceParam);
-              if (match) setSelected(match);
+              if (match) {
+                setSelected(match);
+                if (debutParam && finParam) setStep(2);
+              }
             }
           } else {
             setError(res?.error || "Cet établissement n'est plus disponible. Choisissez-en un autre ci-dessous.");
@@ -115,6 +120,8 @@ export default function GuestBookingPage() {
         date_debut: tunisLocalToISO(dates.debut), date_fin: tunisLocalToISO(dates.fin),
         tenant_id: coworking?.id || selected.tenant_id || null,
         client_type: clientType,
+        ...(itemIdParam ? { floor_plan_item_id: itemIdParam } : {}),
+        ...(itemLabelParam ? { floor_plan_item_label: itemLabelParam } : {}),
         ...(clientType === 'entreprise' ? { entreprise_info: entrepriseInfo } : {}),
       });
       if (res.error) { setError(res.error); return; }
@@ -175,7 +182,7 @@ export default function GuestBookingPage() {
                 <div className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Espace</p>
-                    <p className="mt-1 text-base font-semibold text-slate-800">{selected?.nom || 'Espace sélectionné'}</p>
+                    <p className="mt-1 text-base font-semibold text-slate-800">{selected?.nom || 'Espace sélectionné'}{itemLabelParam ? ` · Poste ${itemLabelParam}` : ''}</p>
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Date</p>
@@ -435,7 +442,7 @@ export default function GuestBookingPage() {
               <div className="flex items-start gap-3">
                 <span className="material-symbols-outlined text-[#ff6a2b]" style={{ fontSize: 22 }}>location_on</span>
                 <div className="flex-1">
-                  <p className="font-bold text-slate-900">{selected?.nom}</p>
+                  <p className="font-bold text-slate-900">{selected?.nom}{itemLabelParam ? ` · Poste ${itemLabelParam}` : ''}</p>
                   <p className="mt-1 text-sm text-slate-600">
                     {coworking?.nom} · {new Date(dates.debut).toLocaleDateString('fr-FR')} · {new Date(dates.debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} → {new Date(dates.fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                   </p>

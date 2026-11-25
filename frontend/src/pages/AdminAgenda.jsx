@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { bookingApi, sessionApi } from '../services/api';
 import { connectSocket, joinStaff, onSessionStarted, onSessionEnded, onSessionOvertime, disconnectSocket } from '../services/socket';
 import PortalLayout from '../components/layout/PortalLayout';
+import FloorPlanLiveView from '../components/floorplan/FloorPlanLiveView';
 
 const HOUR_START = 8;
 const HOUR_END = 20;
@@ -149,8 +150,9 @@ export default function AdminAgenda({ session }) {
   const [espaces, setEspaces] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedEspace, setSelectedEspace] = useState('');
-  const [viewMode, setViewMode] = useState('week');
+  const [viewMode, setViewMode] = useState(() => (searchParams.get('view') === 'plan' ? 'floorplan' : 'week'));
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [qrInput, setQrInput] = useState('');
@@ -426,35 +428,49 @@ export default function AdminAgenda({ session }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-          <select
-            value={selectedEspace}
-            onChange={(e) => setSelectedEspace(e.target.value)}
-            className="flex-1 sm:flex-none border border-outline-variant/30 rounded-xl px-3 py-2 text-xs sm:text-sm bg-white outline-none focus:border-secondary"
-          >
-            <option value="">Tous les espaces</option>
-            {espaces.map((es) => (
-              <option key={es.id} value={es.id}>{es.nom}</option>
-            ))}
-          </select>
+          {viewMode !== 'floorplan' && (
+            <select
+              value={selectedEspace}
+              onChange={(e) => setSelectedEspace(e.target.value)}
+              className="flex-1 sm:flex-none border border-outline-variant/30 rounded-xl px-3 py-2 text-xs sm:text-sm bg-white outline-none focus:border-secondary"
+            >
+              <option value="">Tous les espaces</option>
+              {espaces.map((es) => (
+                <option key={es.id} value={es.id}>{es.nom}</option>
+              ))}
+            </select>
+          )}
           <div className="flex rounded-xl overflow-hidden border border-outline-variant/20 bg-white">
-            {['day', 'week'].map((mode) => (
+            {[
+              { id: 'day', label: 'Jour' },
+              { id: 'week', label: 'Semaine' },
+              { id: 'floorplan', label: 'Vue Plan en direct', icon: 'map' },
+            ].map((mode) => (
               <button
-                key={mode}
+                key={mode.id}
                 type="button"
-                onClick={() => setViewMode(mode)}
-                className={`px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold transition-colors ${
-                  viewMode === mode ? 'bg-primary text-white' : 'bg-white text-on-surface-variant'
+                onClick={() => {
+                  setViewMode(mode.id);
+                  setSearchParams(mode.id === 'floorplan' ? { view: 'plan' } : {});
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold transition-colors ${
+                  viewMode === mode.id
+                    ? mode.id === 'floorplan' ? 'bg-secondary text-white' : 'bg-primary text-white'
+                    : 'bg-white text-on-surface-variant hover:text-primary'
                 }`}
               >
-                {mode === 'day' ? 'Jour' : 'Semaine'}
+                {mode.icon && <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{mode.icon}</span>}
+                {mode.label}
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
-            <button type="button" onClick={() => shiftPeriod(-1)} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-bold">←</button>
-            <button type="button" onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-semibold">Aujourd'hui</button>
-            <button type="button" onClick={() => shiftPeriod(1)} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-bold">→</button>
-          </div>
+          {viewMode !== 'floorplan' && (
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => shiftPeriod(-1)} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-bold">←</button>
+              <button type="button" onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-semibold">Aujourd&apos;hui</button>
+              <button type="button" onClick={() => shiftPeriod(1)} className="px-3 py-2 border border-outline-variant/30 rounded-xl bg-white text-xs sm:text-sm hover:bg-surface-container font-bold">→</button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -464,6 +480,14 @@ export default function AdminAgenda({ session }) {
       {success && (
         <div className="mb-4 p-3 bg-secondary-fixed text-on-secondary-fixed text-sm rounded-xl">{success}</div>
       )}
+
+      {viewMode === 'floorplan' ? (
+        <FloorPlanLiveView
+          onToast={(m) => { setError(''); setSuccess(m); }}
+          onError={(m) => { setSuccess(''); setError(m); }}
+        />
+      ) : (
+      <>
 
       <form onSubmit={handleQrCheckIn} className="mb-4 bg-surface-container-lowest rounded-xl p-4 sm:p-5 border border-outline-variant/10 flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
         <div className="flex-grow">
@@ -666,6 +690,8 @@ export default function AdminAgenda({ session }) {
           </div>
         </div>
       </div>
+      </>
+      )}
 
       {selectedBooking && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSelectedBooking(null)}>

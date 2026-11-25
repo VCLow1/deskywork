@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { tenantAdminApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import FloorPlanEditor from '../components/floorplan/FloorPlanEditor';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -75,6 +77,8 @@ const EMPTY_FORM = {
 const inputCls = 'w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/30 bg-white text-sm text-primary outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15 transition-all placeholder:text-on-surface-variant/50';
 
 export default function AdminEspaces({ session }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'plan' ? 'plan' : 'list';
   const { userId, email, metadata } = useSessionUser(session);
   const [profile, setProfile] = useState(() =>
     userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null
@@ -211,7 +215,7 @@ export default function AdminEspaces({ session }) {
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto">
+      <div className={`${activeTab === 'plan' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
@@ -219,14 +223,45 @@ export default function AdminEspaces({ session }) {
             <h1 className="font-sora font-bold text-primary text-2xl sm:text-3xl">Mes Espaces</h1>
             <p className="text-on-surface-variant text-sm mt-1">Gérez les espaces de votre coworking · {espaces.length} espace{espaces.length > 1 ? 's' : ''}</p>
           </div>
-          <button
-            onClick={() => { setShowForm(v => !v); setEditId(null); setForm({ ...EMPTY_FORM }); }}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-secondary text-white rounded-2xl font-bold text-sm hover:bg-secondary/90 transition-all shadow-sm"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{showForm && !editId ? 'close' : 'add'}</span>
-            {showForm && !editId ? 'Annuler' : 'Nouvel espace'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="inline-flex rounded-2xl border border-outline-variant/25 bg-white p-1 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setSearchParams({})}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'list' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>view_list</span>
+                Liste des espaces
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchParams({ tab: 'plan' })}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'plan' ? 'bg-secondary text-white shadow-xs' : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>map</span>
+                Plan interactif
+              </button>
+            </div>
+            {activeTab === 'list' && (
+              <button
+                onClick={() => { setShowForm(v => !v); setEditId(null); setForm({ ...EMPTY_FORM }); }}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-secondary text-white rounded-2xl font-bold text-sm hover:bg-secondary/90 transition-all shadow-sm"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{showForm && !editId ? 'close' : 'add'}</span>
+                {showForm && !editId ? 'Annuler' : 'Nouvel espace'}
+              </button>
+            )}
+          </div>
         </div>
+
+        {activeTab === 'plan' ? (
+          <FloorPlanEditor espaces={espaces} showToast={showToast} showError={showError} />
+        ) : (
+        <>
 
         {/* Formulaire Création / Édition */}
         {showForm && (
@@ -584,6 +619,8 @@ export default function AdminEspaces({ session }) {
               />
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
     </PortalLayout>

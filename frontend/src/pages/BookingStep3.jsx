@@ -5,7 +5,7 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { bookingApi, paymentApi, memberApi } from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
 import { getBookerNav } from '../utils/roles';
-import { formatDT } from '../utils/format';
+import { formatDT, tunisLocalToISO } from '../utils/format';
 import { spaceTypeLabel } from '../constants/spaceTypes';
 
 export default function BookingStep3({ session }) {
@@ -15,6 +15,8 @@ export default function BookingStep3({ session }) {
   const date = searchParams.get('date');
   const start = searchParams.get('start');
   const end = searchParams.get('end');
+  const itemId = searchParams.get('itemId') || '';
+  const itemLabel = searchParams.get('itemLabel') || '';
   const navigate = useNavigate();
   // Initialisation synchrone depuis le JWT — 0 appel DB
   const [nav, setNav] = useState(() => getBookerNav(metadata.role || 'member'));
@@ -98,12 +100,13 @@ export default function BookingStep3({ session }) {
 
   useEffect(() => {
     if (!space || space.type !== 'open_space' || !date || !start || !end) return;
-    const startDateTime = new Date(`${date}T${start}:00`).toISOString();
-    const endDateTime = new Date(`${date}T${end}:00`).toISOString();
+    const startDateTime = tunisLocalToISO(`${date}T${start}`);
+    const endDateTime = tunisLocalToISO(`${date}T${end}`);
     bookingApi.checkAvailability({
       espace_id: espaceId,
       date_debut: startDateTime,
       date_fin: endDateTime,
+      ...(itemId ? { floor_plan_item_id: itemId } : {}),
     }).then((result) => {
       if (result.shared) {
         setOccupancy({
@@ -113,7 +116,7 @@ export default function BookingStep3({ session }) {
         });
       }
     }).catch(() => {});
-  }, [space, date, start, end, espaceId]);
+  }, [space, date, start, end, espaceId, itemId]);
 
   const handleConfirmBooking = async () => {
     setErrorMsg('');
@@ -125,14 +128,15 @@ export default function BookingStep3({ session }) {
       }
     }
     setProcessing(true);
-    const startDateTime = new Date(`${date}T${start}:00`).toISOString();
-    const endDateTime = new Date(`${date}T${end}:00`).toISOString();
+    const startDateTime = tunisLocalToISO(`${date}T${start}`);
+    const endDateTime = tunisLocalToISO(`${date}T${end}`);
 
     try {
       const availability = await bookingApi.checkAvailability({
         espace_id: espaceId,
         date_debut: startDateTime,
         date_fin: endDateTime,
+        ...(itemId ? { floor_plan_item_id: itemId } : {}),
       });
 
       if (!availability.isAvailable) {
@@ -146,6 +150,8 @@ export default function BookingStep3({ session }) {
         date_fin: endDateTime,
         mode: 'on_site',
         client_type: isEntreprise ? 'entreprise' : 'particulier',
+        ...(itemId ? { floor_plan_item_id: itemId } : {}),
+        ...(itemLabel ? { floor_plan_item_label: itemLabel } : {}),
         ...(isEntreprise ? { entreprise_info: entrepriseInfo } : {}),
       });
 
@@ -220,7 +226,7 @@ export default function BookingStep3({ session }) {
             <div style={{ backgroundColor: '#f8fafc', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px', marginBottom: '28px', textAlign: 'left', fontSize: '13px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                 <span style={{ color: '#64748b' }}>Espace :</span>
-                <strong style={{ color: '#0f172a' }}>{space.nom}</strong>
+                <strong style={{ color: '#0f172a' }}>{space.nom}{itemLabel ? ` · ${itemLabel}` : ''}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                 <span style={{ color: '#64748b' }}>Date :</span>
@@ -321,6 +327,12 @@ export default function BookingStep3({ session }) {
                 <span>Créneau horaire</span>
                 <strong style={{ color: '#000d23' }}>{start} - {end} ({durationHours} h)</strong>
               </div>
+              {itemLabel && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Emplacement (plan 2D)</span>
+                  <strong style={{ color: '#f95d00' }}>{itemLabel}</strong>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Tarif horaire</span>
                 <strong style={{ color: '#000d23' }}>{formatDT(space.tarif_horaire)} / h</strong>

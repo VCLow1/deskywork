@@ -17,4 +17,5 @@ export { rgpdApi } from './rgpd';
 export { tenantAdminApi } from './tenantAdmin';
 export { sitesApi } from './sites';
 export { superAdminApi } from './superAdmin';
+export { floorPlansApi } from './floorPlans';
 export { API_URL, getAccessToken, getAuthHeaders, apiFetch, invalidateApiCache } from './_core';

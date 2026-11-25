@@ -384,6 +384,7 @@ export default function App() {
             <Route path="/admin/payments" element={<AdminRoute><AdminPayments session={session} /></AdminRoute>} />
             <Route path="/admin/formations" element={<AdminRoute><AdminFormations session={session} /></AdminRoute>} />
             <Route path="/admin/espaces" element={<AdminRoute><AdminEspaces session={session} /></AdminRoute>} />
+            <Route path="/admin/spaces" element={<Navigate to="/admin/espaces" replace />} />
             <Route path="/admin/profile-coworking" element={<AdminRoute adminOnly><AdminCoworkingProfile session={session} /></AdminRoute>} />
             <Route path="/admin/team" element={<AdminRoute adminOnly><AdminTeam session={session} /></AdminRoute>} />
             <Route path="/admin/subscription" element={<AdminRoute adminOnly><AdminSubscription session={session} /></AdminRoute>} />

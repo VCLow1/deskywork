@@ -31,6 +31,7 @@ const passwordRoutes = require('./routes/password.routes');
 const authUnifiedRoutes = require('./routes/authUnified.routes');
 const invitationsRoutes = require('./routes/invitations.routes');
 const superAdminValidationRoutes = require('./routes/superAdminValidation.routes');
+const floorPlansRoutes = require('./routes/floorPlans.routes');
 
 // ── Middlewares de sécurité ───────────────────────────────────────────────
 const { authenticate } = require('./middleware/authenticate');
@@ -85,6 +86,7 @@ app.use('/api', passwordRoutes);
 app.use('/api', authUnifiedRoutes);
 app.use('/api', invitationsRoutes);
 app.use('/api', superAdminValidationRoutes);
+app.use('/api', floorPlansRoutes);
 
 const modulesHJKLNRouter = createModulesHJKLNRouter({ supabaseAdmin, authenticate, requireRoles, applyTenantFilter });
 app.use('/api', modulesHJKLNRouter);

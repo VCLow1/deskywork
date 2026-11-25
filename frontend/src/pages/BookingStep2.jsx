@@ -10,6 +10,8 @@ export default function BookingStep2({ session }) {
   const { metadata } = useSessionUser(session);
   const [searchParams] = useSearchParams();
   const espaceId = searchParams.get('espaceId');
+  const itemId = searchParams.get('itemId') || '';
+  const itemLabel = searchParams.get('itemLabel') || '';
   const navigate = useNavigate();
   // Initialisation synchrone depuis le JWT — 0 appel DB
   const [nav, setNav] = useState(() => getBookerNav(metadata.role || 'member'));
@@ -71,6 +73,7 @@ export default function BookingStep2({ session }) {
         espace_id: espaceId,
         date_debut: startDateTime,
         date_fin: endDateTime,
+        ...(itemId ? { floor_plan_item_id: itemId } : {}),
       });
 
       if (result.shared) {
@@ -98,7 +101,15 @@ export default function BookingStep2({ session }) {
   };
 
   const handleProceed = () => {
-    navigate(`/book/step3?espaceId=${espaceId}&date=${date}&start=${startTime}&end=${endTime}`);
+    const qs = new URLSearchParams({
+      espaceId,
+      date,
+      start: startTime,
+      end: endTime,
+      ...(itemId ? { itemId } : {}),
+      ...(itemLabel ? { itemLabel } : {}),
+    }).toString();
+    navigate(`/book/step3?${qs}`);
   };
 
   if (!space) {
@@ -142,6 +153,11 @@ export default function BookingStep2({ session }) {
             </h1>
             <p style={{ fontSize: '14px', color: '#5a6a8a', margin: 0 }}>
               Espace sélectionné : <strong style={{ color: '#f95d00' }}>{space.nom}</strong> ({parseFloat(space.tarif_horaire).toFixed(3)} DT / h)
+              {itemLabel && (
+                <span style={{ display: 'inline-block', marginLeft: 8, padding: '2px 10px', borderRadius: 99, backgroundColor: '#fff7ed', color: '#f95d00', fontWeight: 700, fontSize: 12 }}>
+                  Poste : {itemLabel}
+                </span>
+              )}
             </p>
             {(space.type === 'open_space' || space.type === 'hot_desk') ? (
               <p style={{ fontSize: '13px', color: '#059669', margin: '8px 0 0 0', fontWeight: 600 }}>

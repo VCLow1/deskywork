@@ -140,7 +140,16 @@ async function getBookingsCalendar(req, res) {
 
 async function createBooking(req, res) {
   try {
-    const { espace_id, date_debut, date_fin, mode, client_type, entreprise_info } = req.body;
+    const {
+      espace_id,
+      date_debut,
+      date_fin,
+      mode,
+      client_type,
+      entreprise_info,
+      floor_plan_item_id,
+      floor_plan_item_label,
+    } = req.body;
 
     if (!espace_id || !date_debut || !date_fin) {
       return res.status(400).json({ error: 'espace_id, date_debut et date_fin sont requis.' });
@@ -150,7 +159,9 @@ async function createBooking(req, res) {
       return res.status(400).json({ error: 'date_fin doit être postérieure à date_debut.' });
     }
 
-    const availability = await getBookingAvailability(espace_id, date_debut, date_fin);
+    const availability = await getBookingAvailability(espace_id, date_debut, date_fin, null, {
+      floorPlanItemId: floor_plan_item_id || null,
+    });
     if (!availability.isAvailable) {
       return res.status(409).json({
         error: availability.conflictMessage,
@@ -205,7 +216,7 @@ async function createBooking(req, res) {
 
     // CDC v3.0 Chantier 3.2 : champs obligatoires si compte Entreprise
     const isEntreprise = req.profile?.type_membre === 'entreprise' || client_type === 'entreprise';
-    let enterpriseNotes = null;
+    let notesObj = {};
     if (isEntreprise) {
       const info = entreprise_info || {};
       const missing = [];
@@ -219,15 +230,18 @@ async function createBooking(req, res) {
           error: `Champs Entreprise obligatoires manquants : ${missing.join(', ')}.`,
         });
       }
-      enterpriseNotes = JSON.stringify({
+      notesObj = {
         type_client: 'entreprise',
         raison_sociale: info.raison_sociale.trim(),
         contact_nom: info.contact_nom.trim(),
         telephone_pro: info.telephone_pro.trim(),
         email_facturation: info.email_facturation.trim(),
         besoin_description: info.besoin_description.trim(),
-      });
+      };
     }
+    if (floor_plan_item_id) notesObj.floor_plan_item_id = String(floor_plan_item_id);
+    if (floor_plan_item_label) notesObj.floor_plan_item_label = String(floor_plan_item_label).trim();
+    const combinedNotes = Object.keys(notesObj).length > 0 ? JSON.stringify(notesObj) : null;
 
     // Approbation obligatoire par le coworking pour TOUTES les réservations (espaces ou formations)
     const initialStatut = 'pending';
@@ -250,7 +264,8 @@ async function createBooking(req, res) {
         date_fin,
         statut: initialStatut,
         mode: dbMode,
-        ...(enterpriseNotes ? { notes: enterpriseNotes } : {}),
+        ...(floor_plan_item_id ? { floor_plan_item_id } : {}),
+        ...(combinedNotes ? { notes: combinedNotes } : {}),
       },
       { aliases: { user_id: 'membre_id' }, select: '*, espaces(nom, type, tarif_horaire)' }
     );
@@ -550,7 +565,7 @@ async function deleteBooking(req, res) {
 }
 
 async function checkAvailability(req, res) {
-  const { espace_id, date_debut, date_fin, exclude_reservation_id } = req.body;
+  const { espace_id, date_debut, date_fin, exclude_reservation_id, floor_plan_item_id } = req.body;
 
   if (!espace_id || !date_debut || !date_fin) {
     return res.status(400).json({ error: 'espace_id, date_debut et date_fin sont requis.' });
@@ -563,6 +578,7 @@ async function checkAvailability(req, res) {
   try {
     const availability = await getBookingAvailability(espace_id, date_debut, date_fin, exclude_reservation_id, {
       exclusive: req.body.exclusive === true || req.body.exclusive === 'true',
+      floorPlanItemId: floor_plan_item_id || null,
     });
     res.json({
       isAvailable: availability.isAvailable,

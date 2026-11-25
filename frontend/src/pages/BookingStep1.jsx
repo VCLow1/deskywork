@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
-import { guestApi } from '../services/api';
+import { guestApi, floorPlansApi } from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
+import FloorPlanBookingView from '../components/floorplan/FloorPlanBookingView';
 import { getBookerNav } from '../utils/roles';
 
 export default function BookingStep1({ session }) {
@@ -17,6 +18,8 @@ export default function BookingStep1({ session }) {
   const [filterType, setFilterType] = useState('all');
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [coworking, setCoworking] = useState(null);
+  const [floorPlans, setFloorPlans] = useState([]);
+  const [displayMode, setDisplayMode] = useState('list'); // 'list' | 'plan'
   // Initialisation synchrone depuis le JWT — 0 appel DB
   const [nav, setNav] = useState(() => getBookerNav(metadata.role || 'member'));
   const navigate = useNavigate();
@@ -51,11 +54,21 @@ export default function BookingStep1({ session }) {
       guestApi.getCoworking(tenantId)
         .then(res => { if (res.coworking) setCoworking(res.coworking); })
         .catch(() => {});
+      floorPlansApi.getPublic(tenantId)
+        .then(res => {
+          const list = res?.floor_plans || [];
+          setFloorPlans(list);
+          if (list.length > 0) setDisplayMode('plan');
+        })
+        .catch(() => setFloorPlans([]));
+    } else {
+      setFloorPlans([]);
+      setDisplayMode('list');
     }
-    fetchSpaces();
+    fetchSpaces(tenantId);
   }, [searchParams]);
 
-  const fetchSpaces = async () => {
+  const fetchSpaces = async (tenantIdOverride = null) => {
     try {
       setLoading(true);
       let query = supabase
@@ -82,8 +95,9 @@ export default function BookingStep1({ session }) {
           )
         `);
 
-      if (selectedTenant) {
-        query = query.eq('tenant_id', selectedTenant);
+      const effectiveTenantId = tenantIdOverride || selectedTenant;
+      if (effectiveTenantId) {
+        query = query.eq('tenant_id', effectiveTenantId);
       }
 
       const { data, error } = await query.order('tarif_horaire', { ascending: true });
@@ -429,6 +443,74 @@ export default function BookingStep1({ session }) {
           </div>
         )}
 
+        {/* Sélecteur Vue Plan 2D | Vue Liste si plan disponible */}
+        {selectedTenant && floorPlans.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+            <div style={{ display: 'inline-flex', padding: '4px', borderRadius: '14px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', gap: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setDisplayMode('plan')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  backgroundColor: displayMode === 'plan' ? '#f95d00' : 'transparent',
+                  color: displayMode === 'plan' ? '#ffffff' : '#475569',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>map</span>
+                Vue Plan 2D
+              </button>
+              <button
+                type="button"
+                onClick={() => setDisplayMode('list')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  backgroundColor: displayMode === 'list' ? '#f95d00' : 'transparent',
+                  color: displayMode === 'list' ? '#ffffff' : '#475569',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>view_module</span>
+                Vue Liste
+              </button>
+            </div>
+          </div>
+        )}
+
+        {selectedTenant && floorPlans.length > 0 && displayMode === 'plan' ? (
+          <div style={{ marginBottom: '32px' }}>
+            <FloorPlanBookingView
+              tenantId={selectedTenant}
+              initialPlans={floorPlans}
+              onReserve={({ espaceId, itemId, itemLabel, date, start, end }) => {
+                const qs = new URLSearchParams({
+                  espaceId,
+                  date,
+                  start,
+                  end,
+                  itemId: itemId || '',
+                  itemLabel: itemLabel || '',
+                }).toString();
+                navigate(`/book/step3?${qs}`);
+              }}
+            />
+          </div>
+        ) : (
+        <>
         {/* Filter Badges — Clean Bootstrap-style Pills */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center', marginBottom: '40px' }}>
           {[
@@ -561,6 +643,8 @@ export default function BookingStep1({ session }) {
             </div>
           ))}
         </div>
+        </>
+        )}
 
       </main>
     </div>

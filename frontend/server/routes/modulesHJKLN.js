@@ -60,25 +60,28 @@ router.post('/guests', async (req, res) => {
 // CDC v3.0 : aucun paiement en ligne — la réservation est enregistrée « pending » (validation manuelle)
 // ou « confirmed » (confirmation automatique), le règlement s'effectue sur place.
 router.post('/guests/booking', async (req, res) => {
-  const { nom, prenom, email, telephone, espace_id, date_debut, date_fin, client_type, entreprise_info } = req.body;
+  const { nom, prenom, email, telephone, espace_id, date_debut, date_fin, client_type, entreprise_info, floor_plan_item_id, floor_plan_item_label } = req.body;
   if (!nom || !prenom || !email || !telephone || !espace_id || !date_debut || !date_fin) {
     return res.status(400).json({ error: 'Tous les champs sont requis.' });
   }
-  let enterpriseNotes = null;
+  let notesObj = {};
   if (client_type === 'entreprise') {
     const info = entreprise_info || {};
     if (!String(info.raison_sociale || '').trim() || !String(info.contact_nom || '').trim() || !String(info.telephone_pro || '').trim() || !String(info.email_facturation || '').trim() || !String(info.besoin_description || '').trim()) {
       return res.status(400).json({ error: 'Pour une réservation Entreprise, raison sociale, personne de contact, téléphone professionnel, e-mail de facturation et description du besoin sont obligatoires.' });
     }
-    enterpriseNotes = JSON.stringify({
+    notesObj = {
       type_client: 'entreprise',
       raison_sociale: info.raison_sociale.trim(),
       contact_nom: info.contact_nom.trim(),
       telephone_pro: info.telephone_pro.trim(),
       email_facturation: info.email_facturation.trim(),
       besoin_description: info.besoin_description.trim(),
-    });
+    };
   }
+  if (floor_plan_item_id) notesObj.floor_plan_item_id = String(floor_plan_item_id);
+  if (floor_plan_item_label) notesObj.floor_plan_item_label = String(floor_plan_item_label).trim();
+  const combinedNotes = Object.keys(notesObj).length > 0 ? JSON.stringify(notesObj) : null;
   if (new Date(date_debut) >= new Date(date_fin)) {
     return res.status(400).json({ error: 'date_fin doit être postérieure à date_debut.' });
   }
@@ -98,7 +101,9 @@ router.post('/guests/booking', async (req, res) => {
       return res.status(400).json({ error: "Cet espace n'appartient pas à l'établissement sélectionné." });
     }
 
-    const availability = await getBookingAvailability(espace_id, date_debut, date_fin);
+    const availability = await getBookingAvailability(espace_id, date_debut, date_fin, null, {
+      floorPlanItemId: floor_plan_item_id || null,
+    });
     if (!availability.isAvailable) {
       return res.status(409).json({ error: availability.conflictMessage });
     }
@@ -146,7 +151,8 @@ router.post('/guests/booking', async (req, res) => {
         statut,
         mode: 'on_site',
         mode_reservation: client_type === 'entreprise' ? 'entreprise' : 'guest',
-        ...(enterpriseNotes ? { notes: enterpriseNotes } : {}),
+        ...(floor_plan_item_id ? { floor_plan_item_id } : {}),
+        ...(combinedNotes ? { notes: combinedNotes } : {}),
         source: 'marketplace',
       },
       { aliases: { user_id: 'membre_id' } },

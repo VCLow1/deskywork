@@ -323,11 +323,10 @@ export default function TenantBilling({ session }) {
     <PortalLayout profile={profile} onLogout={handleLogout}>
       {notice && (
         <div
-          className={`mb-4 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-3 border ${
-            notice.type === 'error'
+          className={`mb-4 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-3 border ${notice.type === 'error'
               ? 'bg-rose-50 text-rose-800 border-rose-200'
               : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-          }`}
+            }`}
         >
           <span className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[18px]">
@@ -408,11 +407,10 @@ export default function TenantBilling({ session }) {
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveFilter(tab.key)}
-                className={`px-3 py-1.5 rounded-lg transition-all ${
-                  activeFilter === tab.key
+                className={`px-3 py-1.5 rounded-lg transition-all ${activeFilter === tab.key
                     ? 'bg-white text-primary shadow-xs font-bold'
                     : 'text-on-surface-variant hover:text-primary'
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>

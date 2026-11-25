@@ -45,6 +45,7 @@ const passwordRoutes          = require('./routes/password.routes');
 const authUnifiedRoutes       = require('./routes/authUnified.routes');
 const invitationsRoutes       = require('./routes/invitations.routes');
 const superAdminValidationRoutes = require('./routes/superAdminValidation.routes');
+const floorPlansRoutes           = require('./routes/floorPlans.routes');
 
 // ── Middleware de supabase (partagé pour les middlewares legacy) ───────────
 const { authenticate } = require('./middleware/authenticate');
@@ -111,6 +112,7 @@ app.use('/api', passwordRoutes);
 app.use('/api', authUnifiedRoutes);
 app.use('/api', invitationsRoutes);
 app.use('/api', superAdminValidationRoutes);
+app.use('/api', floorPlansRoutes);
 
 // ── Modules H, J, K, L, N (router factory) ───────────────────────────────
 const modulesHJKLNRouter = createModulesHJKLNRouter({ supabaseAdmin, authenticate, requireRoles, applyTenantFilter });
