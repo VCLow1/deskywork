@@ -29,7 +29,6 @@ export const translations = {
     // Login
     login: {
       title: 'Bon retour',
-      subtitle: 'Connectez-vous pour accéder à votre espace (Particulier, Entreprise, Gérant, Formateur) · 1 e-mail = 1 rôle figé',
       emailLabel: 'Adresse email',
       emailPlaceholder: 'nom@entreprise.com',
       passwordLabel: 'Mot de passe',
@@ -437,7 +436,6 @@ export const translations = {
     // Login
     login: {
       title: 'Welcome back',
-      subtitle: 'Sign in to access your space (Individual, Company, Manager, Trainer) · 1 email = 1 fixed role',
       emailLabel: 'Email address',
       emailPlaceholder: 'name@company.com',
       passwordLabel: 'Password',

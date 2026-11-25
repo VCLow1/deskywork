@@ -264,12 +264,9 @@ export default function Login() {
           <div className="w-full max-w-[440px] animate-fade-up">
 
             <div className="text-center mb-6">
-              <h1 className="font-sora text-2xl sm:text-3xl font-bold text-[#100f0d] mb-1">
+              <h1 className="font-sora text-2xl sm:text-3xl font-bold text-[#100f0d]">
                 {t('login.title')}
               </h1>
-              <p className="text-xs sm:text-sm text-on-surface-variant">
-                {t('login.subtitle')}
-              </p>
             </div>
 
             {infoMsg && (
