@@ -8,6 +8,7 @@ export const memberPortalApi = {
   },
   getStats: () => apiFetch('/api/member/stats'),
   getNearbySpaces: () => apiFetch('/api/member/spaces-nearby'),
+  getBookingRecommendations: () => apiFetch('/api/member/booking-recommendations'),
   getNotifications: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return apiFetch(`/api/member/notifications?${qs}`);

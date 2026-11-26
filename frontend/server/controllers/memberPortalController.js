@@ -313,6 +313,71 @@ async function myFormations(req, res) {
   }
 }
 
+// ── GET /api/member/booking-recommendations ──────────────────────────────
+async function bookingRecommendations(req, res) {
+  try {
+    const userId = req.user.id;
+    const [profRes, resRes] = await Promise.all([
+      supabaseAdmin
+        .from('profiles')
+        .select('tenant_id, ville, type_membre')
+        .eq('id', userId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('reservations')
+        .select('id, date_debut, tenant_id, espaces(tenant_id, type)')
+        .eq('user_id', userId)
+        .neq('statut', 'cancelled')
+        .order('date_debut', { ascending: false })
+        .limit(50),
+    ]);
+
+    const profile = profRes?.data || {};
+    const bookings = resRes?.data || [];
+
+    const frequentTenants = {};
+    const recentTenantIds = [];
+    const seenTenants = new Set();
+    const typeCounts = {};
+
+    bookings.forEach((b) => {
+      const tid = b.tenant_id || b.espaces?.tenant_id || null;
+      if (tid) {
+        frequentTenants[tid] = (frequentTenants[tid] || 0) + 1;
+        if (!seenTenants.has(tid)) {
+          seenTenants.add(tid);
+          recentTenantIds.push(tid);
+        }
+      }
+      const spType = b.espaces?.type;
+      if (spType) {
+        typeCounts[spType] = (typeCounts[spType] || 0) + 1;
+      }
+    });
+
+    const favoriteSpaceTypes = Object.entries(typeCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type]) => type);
+
+    res.json({
+      home_tenant_id: profile.tenant_id || null,
+      user_city: profile.ville || null,
+      frequent_tenants: frequentTenants,
+      recent_tenant_ids: recentTenantIds,
+      favorite_space_types: favoriteSpaceTypes,
+    });
+  } catch (err) {
+    console.error('❌ bookingRecommendations error:', err);
+    res.json({
+      home_tenant_id: null,
+      user_city: null,
+      frequent_tenants: {},
+      recent_tenant_ids: [],
+      favorite_space_types: [],
+    });
+  }
+}
+
 module.exports = {
   bookingsHistory,
   memberStats,
@@ -322,4 +387,5 @@ module.exports = {
   markAllNotificationsRead,
   updateSettings,
   myFormations,
+  bookingRecommendations,
 };

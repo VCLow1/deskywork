@@ -344,12 +344,12 @@ router.delete('/guests/booking/:token', async (req, res) => {
 // (Landing page, "Voir plus", étape 1 de réservation guest)
 // =========================================================================
 
-// GET /api/public/coworkings — Liste des coworkings actifs (landing page)
+// GET /api/public/coworkings — Liste des coworkings actifs (landing page & parcours réservation)
 router.get('/public/coworkings', async (req, res) => {
   try {
     let { data, error } = await supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, settings, created_at')
+      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, settings, created_at')
       .or('statut.eq.actif,statut.eq.valide,statut.eq.approuve,statut.is.null')
       .order('nom', { ascending: true });
 
@@ -358,22 +358,85 @@ router.get('/public/coworkings', async (req, res) => {
     if (!data || data.length === 0) {
       const { data: allTenants } = await supabaseAdmin
         .from('tenants')
-        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, settings, created_at')
+        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, settings, created_at')
         .limit(10);
       if (allTenants && allTenants.length > 0) {
         data = allTenants;
       }
     }
 
+    const tenantsList = data || [];
+    const tenantIds = tenantsList.map((t) => t.id).filter(Boolean);
     const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const windowEndIso = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
 
-    const enriched = await Promise.all((data || []).map(async (t) => {
+    let allSpaces = [];
+    let activeBookings = [];
+    let activeFormations = [];
+    const sqlFloorPlanTenantIds = new Set();
+
+    if (tenantIds.length > 0) {
+      let espRes = await supabaseAdmin
+        .from('espaces')
+        .select('id, tenant_id, type, capacite, tarif_horaire, photo_url, actif')
+        .in('tenant_id', tenantIds);
+      if (espRes.error) {
+        espRes = await supabaseAdmin
+          .from('espaces')
+          .select('id, tenant_id, type, capacite, tarif_horaire')
+          .in('tenant_id', tenantIds);
+      }
+      allSpaces = (espRes.data || []).filter((s) => s.actif !== false);
+
+      const [bookRes, formRes, fpRes] = await Promise.all([
+        supabaseAdmin
+          .from('reservations')
+          .select('espace_id, tenant_id')
+          .in('tenant_id', tenantIds)
+          .in('statut', ['confirmed', 'pending'])
+          .lt('date_debut', windowEndIso)
+          .gt('date_fin', nowIso),
+        supabaseAdmin
+          .from('formations')
+          .select('espace_id, tenant_id')
+          .in('tenant_id', tenantIds)
+          .in('statut', ['planifiee', 'publiee', 'en_cours'])
+          .lt('date_debut', windowEndIso)
+          .gt('date_fin', nowIso),
+        supabaseAdmin
+          .from('floor_plans')
+          .select('tenant_id')
+          .eq('is_active', true)
+          .in('tenant_id', tenantIds)
+          .then((r) => r)
+          .catch(() => ({ data: null })),
+      ]);
+
+      activeBookings = bookRes.data || [];
+      activeFormations = formRes.data || [];
+      (fpRes?.data || []).forEach((fp) => {
+        if (fp?.tenant_id) sqlFloorPlanTenantIds.add(fp.tenant_id);
+      });
+    }
+
+    const bookingsBySpace = {};
+    activeBookings.forEach((b) => {
+      if (b.espace_id) bookingsBySpace[b.espace_id] = (bookingsBySpace[b.espace_id] || 0) + 1;
+    });
+    const formationSpaces = new Set(activeFormations.map((f) => f.espace_id).filter(Boolean));
+    const spacesByTenant = {};
+    allSpaces.forEach((sp) => {
+      if (!spacesByTenant[sp.tenant_id]) spacesByTenant[sp.tenant_id] = [];
+      spacesByTenant[sp.tenant_id].push(sp);
+    });
+
+    const enriched = await Promise.all(tenantsList.map(async (t) => {
       const [
-        { count: spaceCount },
         { count: membersCount },
         { data: promos },
       ] = await Promise.all([
-        supabaseAdmin.from('espaces').select('*', { count: 'exact', head: true }).eq('tenant_id', t.id),
         supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true }).eq('tenant_id', t.id).in('role', ['member', 'guest']),
         supabaseAdmin
           .from('codes_promo')
@@ -385,13 +448,39 @@ router.get('/public/coworkings', async (req, res) => {
 
       // Filtrer les promos non expirées
       const activePromos = (promos || []).filter(p => !p.date_fin || p.date_fin >= today);
+      const tSpaces = spacesByTenant[t.id] || [];
+      const tarifs = tSpaces.map((s) => Number(s.tarif_horaire || 0)).filter((v) => v > 0);
+      const liveSpacesFree = tSpaces.filter((s) => {
+        if (formationSpaces.has(s.id)) return false;
+        const cap = Math.max(1, parseInt(s.capacite, 10) || 1);
+        const occ = bookingsBySpace[s.id] || 0;
+        const isShared = s.type === 'open_space' || s.type === 'hot_desk';
+        return isShared ? occ < cap : occ === 0;
+      }).length;
 
       const { settings, ...publicTenant } = t;
+      const galleryPhotos = Array.isArray(settings?.gallery_photos) ? settings.gallery_photos : [];
+      const spacePhotos = tSpaces.map((s) => s.photo_url).filter(Boolean);
+      const galleryPreview = [...new Set([t.cover_url, ...galleryPhotos, ...spacePhotos].filter(Boolean))].slice(0, 4);
+      const saasPack = settings?.saas_pack || 'essentiel';
+      const hasSettingsFp = Array.isArray(settings?.floor_plans) && settings.floor_plans.some((p) => p.is_active !== false);
+
       return {
         ...publicTenant,
+        latitude: t.latitude != null ? Number(t.latitude) : null,
+        longitude: t.longitude != null ? Number(t.longitude) : null,
         // Pack SaaS de l'établissement (stocké dans tenants.settings.saas_pack : essentiel | standard | premium)
-        is_featured: settings?.saas_pack === 'premium',
-        space_count: spaceCount || 0,
+        saas_pack: saasPack,
+        is_featured: saasPack === 'premium',
+        is_partner: ['premium', 'standard'].includes(saasPack) || Boolean(settings?.is_partner),
+        has_floor_plan: sqlFloorPlanTenantIds.has(t.id) || hasSettingsFp,
+        space_count: tSpaces.length,
+        live_spaces_total: tSpaces.length,
+        live_spaces_free: liveSpacesFree,
+        min_tarif_horaire: tarifs.length > 0 ? Math.min(...tarifs) : null,
+        space_types: [...new Set(tSpaces.map((s) => s.type).filter(Boolean))],
+        equipements: Array.isArray(settings?.equipements) ? settings.equipements : [],
+        gallery_preview: galleryPreview,
         member_count: membersCount || 0,
         has_promo: activePromos.length > 0,
         promo_count: activePromos.length,
@@ -423,7 +512,7 @@ router.get('/public/coworkings/:id', async (req, res) => {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
     let tenantQuery = supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at');
+      .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, statut, settings, created_at');
     
     tenantQuery = isUuid ? tenantQuery.eq('id', rawId) : tenantQuery.eq('slug', rawId);
     let { data: tenant } = await tenantQuery.maybeSingle();
@@ -432,7 +521,7 @@ router.get('/public/coworkings/:id', async (req, res) => {
       const slugSearch = rawId.toLowerCase();
       const { data: fallbackTenant } = await supabaseAdmin
         .from('tenants')
-        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, statut, settings, created_at')
+        .select('id, nom, slug, description, adresse, ville, pays, email, telephone, site_web, logo_url, cover_url, latitude, longitude, statut, settings, created_at')
         .or(`slug.ilike.%${slugSearch}%,nom.ilike.%${slugSearch.replace(/-/g, ' ')}%`)
         .limit(1)
         .maybeSingle();
@@ -510,12 +599,19 @@ router.get('/public/coworkings/:id', async (req, res) => {
     }
 
     const { settings: _settings, statut: tenantStatut, ...publicTenant } = tenant;
+    const saasPack = tenant.settings?.saas_pack || 'essentiel';
+    const hasSettingsFp = Array.isArray(tenant.settings?.floor_plans) && tenant.settings.floor_plans.some((p) => p.is_active !== false);
     res.json({
       coworking: {
         ...publicTenant,
+        latitude: tenant.latitude != null ? Number(tenant.latitude) : null,
+        longitude: tenant.longitude != null ? Number(tenant.longitude) : null,
         is_preview: tenantStatut !== 'actif',
         preview_statut: tenantStatut,
-        is_featured: tenant.settings?.saas_pack === 'premium',
+        saas_pack: saasPack,
+        is_featured: saasPack === 'premium',
+        is_partner: ['premium', 'standard'].includes(saasPack) || Boolean(tenant.settings?.is_partner),
+        has_floor_plan: hasSettingsFp,
         gallery_photos: Array.isArray(tenant.settings?.gallery_photos) ? tenant.settings.gallery_photos : [],
         equipements: Array.isArray(tenant.settings?.equipements) ? tenant.settings.equipements : [],
         domiciliation: tenant.settings?.domiciliation && tenant.settings.domiciliation.actif ? tenant.settings.domiciliation : null,

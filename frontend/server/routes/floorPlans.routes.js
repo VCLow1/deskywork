@@ -7,6 +7,7 @@ const ctrl = require('../controllers/floorPlansController');
 
 // Vue publique / client (disponibilité par date & créneau horaire Africa/Tunis)
 router.get('/public/coworkings/:tenantId/floor-plans', ctrl.getPublicFloorPlans);
+router.get('/public/coworkings/:tenantId/spaces-live', ctrl.getPublicSpacesLive);
 
 // Occupation temps réel (Admin / Staff)
 router.get('/floor-plans/live', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getLiveFloorPlanStatus);
@@ -20,3 +21,4 @@ router.patch('/floor-plans/:id/items/:itemId/status', authenticate, requireRoles
 router.delete('/floor-plans/:id', authenticate, requireRoles('super_admin', 'admin'), ctrl.deleteFloorPlan);
 
 module.exports = router;
+

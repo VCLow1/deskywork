@@ -145,9 +145,10 @@ async function resolveTenantByIdOrSlug(rawId) {
   const val = String(rawId || '').trim();
   if (!val) return null;
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+  const cols = 'id, nom, slug, ville, adresse, telephone, latitude, longitude, logo_url, cover_url, description, statut, settings';
   let q = supabaseAdmin
     .from('tenants')
-    .select('id, nom, slug, statut, settings');
+    .select(cols);
   q = isUuid ? q.eq('id', val) : q.eq('slug', val);
   let { data: tenant } = await q.maybeSingle();
 
@@ -155,7 +156,7 @@ async function resolveTenantByIdOrSlug(rawId) {
     const slugSearch = val.toLowerCase();
     const { data: fb } = await supabaseAdmin
       .from('tenants')
-      .select('id, nom, slug, statut, settings')
+      .select(cols)
       .or(`slug.ilike.%${slugSearch}%,nom.ilike.%${slugSearch.replace(/-/g, ' ')}%`)
       .limit(1)
       .maybeSingle();
@@ -245,9 +246,16 @@ async function saveTenantPlansFallback(tenantId, nextPlans) {
 async function loadTenantEspacesMap(tenantId) {
   let { data, error } = await supabaseAdmin
     .from('espaces')
-    .select('id, tenant_id, nom, type, capacite, tarif_horaire, equipements, actif, description, photo_url')
+    .select('id, tenant_id, nom, type, capacite, tarif_horaire, equipements, actif, description, photo_url, photos_urls')
     .eq('tenant_id', tenantId)
     .order('nom', { ascending: true });
+  if (error) {
+    ({ data, error } = await supabaseAdmin
+      .from('espaces')
+      .select('id, tenant_id, nom, type, capacite, tarif_horaire, equipements, actif, description, photo_url')
+      .eq('tenant_id', tenantId)
+      .order('nom', { ascending: true }));
+  }
   if (error) {
     ({ data, error } = await supabaseAdmin
       .from('espaces')
@@ -1041,6 +1049,231 @@ async function getPublicFloorPlans(req, res) {
   }
 }
 
+async function getPublicSpacesLive(req, res) {
+  try {
+    const tenant = await resolveTenantByIdOrSlug(req.params.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Établissement introuvable.' });
+
+    const allowedStatuts = ['actif', 'valide', 'approuve', null, undefined];
+    if (!allowedStatuts.includes(tenant.statut)) {
+      return res.status(404).json({ error: 'Établissement indisponible.' });
+    }
+
+    const tunisNow = nowTunisParts();
+    const { date, start, end, mode } = req.query;
+    const useNow = mode === 'now' || (!date && !start && !end);
+
+    let slotDate = tunisNow.date;
+    let slotStart = tunisNow.time.slice(0, 5);
+    let slotEnd = '18:00';
+    let rangeStartDate;
+    let rangeEndDate;
+    let isNow = useNow;
+
+    if (useNow) {
+      rangeStartDate = new Date(tunisNow.ms);
+      rangeEndDate = new Date(tunisNow.ms + 2 * 3600 * 1000);
+      const endHhMm = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Tunis',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(rangeEndDate);
+      slotEnd = endHhMm;
+    } else {
+      const slot = tunisSlotToUtcRange(date, start, end);
+      slotDate = slot.date;
+      slotStart = slot.start;
+      slotEnd = slot.end;
+      rangeStartDate = slot.startDate;
+      rangeEndDate = slot.endDate;
+      isNow = rangeStartDate.getTime() <= tunisNow.ms && rangeEndDate.getTime() >= tunisNow.ms;
+    }
+
+    const rangeStartMs = rangeStartDate.getTime();
+    const rangeEndMs = rangeEndDate.getTime();
+
+    const [{ plans }, espacesById, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
+      loadTenantPlansWithItems(tenant.id, { onlyActive: true }),
+      loadTenantEspacesMap(tenant.id),
+      loadTenantReservationsAndSessions(tenant.id, rangeStartDate.toISOString(), rangeEndDate.toISOString()),
+    ]);
+
+    const enrichedPlans = enrichPlansForClientOrLive({
+      plans,
+      espacesById,
+      reservations,
+      sessions,
+      formations,
+      pendingPaymentsByResId,
+      mode: isNow ? 'live' : 'booking',
+      rangeStartMs,
+      rangeEndMs,
+      nowMs: tunisNow.ms,
+      overtimeRate: null,
+    });
+
+    const activeSessionResIds = new Set(
+      (sessions || []).filter((s) => !s.check_out && s.statut !== 'completed').map((s) => s.reservation_id)
+    );
+
+    const bookingsBySpace = new Map();
+    for (const r of reservations || []) {
+      const deb = new Date(r.date_debut).getTime();
+      const fin = new Date(r.date_fin).getTime();
+      const hasOpenSession = isNow && activeSessionResIds.has(r.id);
+      const overlaps = hasOpenSession || (deb < rangeEndMs && fin > rangeStartMs);
+      if (overlaps && r.espace_id) {
+        if (!bookingsBySpace.has(r.espace_id)) bookingsBySpace.set(r.espace_id, []);
+        bookingsBySpace.get(r.espace_id).push(r);
+      }
+    }
+
+    const formationBySpace = new Map();
+    for (const f of formations || []) {
+      const deb = new Date(f.date_debut).getTime();
+      const fin = new Date(f.date_fin).getTime();
+      if (deb < rangeEndMs && fin > rangeStartMs && f.espace_id && !formationBySpace.has(f.espace_id)) {
+        formationBySpace.set(f.espace_id, f);
+      }
+    }
+
+    const planItemsBySpace = new Map();
+    let totalPlanItems = 0;
+    let freePlanItems = 0;
+    for (const pl of enrichedPlans) {
+      for (const it of pl.items || []) {
+        if (!it.space_id) continue;
+        totalPlanItems++;
+        if (it.live_status === 'free' && it.bookable) freePlanItems++;
+        if (!planItemsBySpace.has(it.space_id)) planItemsBySpace.set(it.space_id, { total: 0, free: 0 });
+        const entry = planItemsBySpace.get(it.space_id);
+        entry.total++;
+        if (it.live_status === 'free' && it.bookable) entry.free++;
+      }
+    }
+
+    const spaces = Array.from(espacesById.values())
+      .map((esp) => {
+        const hourly = Number(esp.tarif_horaire || 0);
+        const capacity = Math.max(1, parseInt(esp.capacite, 10) || 1);
+        const isShared = SHARED_SPACE_TYPES.includes(esp.type);
+        const activeBookings = bookingsBySpace.get(esp.id) || [];
+        const occupiedCount = activeBookings.length;
+        const form = formationBySpace.get(esp.id) || null;
+        const photos = [...new Set([
+          esp.photo_url,
+          ...(Array.isArray(esp.photos_urls) ? esp.photos_urls : []),
+          ...(Array.isArray(esp.images) ? esp.images : []),
+        ].filter(Boolean))];
+        const fpStats = planItemsBySpace.get(esp.id) || { total: 0, free: 0 };
+
+        let remainingSpots = isShared ? Math.max(0, capacity - occupiedCount) : (occupiedCount > 0 ? 0 : 1);
+        let liveStatus = 'free';
+        let statusLabel = 'Disponible';
+        let nextFreeTime = null;
+        let conflictReason = null;
+
+        if (esp.actif === false) {
+          remainingSpots = 0;
+          liveStatus = 'maintenance';
+          statusLabel = 'Indisponible';
+          conflictReason = 'Espace temporairement en maintenance';
+        } else if (form) {
+          remainingSpots = 0;
+          liveStatus = 'formation';
+          statusLabel = 'Formation en cours';
+          nextFreeTime = form.date_fin || null;
+          conflictReason = `Réservé pour la formation « ${form.titre} »`;
+        } else if (remainingSpots === 0) {
+          liveStatus = 'occupied';
+          statusLabel = isShared ? 'Complet sur ce créneau' : 'Occupé sur ce créneau';
+          const endTimes = activeBookings.map((b) => b.date_fin).filter(Boolean).sort();
+          nextFreeTime = endTimes[0] || null;
+          conflictReason = isShared
+            ? `Toutes les places (${capacity}) sont réservées sur ce créneau`
+            : 'Cet espace est déjà réservé sur ce créneau';
+        } else if (isShared && remainingSpots <= Math.max(2, Math.ceil(capacity * 0.25))) {
+          liveStatus = 'limited';
+          statusLabel = `Plus que ${remainingSpots} place${remainingSpots > 1 ? 's' : ''}`;
+        }
+
+        return {
+          id: esp.id,
+          tenant_id: esp.tenant_id,
+          nom: esp.nom,
+          type: esp.type,
+          description: esp.description || null,
+          capacite: capacity,
+          capacity,
+          is_shared: isShared,
+          tarif_horaire: hourly,
+          tarif_journalier: Number((hourly * 8).toFixed(3)),
+          photo_url: photos[0] || null,
+          photos,
+          equipements: Array.isArray(esp.equipements) ? esp.equipements : [],
+          occupied_count: occupiedCount,
+          remaining_spots: remainingSpots,
+          live_status: liveStatus,
+          status_label: statusLabel,
+          next_free_time: nextFreeTime,
+          conflict_reason: conflictReason,
+          floor_plan_items_count: fpStats.total,
+          floor_plan_free_items_count: fpStats.free,
+        };
+      })
+      .sort((a, b) => {
+        const order = { free: 0, limited: 1, occupied: 2, formation: 3, maintenance: 4 };
+        const diff = (order[a.live_status] ?? 9) - (order[b.live_status] ?? 9);
+        return diff !== 0 ? diff : a.tarif_horaire - b.tarif_horaire;
+      });
+
+    const saasPack = tenant.settings?.saas_pack || 'essentiel';
+    const freeSpaces = spaces.filter((s) => s.live_status === 'free' || s.live_status === 'limited').length;
+
+    res.json({
+      tenant: {
+        id: tenant.id,
+        nom: tenant.nom,
+        slug: tenant.slug,
+        ville: tenant.ville || null,
+        adresse: tenant.adresse || null,
+        telephone: tenant.telephone || null,
+        latitude: tenant.latitude != null ? Number(tenant.latitude) : null,
+        longitude: tenant.longitude != null ? Number(tenant.longitude) : null,
+        logo_url: tenant.logo_url || null,
+        cover_url: tenant.cover_url || null,
+        description: tenant.description || null,
+        is_featured: saasPack === 'premium',
+        is_partner: ['premium', 'standard'].includes(saasPack) || Boolean(tenant.settings?.is_partner),
+      },
+      slot: {
+        date: slotDate,
+        start: slotStart,
+        end: slotEnd,
+        start_iso: rangeStartDate.toISOString(),
+        end_iso: rangeEndDate.toISOString(),
+        is_now: isNow,
+      },
+      server_time: tunisNow.iso,
+      tunis_time: tunisNow.time,
+      spaces,
+      floor_plans: enrichedPlans,
+      summary: {
+        total_spaces: spaces.length,
+        free_spaces: freeSpaces,
+        occupied_spaces: spaces.length - freeSpaces,
+        has_floor_plan: enrichedPlans.length > 0,
+        total_plan_items: totalPlanItems,
+        free_plan_items: freePlanItems,
+      },
+    });
+  } catch (err) {
+    console.error('❌ getPublicSpacesLive:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   listFloorPlans,
   createFloorPlan,
@@ -1049,4 +1282,6 @@ module.exports = {
   deleteFloorPlan,
   getLiveFloorPlanStatus,
   getPublicFloorPlans,
+  getPublicSpacesLive,
 };
+

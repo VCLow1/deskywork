@@ -43,4 +43,19 @@ export const floorPlansApi = {
     if (!res.ok) throw new Error(json.error || 'Impossible de charger le plan 2D.');
     return json;
   },
+
+  // Vue combinée espaces + plan 2D en temps réel (Africa/Tunis)
+  getPublicSpacesLive: async (tenantId, params = {}) => {
+    const clean = Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    );
+    const qs = new URLSearchParams(clean).toString();
+    const res = await fetch(
+      `${API_URL}/api/public/coworkings/${encodeURIComponent(tenantId)}/spaces-live${qs ? `?${qs}` : ''}`
+    );
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Impossible de charger la disponibilité temps réel.');
+    return json;
+  },
 };
+

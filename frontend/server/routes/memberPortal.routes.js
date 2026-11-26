@@ -11,6 +11,7 @@ const {
   markAllNotificationsRead,
   updateSettings,
   myFormations,
+  bookingRecommendations,
 } = require('../controllers/memberPortalController');
 
 // Historique réservations
@@ -19,8 +20,9 @@ router.get('/bookings/history', authenticate, bookingsHistory);
 // Stats globales
 router.get('/member/stats', authenticate, memberStats);
 
-// Espaces disponibles à proximité
+// Espaces disponibles à proximité & recommandations coworking
 router.get('/member/spaces-nearby', authenticate, spacesNearby);
+router.get('/member/booking-recommendations', authenticate, bookingRecommendations);
 
 // Notifications
 router.get('/member/notifications', authenticate, listNotifications);

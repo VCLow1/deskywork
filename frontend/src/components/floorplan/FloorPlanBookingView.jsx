@@ -1,6 +1,7 @@
-// components/floorplan/FloorPlanBookingView.jsx — Réservation interactive sur plan 2D côté Client
+// components/floorplan/FloorPlanBookingView.jsx — Réservation interactive sur plan 2D & synchronisation temps réel
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { floorPlansApi } from '../../services/api';
+import { supabase } from '../../supabaseClient';
 import { useTheme } from '../../context/ThemeContext';
 import FloorPlanCanvas from './FloorPlanCanvas';
 import {
@@ -17,6 +18,13 @@ const END_HOURS = Array.from({ length: 15 }, (_, i) => `${String(8 + i).padStart
 export default function FloorPlanBookingView({
   tenantId,
   initialPlans = null,
+  externalPlans = null,
+  controlledDate = null,
+  controlledStart = null,
+  controlledEnd = null,
+  onSlotChange = null,
+  hideSlotBar = false,
+  highlightSpaceId = null,
   onReserve = null,
 }) {
   const { dark } = useTheme();
@@ -24,21 +32,51 @@ export default function FloorPlanBookingView({
   const defSlot = useMemo(() => getDefaultTunisSlot(), []);
   const minDate = useMemo(() => getTodayTunisDate(), []);
 
-  const [date, setDate] = useState(defSlot.date);
-  const [startTime, setStartTime] = useState(defSlot.start);
-  const [endTime, setEndTime] = useState(defSlot.end);
-  const [plans, setPlans] = useState(initialPlans || []);
-  const [activePlanId, setActivePlanId] = useState(initialPlans?.[0]?.id || null);
+  const [internalDate, setInternalDate] = useState(defSlot.date);
+  const [internalStartTime, setInternalStartTime] = useState(defSlot.start);
+  const [internalEndTime, setInternalEndTime] = useState(defSlot.end);
+
+  const isControlledSlot = Boolean(controlledDate && controlledStart && controlledEnd);
+  const date = isControlledSlot ? controlledDate : internalDate;
+  const startTime = isControlledSlot ? controlledStart : internalStartTime;
+  const endTime = isControlledSlot ? controlledEnd : internalEndTime;
+
+  const setDate = (val) => {
+    if (isControlledSlot && onSlotChange) onSlotChange({ date: val, start: startTime, end: endTime });
+    else setInternalDate(val);
+  };
+  const setStartTime = (val) => {
+    if (isControlledSlot && onSlotChange) onSlotChange({ date, start: val, end: endTime });
+    else setInternalStartTime(val);
+  };
+  const setEndTime = (val) => {
+    if (isControlledSlot && onSlotChange) onSlotChange({ date, start: startTime, end: val });
+    else setInternalEndTime(val);
+  };
+
+  const hasExternalPlans = Array.isArray(externalPlans);
+  const [plans, setPlans] = useState(externalPlans || initialPlans || []);
+  const [activePlanId, setActivePlanId] = useState((externalPlans || initialPlans)?.[0]?.id || null);
   const [selectedItemId, setSelectedItemId] = useState(null);
-  const [loading, setLoading] = useState(!initialPlans);
+  const [loading, setLoading] = useState(!initialPlans && !hasExternalPlans);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (Array.isArray(externalPlans)) {
+      setPlans(externalPlans);
+      setActivePlanId((prev) =>
+        prev && externalPlans.some((p) => p.id === prev) ? prev : externalPlans[0]?.id || null
+      );
+      setLoading(false);
+    }
+  }, [externalPlans]);
 
   const slotInvalid = startTime >= endTime;
 
-  const refreshAvailability = useCallback(async () => {
-    if (!tenantId || slotInvalid) return;
+  const refreshAvailability = useCallback(async ({ silent = false } = {}) => {
+    if (!tenantId || slotInvalid || hasExternalPlans) return;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError('');
       const res = await floorPlansApi.getPublic(tenantId, {
         date,
@@ -49,15 +87,46 @@ export default function FloorPlanBookingView({
       setPlans(list);
       setActivePlanId((prev) => (prev && list.some((p) => p.id === prev) ? prev : list[0]?.id || null));
     } catch (e) {
-      setError(e.message || 'Impossible de vérifier les disponibilités sur le plan.');
+      if (!silent) setError(e.message || 'Impossible de vérifier les disponibilités sur le plan.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [tenantId, date, startTime, endTime, slotInvalid]);
+  }, [tenantId, date, startTime, endTime, slotInvalid, hasExternalPlans]);
 
   useEffect(() => {
-    refreshAvailability();
-  }, [refreshAvailability]);
+    if (!hasExternalPlans) {
+      refreshAvailability();
+    }
+  }, [refreshAvailability, hasExternalPlans]);
+
+  // Abonnement temps réel Supabase + rafraîchissement 15s (si non piloté par le parent)
+  useEffect(() => {
+    if (!tenantId || hasExternalPlans) return undefined;
+    const channel = supabase
+      .channel(`fp-booking-live-${tenantId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reservations', filter: `tenant_id=eq.${tenantId}` },
+        () => refreshAvailability({ silent: true })
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sessions', filter: `tenant_id=eq.${tenantId}` },
+        () => refreshAvailability({ silent: true })
+      )
+      .subscribe();
+
+    const timer = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshAvailability({ silent: true });
+      }
+    }, 15000);
+
+    return () => {
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [tenantId, hasExternalPlans, refreshAvailability]);
 
   const activePlan = useMemo(
     () => plans.find((p) => p.id === activePlanId) || plans[0] || null,
@@ -102,101 +171,142 @@ export default function FloorPlanBookingView({
   return (
     <div className="space-y-4">
       {/* Barre de sélection Date + Créneau horaire (Africa/Tunis) */}
-      <div className="rounded-2xl border p-4 shadow-sm" style={boxStyle}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
-              Date (Africa/Tunis)
-            </label>
-            <input
-              type="date"
-              min={minDate}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
-              style={inputStyle}
-            />
+      {!hideSlotBar ? (
+        <div className="rounded-2xl border p-4 shadow-sm" style={boxStyle}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+                Date (Africa/Tunis)
+              </label>
+              <input
+                type="date"
+                min={minDate}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+                Heure de début
+              </label>
+              <select
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
+                style={inputStyle}
+              >
+                {START_HOURS.map((h) => (
+                  <option key={h} value={h}>{h}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+                Heure de fin
+              </label>
+              <select
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
+                style={inputStyle}
+              >
+                {END_HOURS.map((h) => (
+                  <option key={h} value={h}>{h}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              {plans.length > 1 && (
+                <select
+                  value={activePlan?.id || ''}
+                  onChange={(e) => {
+                    setActivePlanId(e.target.value);
+                    setSelectedItemId(null);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border text-sm font-bold outline-none"
+                  style={inputStyle}
+                >
+                  {plans.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+              <div className="text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-300">
+                {loading ? 'Mise à jour…' : `${freeCount} disponible${freeCount > 1 ? 's' : ''}`}
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
-              Heure de début
-            </label>
-            <select
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
-              style={inputStyle}
-            >
-              {START_HOURS.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
-          </div>
+          {slotInvalid && (
+            <p className="mt-2.5 text-xs font-semibold text-red-500">
+              L&apos;heure de fin doit être postérieure à l&apos;heure de début.
+            </p>
+          )}
+          {error && (
+            <p className="mt-2.5 text-xs font-semibold text-red-500">{error}</p>
+          )}
 
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
-              Heure de fin
-            </label>
-            <select
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border text-sm font-semibold outline-none"
-              style={inputStyle}
-            >
-              {END_HOURS.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
+          {/* Légende */}
+          <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t text-xs" style={{ borderColor: boxStyle.borderColor }}>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.free.dot }} />
+              Libre (cliquer pour choisir)
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.occupied.dot }} />
+              Occupé sur ce créneau
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.maintenance.dot }} />
+              Maintenance
+            </span>
           </div>
-
-          <div className="flex items-center justify-between gap-2">
-            {plans.length > 1 && (
+        </div>
+      ) : (
+        <div className="rounded-2xl border px-4 py-3 flex flex-wrap items-center justify-between gap-3" style={boxStyle}>
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            <span className="inline-flex items-center gap-1.5 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              Temps réel ({freeCount} libre{freeCount > 1 ? 's' : ''})
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.free.dot }} />
+              Libre
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.occupied.dot }} />
+              Occupé
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.maintenance.dot }} />
+              Maintenance
+            </span>
+          </div>
+          {plans.length > 1 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold opacity-70">Niveau :</span>
               <select
                 value={activePlan?.id || ''}
                 onChange={(e) => {
                   setActivePlanId(e.target.value);
                   setSelectedItemId(null);
                 }}
-                className="w-full px-3 py-2 rounded-xl border text-sm font-bold outline-none"
+                className="px-3 py-1.5 rounded-xl border text-xs font-bold outline-none"
                 style={inputStyle}
               >
                 {plans.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-            )}
-            <div className="text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-300">
-              {loading ? 'Mise à jour…' : `${freeCount} disponible${freeCount > 1 ? 's' : ''}`}
             </div>
-          </div>
+          )}
         </div>
-
-        {slotInvalid && (
-          <p className="mt-2.5 text-xs font-semibold text-red-500">
-            L&apos;heure de fin doit être postérieure à l&apos;heure de début.
-          </p>
-        )}
-        {error && (
-          <p className="mt-2.5 text-xs font-semibold text-red-500">{error}</p>
-        )}
-
-        {/* Légende */}
-        <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t text-xs" style={{ borderColor: boxStyle.borderColor }}>
-          <span className="inline-flex items-center gap-1.5 font-medium">
-            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.free.dot }} />
-            Libre (cliquer pour choisir)
-          </span>
-          <span className="inline-flex items-center gap-1.5 font-medium">
-            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.occupied.dot }} />
-            Occupé sur ce créneau
-          </span>
-          <span className="inline-flex items-center gap-1.5 font-medium">
-            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: palette.statuses.maintenance.dot }} />
-            Maintenance
-          </span>
-        </div>
-      </div>
+      )}
 
       {/* Canvas Plan 2D */}
       {activePlan && (
@@ -323,3 +433,4 @@ export default function FloorPlanBookingView({
     </div>
   );
 }
+
