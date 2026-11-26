@@ -767,7 +767,7 @@ export default function AdminDashboard({ session }) {
 
       {/* ── 1. Hero Command Header ───────────────────────────────────────── */}
       <header
-        className="dash-enter relative mb-6 rounded-3xl border border-outline-variant/15 p-5 sm:p-6 overflow-hidden"
+        className="dash-enter relative z-20 mb-6 rounded-3xl border border-outline-variant/15 p-5 sm:p-6"
         style={{
           background: dark
             ? 'linear-gradient(135deg, rgba(249,93,0,0.12) 0%, #151412 52%, rgba(47,190,143,0.08) 100%)'
@@ -806,41 +806,47 @@ export default function AdminDashboard({ session }) {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col items-start xl:items-end gap-2.5">
             <PeriodFilter value={period} onChange={setPeriod} />
-            <Link
-              to="/admin/agenda?view=plan"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm bg-primary text-on-primary hover:opacity-90 transition-all hover:-translate-y-0.5 shadow-xs no-underline"
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>map</span>
-              Plan 2D Live
-            </Link>
-            {profile?.role !== 'staff' && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleExportPdf}
-                  disabled={exportingPdf}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-lowest text-primary border border-outline-variant/25 hover:bg-surface-container transition-all disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[17px] text-[#f95d00]">
-                    {exportingPdf ? 'sync' : 'picture_as_pdf'}
-                  </span>
-                  {exportingPdf ? 'PDF…' : 'PDF'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  disabled={exporting || !kpis}
-                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-all disabled:opacity-50 shadow-xs"
-                >
-                  <span className="material-symbols-outlined text-[17px]">
-                    {exporting ? 'sync' : 'download'}
-                  </span>
-                  {exporting ? 'Export…' : 'Excel'}
-                </button>
-              </>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to="/admin/agenda?view=plan"
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all hover:-translate-y-0.5 shadow-xs no-underline ${
+                  dark
+                    ? 'bg-white/10 text-white border border-white/15 hover:bg-white/18'
+                    : 'bg-[#100f0d] text-white hover:bg-[#242220]'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 17 }}>map</span>
+                Plan 2D Live
+              </Link>
+              {profile?.role !== 'staff' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleExportPdf}
+                    disabled={exportingPdf}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-lowest text-primary border border-outline-variant/25 hover:bg-surface-container transition-all disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[17px] text-[#f95d00]">
+                      {exportingPdf ? 'sync' : 'picture_as_pdf'}
+                    </span>
+                    {exportingPdf ? 'PDF…' : 'PDF'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExport}
+                    disabled={exporting || !kpis}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-all disabled:opacity-50 shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[17px]">
+                      {exporting ? 'sync' : 'download'}
+                    </span>
+                    {exporting ? 'Export…' : 'Excel'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>
