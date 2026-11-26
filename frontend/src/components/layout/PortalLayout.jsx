@@ -1,10 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../supabaseClient';
 import { joinUser, onNotificationCreated, onNotificationChanged } from '../../services/socket';
 import { memberPortalApi, tenantAdminApi } from '../../services/api';
+import {
+  initAudioUnlock,
+  playNotificationSound,
+  isNotificationSoundEnabled,
+  toggleNotificationSound,
+  requestBrowserNotificationPermission,
+  showBrowserNotification,
+} from '../../utils/notificationSound';
 import {
   COMPANY_NAV,
   isCompanyRole,
@@ -342,12 +351,23 @@ export default function PortalLayout({ children, profile, onLogout }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [soundEnabled, setSoundEnabled] = useState(() => isNotificationSoundEnabled());
+  const [bellRinging, setBellRinging] = useState(false);
+  const [liveToasts, setLiveToasts] = useState([]);
+  const [browserPerm, setBrowserPerm] = useState(() =>
+    typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
+  );
   const [tenantLogo, setTenantLogo] = useState(null);
   const [tenantActivite, setTenantActivite] = useState(() => localStorage.getItem('active_org_activite') || 'mixte');
 
   const dropdownRef = useRef(null);
   const notifRef = useRef(null);
   const searchRef = useRef(null);
+  const seenNotifIdsRef = useRef(new Set());
+  const initialNotifsLoadedRef = useRef(false);
+  const bellTimerRef = useRef(null);
+  const roleRef = useRef(profile?.role);
+  roleRef.current = profile?.role;
   const [globalQuery, setGlobalQuery] = useState('');
   const [globalResults, setGlobalResults] = useState(null);
   const [globalSearching, setGlobalSearching] = useState(false);
@@ -452,14 +472,61 @@ export default function PortalLayout({ children, profile, onLogout }) {
     return () => { cancelled = true; };
   }, [profile?.id, profile?.tenant_id, profile?.photo_url, profile?.avatar_url]);
 
-  // Chargement + Écoute Temps Réel des Notifications
+  // Déblocage AudioContext navigateur à la première interaction + badge onglet
+  useEffect(() => {
+    initAudioUnlock();
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.title = unreadCount > 0
+      ? `(${unreadCount > 99 ? '99+' : unreadCount}) DeskyWork`
+      : 'DeskyWork';
+    return () => {
+      document.title = 'DeskyWork';
+    };
+  }, [unreadCount]);
+
+  // Chargement + Écoute Temps Réel des Notifications (Realtime + Socket.io + Polling 6s)
   useEffect(() => {
     if (!profile?.id) return;
     let cancelled = false;
+    seenNotifIdsRef.current = new Set();
+    initialNotifsLoadedRef.current = false;
+
+    const triggerIncomingNotification = (notif, { silentAudio = false } = {}) => {
+      if (!notif || !notif.id) return;
+      if (seenNotifIdsRef.current.has(notif.id)) return;
+      seenNotifIdsRef.current.add(notif.id);
+      if (notif.lu) return;
+
+      if (!silentAudio) {
+        playNotificationSound(notif.type);
+      }
+      setBellRinging(true);
+      if (bellTimerRef.current) clearTimeout(bellTimerRef.current);
+      bellTimerRef.current = setTimeout(() => setBellRinging(false), 1400);
+
+      showBrowserNotification(notif, (clicked) => {
+        navigate(getNotificationTarget(clicked?.type, roleRef.current));
+      });
+
+      window.dispatchEvent(new CustomEvent('deskywork-notification-received', { detail: notif }));
+
+      const toastId = `${notif.id}-${Date.now()}`;
+      setLiveToasts((prev) => [{ toastId, notif }, ...prev.filter((t) => t.notif.id !== notif.id)].slice(0, 3));
+      setTimeout(() => {
+        setLiveToasts((prev) => prev.filter((t) => t.toastId !== toastId));
+      }, 6500);
+    };
 
     async function fetchNotifications(force = false) {
       const cached = notificationsCache.get(profile.id);
       if (!force && cached && cached.expiresAt > Date.now()) {
+        if (!initialNotifsLoadedRef.current) {
+          (cached.notifications || []).forEach((n) => n?.id && seenNotifIdsRef.current.add(n.id));
+          initialNotifsLoadedRef.current = true;
+        }
         setNotifications(cached.notifications);
         setUnreadCount(cached.unreadCount);
         return;
@@ -470,6 +537,14 @@ export default function PortalLayout({ children, profile, onLogout }) {
         const data = response.data?.notifications ?? response.notifications ?? [];
         const count = response.data?.unreadCount ?? response.unreadCount ?? data.filter(n => !n.lu).length;
         if (data) {
+          if (!initialNotifsLoadedRef.current) {
+            data.forEach((n) => n?.id && seenNotifIdsRef.current.add(n.id));
+            initialNotifsLoadedRef.current = true;
+          } else {
+            const newOnes = [...data].reverse().filter((n) => n?.id && !seenNotifIdsRef.current.has(n.id));
+            newOnes.forEach((n, idx) => triggerIncomingNotification(n, { silentAudio: idx > 0 }));
+          }
+
           notificationsCache.set(profile.id, {
             notifications: data,
             unreadCount: count,
@@ -494,10 +569,11 @@ export default function PortalLayout({ children, profile, onLogout }) {
         if (!alreadyPresent && !notification.lu) setUnreadCount(count => count + 1);
         return [notification, ...prev.filter(item => item.id !== notification.id)].slice(0, 20);
       });
+      triggerIncomingNotification(notification);
     });
     const removeChangedListener = onNotificationChanged(() => fetchNotifications(true));
 
-    // Realtime: re-fetch on any INSERT/UPDATE/DELETE for this user's notifications
+    // Realtime: écoute instantanée INSERT/UPDATE/DELETE sur public.notifications
     const channel = supabase
       .channel(`user-notifs-${profile.id}`)
       .on(
@@ -510,15 +586,14 @@ export default function PortalLayout({ children, profile, onLogout }) {
         },
         (payload) => {
           notificationsCache.delete(profile.id);
-          // For new notifications, add directly to state for instant update
           if (payload.eventType === 'INSERT' && payload.new) {
             setNotifications(prev => {
               if (prev.some(item => item.id === payload.new.id)) return prev;
               if (!payload.new.lu) setUnreadCount(count => count + 1);
               return [payload.new, ...prev].slice(0, 20);
             });
+            triggerIncomingNotification(payload.new);
           } else {
-            // For UPDATE/DELETE, re-fetch to stay in sync
             fetchNotifications(true);
           }
         }
@@ -529,19 +604,32 @@ export default function PortalLayout({ children, profile, onLogout }) {
         }
       });
 
-    // Fallback polling périodique (15s) pour garantir les notifications temps réel sur tout environnement
+    // Polling temps réel (6s si onglet actif) + resync immédiat au retour sur l'onglet
     const pollInterval = setInterval(() => {
-      if (!cancelled) fetchNotifications(true);
-    }, 15000);
+      if (!cancelled && (typeof document === 'undefined' || !document.hidden)) {
+        fetchNotifications(true);
+      }
+    }, 6000);
+
+    const onVisibilityOrFocus = () => {
+      if (!cancelled && (typeof document === 'undefined' || !document.hidden)) {
+        fetchNotifications(true);
+      }
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
 
     return () => {
       cancelled = true;
       clearInterval(pollInterval);
+      if (bellTimerRef.current) clearTimeout(bellTimerRef.current);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
       removeCreatedListener();
       removeChangedListener();
       supabase.removeChannel(channel);
     };
-  }, [profile?.id]);
+  }, [profile?.id, navigate]);
 
   const [livePhotoUrl, setLivePhotoUrl] = useState(profile?.photo_url || profile?.avatar_url || null);
 
@@ -628,6 +716,24 @@ export default function PortalLayout({ children, profile, onLogout }) {
     setNotifOpen(false);
 
     navigate(getNotificationTarget(n.type, profile?.role));
+  };
+
+  const handleToggleSound = () => {
+    const next = toggleNotificationSound();
+    setSoundEnabled(next);
+    if (next) playNotificationSound('info', { force: true });
+  };
+
+  const handleTestSound = () => {
+    playNotificationSound('paiement', { force: true });
+    setBellRinging(true);
+    if (bellTimerRef.current) clearTimeout(bellTimerRef.current);
+    bellTimerRef.current = setTimeout(() => setBellRinging(false), 1400);
+  };
+
+  const handleEnableBrowserAlerts = async () => {
+    const perm = await requestBrowserNotificationPermission();
+    setBrowserPerm(perm);
   };
 
   const notifCenterUrl = ['super_admin', 'admin', 'staff'].includes(profile?.role)
@@ -890,7 +996,29 @@ export default function PortalLayout({ children, profile, onLogout }) {
                 }
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>notifications</span>
+              <span
+                className="material-symbols-outlined"
+                style={{
+                  fontSize: 20,
+                  animation: bellRinging ? 'dwBellRing 0.85s ease-in-out' : undefined,
+                  color: bellRinging ? '#f95d00' : undefined,
+                }}
+              >
+                notifications
+              </span>
+
+              {bellRinging && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    inset: -4,
+                    borderRadius: 14,
+                    border: '2px solid #f95d00',
+                    animation: 'ping 1s cubic-bezier(0,0,0.2,1) infinite',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
 
               {unreadCount > 0 && (
                 <span style={{
@@ -925,11 +1053,21 @@ export default function PortalLayout({ children, profile, onLogout }) {
                   animation: 'popDropdown 0.2s ease-out both',
                 }}
               >
-                <style>{"@keyframes popDropdown { from { opacity: 0; transform: translateY(-8px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }"}</style>
+                <style>{`
+                  @keyframes popDropdown { from { opacity: 0; transform: translateY(-8px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+                  @keyframes dwBellRing {
+                    0%, 100% { transform: rotate(0deg); }
+                    15% { transform: rotate(16deg); }
+                    30% { transform: rotate(-14deg); }
+                    45% { transform: rotate(10deg); }
+                    60% { transform: rotate(-8deg); }
+                    75% { transform: rotate(4deg); }
+                  }
+                `}</style>
 
                 <div style={{
-                  padding: '16px 20px',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '14px 18px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                   borderBottom: dark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(16,15,13,0.08)',
                   background: dark ? 'rgba(255,255,255,0.02)' : 'rgba(16,15,13,0.02)',
                 }}>
@@ -941,14 +1079,60 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       </span>
                     )}
                   </div>
-                  {unreadCount > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <button
-                      onClick={markAllAsRead}
-                      style={{ fontSize: 12, fontWeight: 600, color: '#f95d00', border: 'none', background: 'transparent', cursor: 'pointer' }}
+                      type="button"
+                      onClick={handleToggleSound}
+                      title={soundEnabled ? 'Couper le son des notifications' : 'Activer le son des notifications'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                        padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                        fontSize: 11, fontWeight: 700,
+                        background: soundEnabled ? 'rgba(47,190,143,0.12)' : (dark ? 'rgba(255,255,255,0.06)' : 'rgba(16,15,13,0.06)'),
+                        color: soundEnabled ? '#2fbe8f' : (dark ? '#a3a09b' : '#64748b'),
+                      }}
                     >
-                      Tout lire
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                        {soundEnabled ? 'volume_up' : 'volume_off'}
+                      </span>
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      onClick={handleTestSound}
+                      title="Tester le son d'alerte"
+                      style={{
+                        padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                        fontSize: 10, fontWeight: 700,
+                        background: 'rgba(249,93,0,0.1)', color: '#f95d00',
+                      }}
+                    >
+                      Tester
+                    </button>
+                    {browserPerm === 'default' && (
+                      <button
+                        type="button"
+                        onClick={handleEnableBrowserAlerts}
+                        title="Activer aussi les alertes bureau quand l'onglet est en arrière-plan"
+                        style={{
+                          padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          fontSize: 10, fontWeight: 700,
+                          background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.06)',
+                          color: dark ? '#fbffff' : '#100f0d',
+                        }}
+                      >
+                        Bureau
+                      </button>
+                    )}
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={markAllAsRead}
+                        style={{ fontSize: 11.5, fontWeight: 600, color: '#f95d00', border: 'none', background: 'transparent', cursor: 'pointer', paddingLeft: 4 }}
+                      >
+                        Tout lire
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ maxHeight: 340, overflowY: 'auto' }}>
@@ -1339,6 +1523,122 @@ export default function PortalLayout({ children, profile, onLogout }) {
           </div>
         </main>
       </div>
+
+      {/* ── Toasts Temps Réel + Barre de progression (Portal document.body) ── */}
+      {liveToasts.length > 0 && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 78,
+            right: 16,
+            zIndex: 9998,
+            width: 'min(370px, calc(100vw - 24px))',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          <style>{`
+            @keyframes dwToastIn { from { opacity: 0; transform: translateX(28px) scale(0.96); } to { opacity: 1; transform: translateX(0) scale(1); } }
+            @keyframes dwToastDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+            @keyframes dwBellRing {
+              0%, 100% { transform: rotate(0deg); }
+              15% { transform: rotate(16deg); }
+              30% { transform: rotate(-14deg); }
+              45% { transform: rotate(10deg); }
+              60% { transform: rotate(-8deg); }
+              75% { transform: rotate(4deg); }
+            }
+          `}</style>
+          {liveToasts.map(({ toastId, notif }) => (
+            <div
+              key={toastId}
+              onClick={() => {
+                setLiveToasts((prev) => prev.filter((t) => t.toastId !== toastId));
+                handleNotificationClick(notif);
+              }}
+              style={{
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+                position: 'relative',
+                overflow: 'hidden',
+                borderRadius: 18,
+                padding: '13px 15px 15px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12,
+                background: dark ? 'rgba(27,26,24,0.96)' : 'rgba(255,255,255,0.97)',
+                color: dark ? '#fbffff' : '#100f0d',
+                border: '1px solid rgba(249,93,0,0.32)',
+                boxShadow: dark ? '0 18px 44px rgba(0,0,0,0.6)' : '0 18px 44px rgba(15,23,42,0.16)',
+                backdropFilter: 'blur(12px)',
+                animation: 'dwToastIn 0.28s cubic-bezier(0.22,1,0.36,1) both',
+              }}
+            >
+              <span
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 11,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  background: 'rgba(249,93,0,0.14)',
+                  color: '#f95d00',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
+                  {getNotifIcon(notif.type)}
+                </span>
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#f95d00' }}>
+                    Nouvelle alerte
+                  </span>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2fbe8f' }} />
+                </div>
+                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                  {notif.message || notif.title || 'Nouvelle notification reçue'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLiveToasts((prev) => prev.filter((t) => t.toastId !== toastId));
+                }}
+                aria-label="Fermer"
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: dark ? '#a3a09b' : '#64748b',
+                  cursor: 'pointer',
+                  padding: 2,
+                  lineHeight: 1,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+              </button>
+              <span
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 3,
+                  background: 'linear-gradient(90deg, #f95d00, #ff8a3d)',
+                  transformOrigin: 'left center',
+                  animation: 'dwToastDrain 6.5s linear forwards',
+                }}
+              />
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

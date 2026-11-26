@@ -225,8 +225,11 @@ export default function AdminNotifications({ session }) {
         },
         (payload) => {
           if (payload.eventType === 'INSERT' && payload.new) {
-            setNotifications((prev) => [payload.new, ...prev]);
-            totalRef.current += 1;
+            setNotifications((prev) => {
+              if (prev.some((n) => n.id === payload.new.id)) return prev;
+              totalRef.current += 1;
+              return [payload.new, ...prev];
+            });
           } else if (payload.eventType === 'UPDATE' && payload.new) {
             setNotifications((prev) =>
               prev.map((n) => (n.id === payload.new.id ? payload.new : n))
@@ -240,7 +243,19 @@ export default function AdminNotifications({ session }) {
         if (err) console.warn('AdminNotifications realtime error:', err.message);
       });
 
+    const onLiveNotif = (e) => {
+      const notif = e?.detail;
+      if (!notif?.id) return;
+      setNotifications((prev) => {
+        if (prev.some((n) => n.id === notif.id)) return prev;
+        totalRef.current += 1;
+        return [notif, ...prev];
+      });
+    };
+    window.addEventListener('deskywork-notification-received', onLiveNotif);
+
     return () => {
+      window.removeEventListener('deskywork-notification-received', onLiveNotif);
       supabase.removeChannel(channel);
     };
   }, [profile?.id]);

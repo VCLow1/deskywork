@@ -159,6 +159,33 @@ router.post('/guests/booking', async (req, res) => {
     );
     if (rErr) return res.status(400).json({ error: rErr.message });
 
+    // Alerte temps réel In-App pour les gérants/staff du coworking (réservation invité)
+    try {
+      if (tenantId) {
+        const { data: admins } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .in('role', ['admin', 'staff']);
+        if (admins && admins.length > 0) {
+          const guestLabel = `${prenom} ${nom}`.trim() || email;
+          const dateLabel = new Date(date_debut).toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis' }) +
+            ' à ' +
+            new Date(date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Tunis' });
+          const posteTxt = floor_plan_item_label ? ` (${floor_plan_item_label})` : '';
+          await supabaseAdmin.from('notifications').insert(
+            admins.map((a) => ({
+              user_id: a.id,
+              type: 'nouvelle_demande_reservation',
+              canal: 'Dashboard',
+              lu: false,
+              message: `👤 Nouvelle réservation invité de ${guestLabel} pour ${espace.nom}${posteTxt} (${dateLabel}) — Règlement sur place.`,
+            }))
+          );
+        }
+      }
+    } catch (_) {}
+
     res.status(201).json({
       reservation: { ...reservation, espaces: { nom: espace.nom, type: espace.type } },
       guest,
