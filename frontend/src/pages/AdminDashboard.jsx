@@ -1,27 +1,53 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { kpiApi, memberApi, tenantAdminApi, guestApi, sessionApi } from '../services/api';
-import { formatDT as formatDTMillimes } from '../utils/format';
+import { formatDT as formatDTMillimes, TUNIS_TZ } from '../utils/format';
 import PortalLayout from '../components/layout/PortalLayout';
 import { getRoleLabel } from '../utils/roles';
 import { exportDashboardToExcel } from '../utils/exportDashboardExcel';
 import PeriodFilter from '../components/dashboard/PeriodFilter';
 import AIReportPanel from '../components/dashboard/AIReportPanel';
 import { useSessionUser } from '../hooks/useSessionUser';
+import { useTheme } from '../context/ThemeContext';
 import {
   DEFAULT_PERIOD, periodWindow, windowLabel, trendBadge, CHART_COLORS, inWindow,
 } from '../utils/dashboardPeriod';
 import {
-  ComposedChart, LineChart, BarChart, Bar, Line, Area,
+  ComposedChart, BarChart, Bar, Line,
   PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
-
 // ─── Intervalles de rafraîchissement ────────────────────────────────────────
 const REFRESH_KPI_MS = 90_000;      // KPIs généraux  : 90s
 const REFRESH_SESSIONS_MS = 30_000; // Sessions live  : 30s
+
+// ─── Animations CSS pures légères ───────────────────────────────────────────
+const DASH_ANIMATIONS = `
+@keyframes dashFadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes dashScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes dashBarGrow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.dash-enter {
+  animation: dashFadeUp 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dash-scale-enter {
+  animation: dashScaleIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dash-bar-grow {
+  transform-origin: left center;
+  animation: dashBarGrow 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function formatDT(val) {
@@ -38,14 +64,6 @@ function formatClockSeconds(totalSec) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function formatTime(minutes) {
-  if (minutes == null) return '—';
-  if (minutes <= 0) return 'Terminé';
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return h > 0 ? `${h}h ${m.toString().padStart(2, '0')}min` : `${m} min`;
-}
-
 function greeting() {
   const h = new Date().getHours();
   if (h < 12) return 'Bonjour';
@@ -55,138 +73,261 @@ function greeting() {
 
 function formatTimeShort(dateStr) {
   if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleTimeString('fr-FR', { timeStyle: 'short' });
+  return new Date(dateStr).toLocaleTimeString('fr-FR', { timeZone: TUNIS_TZ, timeStyle: 'short' });
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '—';
+  return new Date(dateStr).toLocaleDateString('fr-FR', { timeZone: TUNIS_TZ, day: 'numeric', month: 'short' });
 }
 
 function relTime(dateStr) {
   if (!dateStr) return '';
   const diff = Date.now() - new Date(dateStr).getTime();
   const min = Math.floor(diff / 60000);
-  if (min < 1) return 'à l\'instant';
+  if (min < 1) return "à l'instant";
   if (min < 60) return `il y a ${min} min`;
   const h = Math.floor(min / 60);
   if (h < 24) return `il y a ${h}h`;
   const d = Math.floor(h / 24);
   if (d < 7) return `il y a ${d}j`;
-  return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return new Date(dateStr).toLocaleDateString('fr-FR', { timeZone: TUNIS_TZ, day: 'numeric', month: 'short' });
 }
 
-// ─── Composant StatCard PowerBI ─────────────────────────────────────────────
-function StatCard({ label, value, sub, icon, accent = '#f95d00', to, badge, pulse, trend }) {
-  const bg = accent === '#2fbe8f' ? 'rgba(47,190,143,0.1)'
-    : accent === '#ba1a1a' ? 'rgba(186,26,26,0.09)'
-      : accent === '#f59e0b' ? 'rgba(245,158,11,0.1)'
-        : accent === '#8b5cf6' ? 'rgba(139,92,246,0.1)'
-          : accent === '#0ea5e9' ? 'rgba(14,165,233,0.09)'
-            : 'rgba(249,93,0,0.09)';
+function getInitials(prenom, nom, fallback = 'DW') {
+  const a = String(prenom || '').trim()[0] || '';
+  const b = String(nom || '').trim()[0] || '';
+  return (a + b).toUpperCase() || fallback;
+}
 
-  const trendColor = trend?.dir === 'up' ? '#2fbe8f' : trend?.dir === 'down' ? '#ba1a1a' : '#64748b';
+// ─── Hook compteur animé fluide (easeOutCubic) ──────────────────────────────
+function useCountUp(target, duration = 680) {
+  const numeric = Number(target);
+  const valid = Number.isFinite(numeric);
+  const [display, setDisplay] = useState(valid ? numeric : 0);
+  const prevRef = useRef(valid ? numeric : 0);
 
-  const inner = (
-    <div
-      className="bg-surface-container-lowest rounded-3xl border border-outline-variant/10 h-full transition-all duration-300 hover:-translate-y-1 relative overflow-hidden group"
-      style={{ padding: '18px 20px', boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+  useEffect(() => {
+    if (!valid) return undefined;
+    const from = prevRef.current;
+    const to = numeric;
+    if (from === to) {
+      setDisplay(to);
+      return undefined;
+    }
+    let rafId = null;
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const current = from + (to - from) * eased;
+      setDisplay(current);
+      if (t < 1) {
+        rafId = requestAnimationFrame(step);
+      } else {
+        prevRef.current = to;
+        setDisplay(to);
+      }
+    };
+    rafId = requestAnimationFrame(step);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [numeric, valid, duration]);
+
+  return valid ? display : null;
+}
+
+function AnimatedNumber({ value, decimals = 0, suffix = '' }) {
+  const num = Number(value);
+  const isNum = Number.isFinite(num);
+  const animated = useCountUp(isNum ? num : 0);
+  if (!isNum || animated == null) return <span>—</span>;
+  const formatted = decimals > 0
+    ? animated.toLocaleString('fr-TN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    : Math.round(animated).toLocaleString('fr-FR');
+  return <span>{formatted}{suffix}</span>;
+}
+
+// ─── Composant StatCard Cliquable & Animée ──────────────────────────────────
+function StatCard({ label, rawValue, decimals = 0, suffix = '', sub, icon, accent = '#f95d00', to = '/admin/dashboard', badge, pulse, trend, delayMs = 0 }) {
+  const { dark } = useTheme();
+  const bg = accent === '#2fbe8f' ? 'rgba(47,190,143,0.12)'
+    : accent === '#ba1a1a' ? 'rgba(186,26,26,0.10)'
+      : accent === '#f59e0b' ? 'rgba(245,158,11,0.12)'
+        : accent === '#8b5cf6' ? 'rgba(139,92,246,0.12)'
+          : accent === '#0ea5e9' ? 'rgba(14,165,233,0.11)'
+            : 'rgba(249,93,0,0.11)';
+
+  const trendColor = trend?.dir === 'up' ? '#2fbe8f' : trend?.dir === 'down' ? '#ba1a1a' : (dark ? '#a3a09b' : '#64748b');
+
+  return (
+    <Link
+      to={to}
+      className="dash-enter block no-underline hover:no-underline h-full group focus:outline-none"
+      style={{ animationDelay: `${delayMs}ms` }}
     >
-      <span className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }} />
-      {pulse && (
-        <span className="absolute top-3 right-3 flex h-2.5 w-2.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: accent }} />
-          <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ background: accent }} />
-        </span>
-      )}
-      <div className="flex items-center gap-2.5 mb-2.5">
-        <span className="flex items-center justify-center w-8 h-8 rounded-xl shrink-0 group-hover:scale-110 transition-transform"
-          style={{ background: bg, color: accent }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{icon}</span>
-        </span>
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant leading-tight">{label}</span>
-      </div>
-      <p className="font-sora font-bold text-primary" style={{ fontSize: 22 }}>{value}</p>
-      {trend && (
-        <p className="text-[11px] font-bold mt-1 flex items-center gap-1" style={{ color: trendColor }}>
-          {trend.text}
-        </p>
-      )}
-      {sub && <p className="text-[11px] text-on-surface-variant mt-1 font-medium">{sub}</p>}
-      {badge != null && (
-        <span className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
-          style={{ background: bg, color: accent }}>
-          {badge}
-        </span>
-      )}
-    </div>
-  );
+      <div
+        className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 h-full transition-all duration-300 group-hover:-translate-y-1.5 group-hover:border-secondary/40 relative overflow-hidden"
+        style={{
+          padding: '18px 20px',
+          boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.06)',
+        }}
+      >
+        <span
+          className="absolute inset-x-0 top-0 h-1 transition-all duration-300 group-hover:h-1.5"
+          style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}
+        />
+        <span
+          className="pointer-events-none absolute -right-8 -bottom-8 w-24 h-24 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl"
+          style={{ background: bg }}
+        />
 
-  return to
-    ? <Link to={to} className="block no-underline hover:no-underline h-full">{inner}</Link>
-    : inner;
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span
+              className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-300"
+              style={{ background: bg, color: accent }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant leading-tight">
+              {label}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {pulse && (
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: accent }} />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ background: accent }} />
+              </span>
+            )}
+            <span
+              className="material-symbols-outlined text-on-surface-variant/40 group-hover:text-secondary group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all duration-300"
+              style={{ fontSize: 16 }}
+            >
+              arrow_outward
+            </span>
+          </div>
+        </div>
+
+        <p className="font-sora font-extrabold text-primary leading-tight" style={{ fontSize: 23 }}>
+          <AnimatedNumber value={rawValue} decimals={decimals} suffix={suffix} />
+        </p>
+
+        {trend && (
+          <p className="text-[11px] font-bold mt-1 flex items-center gap-1" style={{ color: trendColor }}>
+            {trend.text}
+          </p>
+        )}
+        {sub && <p className="text-[11px] text-on-surface-variant mt-1 font-medium truncate">{sub}</p>}
+        {badge != null && (
+          <span
+            className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
+            style={{ background: bg, color: accent }}
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+    </Link>
+  );
 }
 
-// ─── Tooltip personnalisé Recharts ───────────────────────────────────────────
+// ─── Tooltip personnalisé Recharts (Dark / Light) ───────────────────────────
 function CustomTooltip({ active, payload, label }) {
+  const { dark } = useTheme();
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-outline-variant/20 rounded-xl px-3 py-2 shadow-lg text-xs">
-      <p className="font-bold text-primary mb-1">{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color }}>
-          {p.name} : <strong>{typeof p.value === 'number' ? p.value.toLocaleString('fr-FR') : p.value}</strong>
-          {p.name === 'CA (DT)' || p.name === 'CA' ? ' DT' : p.name === 'Occupation (%)' || p.name === 'taux' ? '%' : ''}
-        </p>
-      ))}
+    <div
+      className={`rounded-2xl px-3.5 py-2.5 shadow-xl text-xs border backdrop-blur-md ${
+        dark ? 'bg-[#1b1a18]/95 border-white/15 text-[#fbffff]' : 'bg-white/95 border-outline-variant/20 text-primary'
+      }`}
+    >
+      <p className="font-bold mb-1">{label}</p>
+      {payload.map((p, i) => {
+        const isCa = p.name === 'CA (DT)' || p.name === 'CA' || p.dataKey === 'value';
+        return (
+          <p key={i} className="flex items-center gap-1.5" style={{ color: p.color || p.payload?.color || '#f95d00' }}>
+            <span>{p.name} :</span>
+            <strong>
+              {typeof p.value === 'number'
+                ? (isCa ? `${formatDT(p.value)} DT` : p.value.toLocaleString('fr-FR'))
+                : p.value}
+            </strong>
+          </p>
+        );
+      })}
     </div>
   );
 }
 
-// ─── Petit donut réutilisable ────────────────────────────────────────────────
+// ─── Donut CA par espace ────────────────────────────────────────────────────
 function DonutBySpace({ data, title, sub, totalFormatter }) {
+  const { dark } = useTheme();
   const total = (data || []).reduce((s, d) => s + (d.value || 0), 0);
   return (
-    <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-      style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
+    <div
+      className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 h-full"
+      style={{ boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.06)' }}
+    >
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="font-sora font-bold text-primary text-base">{title}</h2>
           <p className="text-xs text-on-surface-variant">{sub}</p>
         </div>
-        <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(139,92,246,0.1)]">
-          <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 17 }}>donut_small</span>
+        <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(139,92,246,0.12)]">
+          <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 18 }}>donut_small</span>
         </span>
       </div>
       {data && data.length > 0 ? (
         <div className="flex items-center gap-4 flex-wrap">
-          <div className="relative w-[150px] h-[150px] shrink-0 mx-auto">
+          <div className="relative w-[160px] h-[160px] shrink-0 mx-auto">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                  innerRadius={48} outerRadius={70} paddingAngle={2} cornerRadius={4} stroke="none"
-                  isAnimationActive={false}>
+                <Pie
+                  data={data}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={74}
+                  paddingAngle={3}
+                  cornerRadius={5}
+                  stroke="none"
+                  isAnimationActive
+                  animationDuration={750}
+                >
                   {data.map((d, i) => <Cell key={d.name ?? i} fill={d.color} />)}
                 </Pie>
                 <Tooltip content={<CustomTooltip />} />
               </PieChart>
             </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="font-sora font-bold text-primary text-lg leading-none">{totalFormatter ? totalFormatter(total) : total}</span>
-              <span className="text-[9px] text-on-surface-variant font-medium mt-0.5">Total</span>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-2 text-center">
+              <span className="font-sora font-bold text-primary text-sm leading-tight">
+                {totalFormatter ? totalFormatter(total) : total}
+              </span>
+              <span className="text-[9px] text-on-surface-variant font-semibold uppercase tracking-wider mt-0.5">Total</span>
             </div>
           </div>
-          <div className="flex-1 min-w-[140px]">
+          <div className="flex-1 min-w-[140px] space-y-1">
             {data.map((d) => {
               const p = total > 0 ? Math.round((d.value / total) * 100) : 0;
               return (
-                <div key={d.name} className="flex items-center gap-2 py-1">
+                <div key={d.name} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-surface-container-low/60 transition-colors">
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
                   <span className="text-xs text-on-surface-variant truncate flex-1">{d.name}</span>
-                  <span className="text-[10px] font-bold text-on-surface-variant/70">{p}%</span>
+                  <span className="text-[11px] font-bold text-primary">{p}%</span>
                 </div>
               );
             })}
-            {data.length === 0 && <p className="text-xs text-on-surface-variant">Aucune donnée</p>}
           </div>
         </div>
       ) : (
-        <div className="h-[150px] flex items-center justify-center text-sm text-on-surface-variant">
+        <div className="h-[160px] flex flex-col items-center justify-center text-sm text-on-surface-variant">
+          <span className="material-symbols-outlined text-[32px] opacity-40 mb-1">donut_large</span>
           Aucune donnée disponible
         </div>
       )}
@@ -194,7 +335,7 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
   );
 }
 
-// ─── Ligne session live isolée (minuteur 1s local pour éviter de re-render tout le dashboard) ─
+// ─── Ligne session live isolée (minuteur 1s local) ────────────────────────────
 function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
   const isUpcoming = s.statut === 'upcoming' || s.etat === 'a_venir';
   const [nowEpoch, setNowEpoch] = useState(() => Date.now());
@@ -207,7 +348,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
 
   const finMs = s.reservations?.date_fin ? new Date(s.reservations.date_fin).getTime() : nowEpoch;
   const diffSec = isUpcoming
-    ? Math.max(0, Math.floor((s.seconds_remaining || 0)))
+    ? Math.max(0, Math.floor(s.seconds_remaining || 0))
     : Math.floor((finMs - nowEpoch) / 1000);
   const isOvertime = !isUpcoming && diffSec < 0;
   const isSoon = !isUpcoming && diffSec >= 0 && diffSec <= 15 * 60;
@@ -220,18 +361,20 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
   const badgeCfg = isUpcoming
     ? { txt: 'À venir', cls: 'bg-slate-100 text-slate-700 border-slate-200' }
     : isOvertime
-      ? { txt: 'En dépassement', cls: 'bg-red-100 text-red-800 border-red-200' }
+      ? { txt: 'En dépassement', cls: 'bg-red-100 text-red-800 border-red-200 animate-pulse' }
       : isSoon
         ? { txt: 'Bientôt terminée - 15 min', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
         : { txt: 'En cours', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
 
   return (
-    <div className="py-3 flex flex-wrap items-center justify-between gap-3">
+    <div className="py-3 px-2 rounded-2xl hover:bg-surface-container-low/50 transition-colors flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
-        <span className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 ${
-          isOvertime ? 'bg-red-50 text-red-600' : isSoon ? 'bg-amber-50 text-amber-600' : isUpcoming ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-600'
-        }`}>
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+        <span
+          className={`flex items-center justify-center w-10 h-10 rounded-xl shrink-0 ${
+            isOvertime ? 'bg-red-500/15 text-red-600' : isSoon ? 'bg-amber-500/15 text-amber-600' : isUpcoming ? 'bg-slate-500/10 text-slate-600' : 'bg-emerald-500/15 text-emerald-600'
+          }`}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
             {isOvertime ? 'warning' : 'timer'}
           </span>
         </span>
@@ -242,22 +385,22 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
               {badgeCfg.txt}
             </span>
           </div>
-          <p className="text-xs text-on-surface-variant truncate">
+          <p className="text-xs text-on-surface-variant truncate mt-0.5">
             {s.espace_nom || s.reservations?.espaces?.nom || 'Espace'} ·{' '}
             {isUpcoming
-              ? `Prévu ${s.reservations?.date_debut ? new Date(s.reservations.date_debut).toLocaleTimeString('fr-TN', { hour: '2-digit', minute: '2-digit' }) : '—'}`
-              : `Check-in ${s.check_in ? new Date(s.check_in).toLocaleTimeString('fr-TN', { hour: '2-digit', minute: '2-digit' }) : '—'}`}
+              ? `Prévu ${formatTimeShort(s.reservations?.date_debut)}`
+              : `Check-in ${formatTimeShort(s.check_in)}`}
           </p>
         </div>
       </div>
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
         <div className="text-right">
-          <p className={`font-mono text-sm font-bold ${isOvertime ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-emerald-700'}`}>
+          <p className={`font-mono text-sm font-bold ${isOvertime ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-emerald-600'}`}>
             {isOvertime ? `+${formatClockSeconds(Math.abs(diffSec))}` : formatClockSeconds(diffSec)}
           </p>
           {isOvertime && (
-            <p className="text-[11px] font-bold text-red-700">
+            <p className="text-[11px] font-bold text-red-600">
               Surplus : {formatDTMillimes(overtimeCost)}
             </p>
           )}
@@ -268,7 +411,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
             type="button"
             onClick={() => onStart(s.reservation_id)}
             disabled={releasingId === s.reservation_id}
-            className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition disabled:opacity-50"
+            className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all hover:-translate-y-0.5 disabled:opacity-50"
           >
             Démarrer
           </button>
@@ -277,7 +420,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
             type="button"
             onClick={() => onRelease(s.id)}
             disabled={releasingId === s.id}
-            className="px-3 py-1.5 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] shadow-xs transition disabled:opacity-50"
+            className="px-3.5 py-2 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] shadow-sm transition-all hover:-translate-y-0.5 disabled:opacity-50"
             title="Marquer la session de travail terminée et libérer la ressource"
           >
             {releasingId === s.id ? 'Libération…' : "C'est bon, libérée"}
@@ -291,6 +434,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
 // ─── Composant principal ─────────────────────────────────────────────────────
 export default function AdminDashboard({ session }) {
   const navigate = useNavigate();
+  const { dark } = useTheme();
   const { userId, email, metadata } = useSessionUser(session);
   const [profile, setProfile] = useState(() =>
     userId ? { id: userId, email, role: metadata.role || 'admin', ...metadata } : null
@@ -317,6 +461,13 @@ export default function AdminDashboard({ session }) {
   const [reportError, setReportError] = useState('');
   const [exportingPdf, setExportingPdf] = useState(false);
 
+  // Onglets / filtres locaux interactifs
+  const [tunisClock, setTunisClock] = useState('');
+  const [bookingTab, setBookingTab] = useState('upcoming'); // 'upcoming' | 'today'
+  const [formationTab, setFormationTab] = useState('period'); // 'period' | 'today'
+  const [guestScope, setGuestScope] = useState('period'); // 'period' | 'all'
+  const [guestStatusFilter, setGuestStatusFilter] = useState('all'); // 'all' | 'pending' | 'confirmed'
+
   const periodRef = useRef(period);
   periodRef.current = period;
 
@@ -326,7 +477,24 @@ export default function AdminDashboard({ session }) {
   const kpiTimerRef = useRef(null);
   const sessionTimerRef = useRef(null);
 
-  // ── Fetch KPIs (silent = pas de spinner) ──────────────────────────────────
+  // Horloge temps réel Africa/Tunis dans le header
+  useEffect(() => {
+    const updateClock = () => {
+      setTunisClock(
+        new Intl.DateTimeFormat('fr-FR', {
+          timeZone: TUNIS_TZ,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }).format(new Date())
+      );
+    };
+    updateClock();
+    const id = setInterval(updateClock, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Fetch KPIs ────────────────────────────────────────────────────────────
   const fetchKpis = useCallback(async (silent = false) => {
     if (!silent && !hasLoadedRef.current) setLoading(true);
     setError('');
@@ -355,7 +523,7 @@ export default function AdminDashboard({ session }) {
     }
   }, []);
 
-  // ── Rapport IA (généré selon la période active) ──────────────────────────
+  // ── Rapport IA ────────────────────────────────────────────────────────────
   const loadReport = useCallback(async (silent = false) => {
     if (!silent) setReportLoading(true);
     setReportError('');
@@ -373,13 +541,7 @@ export default function AdminDashboard({ session }) {
     }
   }, []);
 
-  const toggleReport = () => {
-    const next = !showReport;
-    setShowReport(next);
-    if (next) loadReport(false);
-  };
-
-  // ── Refresh sélectif (sessions uniquement, rapide — sans requêtes KPI lourdes) ──
+  // ── Refresh sélectif sessions ─────────────────────────────────────────────
   const fetchSessionsOnly = useCallback(async () => {
     if (document.hidden) return;
     try {
@@ -394,7 +556,6 @@ export default function AdminDashboard({ session }) {
       }
     } catch (_) { /* silencieux */ }
   }, []);
-
 
   // D3 : Libération manuelle explicite (« C'est bon, libérée ») + D4 dépassement
   const handleReleaseSession = async (sessionId) => {
@@ -424,12 +585,11 @@ export default function AdminDashboard({ session }) {
     }
   };
 
-  // ── Effet principal : chargement profil + auto-refresh (déclenché par userId uniquement) ──
+  // ── Effet principal : profil + auto-refresh + onboarding + guests ─────────
   useEffect(() => {
     if (!userId) return undefined;
     let cancelled = false;
 
-    // Profil Supabase DB en arrière-plan (sans requête duplicate sur tenants)
     supabase.from('profiles').select('*').eq('id', userId).single()
       .then(({ data, error: e }) => {
         if (cancelled || e || !data) return;
@@ -438,7 +598,6 @@ export default function AdminDashboard({ session }) {
 
     fetchKpis(false);
 
-    // Données secondaires en parallèle (Mon Coworking + vérification onboarding + Invités)
     Promise.all([
       tenantAdminApi.getTenant().catch(() => ({})),
       guestApi.getAll().catch(() => ({})),
@@ -468,14 +627,11 @@ export default function AdminDashboard({ session }) {
     };
   }, [userId, navigate, fetchKpis, fetchSessionsOnly]);
 
-
-  // ── Changement de période : recharge silencieuse (pas de spinner) ─────────
   useEffect(() => {
     if (!hasLoadedRef.current) return;
     fetchKpis(true);
   }, [period, fetchKpis]);
 
-  // ── Rapport IA : rechargé si ouvert lors d'un changement de période ───────
   useEffect(() => {
     if (showReportRef.current) loadReport(true);
   }, [period, loadReport]);
@@ -516,7 +672,7 @@ export default function AdminDashboard({ session }) {
     setApprovingId(id);
     try {
       await memberApi.approveAccount(id, action);
-      setPendingAccounts(prev => prev.filter(p => p.id !== id));
+      setPendingAccounts((prev) => prev.filter((p) => p.id !== id));
     } catch (e) {
       alert('Erreur : ' + e.message);
     } finally {
@@ -524,33 +680,12 @@ export default function AdminDashboard({ session }) {
     }
   };
 
-  if (loading) {
-    return (
-      <PortalLayout profile={profile}>
-        <div className="space-y-6 animate-pulse">
-          <div className="h-10 bg-gray-200 rounded-2xl w-64" />
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1,2,3,4].map(i => (
-              <div key={i} className="bg-white rounded-3xl p-5 border border-outline-variant/20 h-28" />
-            ))}
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="bg-white rounded-3xl h-48 border border-outline-variant/20" />
-            <div className="bg-white rounded-3xl h-48 border border-outline-variant/20" />
-            <div className="bg-white rounded-3xl h-48 border border-outline-variant/20" />
-          </div>
-        </div>
-      </PortalLayout>
-    );
-  }
-
   // ── Dérivés ────────────────────────────────────────────────────────────────
   const k = kpis || {};
-  const ca = (k.chiffreAffaires || {});
-  const membres = (k.nouveauxMembres || {});
+  const ca = k.chiffreAffaires || {};
+  const membres = k.nouveauxMembres || {};
   const sessions = Array.isArray(k.sessionsEnCours) ? k.sessionsEnCours : [];
   const topMembres = Array.isArray(k.topMembres) ? k.topMembres : [];
-  const tauxOccupation = Array.isArray(k.tauxOccupation) ? k.tauxOccupation : [];
   const calendrierDuJour = Array.isArray(k.calendrierDuJour) ? k.calendrierDuJour : [];
   const prochainesReservations = Array.isArray(k.prochainesReservations) ? k.prochainesReservations : [];
   const formationsDuJourList = Array.isArray(k.formationsDuJourList) ? k.formationsDuJourList : [];
@@ -558,97 +693,165 @@ export default function AdminDashboard({ session }) {
   const reservationsPeriode = k.reservationsPeriode || { count: 0, confirmed: 0, pending: 0 };
 
   const revenueChart = Array.isArray(chart?.revenueChart) ? chart.revenueChart : [];
-  const occupationChart = Array.isArray(chart?.occupationChart) ? chart.occupationChart : [];
   const caParEspace = Array.isArray(chart?.caParEspace)
-    ? chart.caParEspace.map((d) => ({ ...d, value: d.ca ?? 0, color: CHART_COLORS[chart.caParEspace.indexOf(d) % CHART_COLORS.length] }))
+    ? chart.caParEspace.map((d, idx) => ({
+        ...d,
+        value: d.ca ?? 0,
+        color: CHART_COLORS[idx % CHART_COLORS.length],
+      }))
     : [];
   const reservationsParEspace = Array.isArray(chart?.reservationsParEspace) ? chart.reservationsParEspace : [];
 
-  const win = periodWindow(period);
+  const win = useMemo(() => periodWindow(period), [period]);
   const label = windowLabel(period);
   const pStr = typeof period === 'string' ? period : (period?.key || 'mois');
   const bucketCaption = pStr.startsWith('jour')
     ? `Par heure · ${label}`
     : (pStr.startsWith('mois') || pStr.startsWith('semaine') || pStr.startsWith('custom'))
-    ? `Par jour · ${label}`
-    : (pStr.startsWith('annee') || pStr.startsWith('trimestre'))
-    ? `Par mois · ${label}`
-    : `Par année · historique`;
+      ? `Par jour · ${label}`
+      : (pStr.startsWith('annee') || pStr.startsWith('trimestre'))
+        ? `Par mois · ${label}`
+        : 'Par année · historique';
 
   const membersTrend = trendBadge(membres.periode || 0, membres.periodePrecedente || 0);
+  const formationsPeriode = useMemo(
+    () => formations.filter((f) => inWindow(f.date_debut, win)),
+    [formations, win]
+  );
 
-  const occupationMoyen = typeof k.occupationMoyen === 'number' ? k.occupationMoyen
-    : (tauxOccupation.length > 0 ? Math.round(tauxOccupation.reduce((s, e) => s + (e.taux || 0), 0) / tauxOccupation.length) : 0);
+  const guestsPeriode = useMemo(
+    () =>
+      guests.filter((g) => {
+        if (inWindow(g.created_at, win)) return true;
+        const list = Array.isArray(g.reservations) ? g.reservations : [];
+        return list.some((r) => inWindow(r.date_debut, win));
+      }),
+    [guests, win]
+  );
 
-  const topEspace = tauxOccupation.length > 0
-    ? tauxOccupation.reduce((a, b) => ((b.taux || 0) > (a.taux || 0) ? b : a), tauxOccupation[0])
-    : null;
+  const displayedGuests = useMemo(() => {
+    const base = guestScope === 'all' ? guests : guestsPeriode;
+    if (guestStatusFilter === 'all') return base;
+    return base.filter((g) => (g.reservations?.[0]?.statut || 'none') === guestStatusFilter);
+  }, [guests, guestsPeriode, guestScope, guestStatusFilter]);
 
-  const formationsPeriode = formations.filter((f) => inWindow(f.date_debut, win));
-  const guestsPeriode = guests.filter((g) => inWindow(g.created_at, win));
+  const activeSessionsCount = liveSessions.filter((s) => s.statut !== 'upcoming' && s.etat !== 'a_venir').length || sessions.length;
+  const visibleReservations = bookingTab === 'today' ? calendrierDuJour : prochainesReservations;
+  const visibleFormations = formationTab === 'today' ? formationsDuJourList : formationsPeriode;
 
+  const cardShadow = dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.06)';
   const welcomeText = greeting();
+
+  if (loading) {
+    return (
+      <PortalLayout profile={profile}>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-24 bg-surface-container rounded-3xl" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 h-32" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl h-64 border border-outline-variant/15" />
+            <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl h-64 border border-outline-variant/15" />
+          </div>
+        </div>
+      </PortalLayout>
+    );
+  }
 
   return (
     <PortalLayout profile={profile} onLogout={handleLogout}>
+      <style>{DASH_ANIMATIONS}</style>
 
-      {/* ── En-tête + filtre global ─────────────────────────────────────── */}
-      <header className="mb-6 space-y-3">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-          <div className="shrink-0 min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-0.5">
-              {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
-            </p>
-            <h1 className="font-sora font-bold text-primary text-2xl sm:text-3xl leading-tight">
-              {welcomeText}, {profile?.prenom || 'Admin'}
+      {/* ── 1. Hero Command Header ───────────────────────────────────────── */}
+      <header
+        className="dash-enter relative mb-6 rounded-3xl border border-outline-variant/15 p-5 sm:p-6 overflow-hidden"
+        style={{
+          background: dark
+            ? 'linear-gradient(135deg, rgba(249,93,0,0.12) 0%, #151412 52%, rgba(47,190,143,0.08) 100%)'
+            : 'linear-gradient(135deg, rgba(249,93,0,0.07) 0%, #ffffff 55%, rgba(14,165,233,0.05) 100%)',
+          boxShadow: cardShadow,
+        }}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 relative z-10">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-secondary/12 text-secondary text-[11px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+                {coworking?.nom || getRoleLabel(profile?.role)}
+              </span>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                {new Date().toLocaleDateString('fr-FR', { timeZone: TUNIS_TZ, weekday: 'long', day: 'numeric', month: 'long' })}
+              </span>
+              {tunisClock && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-300 font-mono text-[11px] font-bold">
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
+                  Tunis {tunisClock}
+                </span>
+              )}
+            </div>
+
+            <h1 className="font-sora font-extrabold text-primary text-2xl sm:text-3xl leading-tight">
+              {welcomeText}, {profile?.prenom || 'Gérant'}
             </h1>
-            <p className="text-on-surface-variant text-sm mt-0.5 flex flex-wrap gap-1.5 items-center">
-              <span>Tableau de bord — {getRoleLabel(profile?.role)}</span>
+            <p className="text-on-surface-variant text-xs sm:text-sm mt-1 flex flex-wrap gap-1.5 items-center">
+              <span>Pilotage en temps réel — Règlement 100 % sur place</span>
               {lastRefresh && (
-                <span className="text-xs text-on-surface-variant/60">
-                  · Mis à jour {lastRefresh.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                <span className="text-xs text-on-surface-variant/70">
+                  · Actualisé à {lastRefresh.toLocaleTimeString('fr-FR', { timeZone: TUNIS_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>
               )}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5">
+
+          <div className="flex flex-wrap items-center gap-2">
             <PeriodFilter value={period} onChange={setPeriod} />
+            <Link
+              to="/admin/agenda?view=plan"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm bg-primary text-on-primary hover:opacity-90 transition-all hover:-translate-y-0.5 shadow-xs no-underline"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>map</span>
+              Plan 2D Live
+            </Link>
             {profile?.role !== 'staff' && (
-              <div className="flex items-center gap-2">
+              <>
                 <button
+                  type="button"
                   onClick={handleExportPdf}
                   disabled={exportingPdf}
-                  className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-low text-primary border border-outline-variant/20 hover:bg-surface-container transition-colors disabled:opacity-50 shadow-2xs"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm bg-surface-container-lowest text-primary border border-outline-variant/25 hover:bg-surface-container transition-all disabled:opacity-50"
                 >
                   <span className="material-symbols-outlined text-[17px] text-[#f95d00]">
                     {exportingPdf ? 'sync' : 'picture_as_pdf'}
                   </span>
-                  {exportingPdf ? 'PDF…' : 'Export PDF'}
+                  {exportingPdf ? 'PDF…' : 'PDF'}
                 </button>
                 <button
+                  type="button"
                   onClick={handleExport}
                   disabled={exporting || !kpis}
-                  className="flex items-center justify-center gap-2 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50 shadow-2xs"
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-xs sm:text-sm hover:bg-secondary/90 transition-all disabled:opacity-50 shadow-xs"
                 >
                   <span className="material-symbols-outlined text-[17px]">
                     {exporting ? 'sync' : 'download'}
                   </span>
-                  {exporting ? 'Export…' : 'Export Excel'}
+                  {exporting ? 'Export…' : 'Excel'}
                 </button>
-              </div>
+              </>
             )}
           </div>
         </div>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-error-container text-on-error-container text-sm rounded-xl flex items-center gap-2">
+        <div className="mb-4 p-3.5 bg-error-container text-on-error-container text-sm rounded-2xl flex items-center gap-2">
           <span className="material-symbols-outlined text-[18px]">warning</span>
           {error}
         </div>
       )}
 
-      {/* ── Rapport intelligent (IA) ────────────────────────────────────── */}
       {showReport && (
         <div className="mb-6">
           <AIReportPanel
@@ -661,88 +864,447 @@ export default function AdminDashboard({ session }) {
         </div>
       )}
 
-      {/* ── Grille KPIs — Ligne 1 (filtre global appliqué) ─────────────── */}
-      <div key={`k1-${period}`} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-        <StatCard
-          label="CA — période"
-          value={`${formatDT(ca.periode)} DT`}
-          sub={`${ca.transactions ?? 0} transactions · ${label}`}
-          badge={typeof k.caMoisPrecedent === 'number' ? `Mois préc. : ${formatDT(k.caMoisPrecedent)} DT` : null}
-          trend={{ text: `${ca.evolution > 0 ? '▲' : ca.evolution < 0 ? '▼' : '→'} ${Math.abs(ca.evolution ?? 0)}% vs période préc.`, dir: ca.evolution > 0 ? 'up' : ca.evolution < 0 ? 'down' : 'flat' }}
-          icon="payments"
-          accent="#2fbe8f"
-          to="/admin/payments"
-        />
-        <StatCard
-          label="Nouveaux membres"
-          value={`${membres.periode ?? 0}`}
-          sub={`${k.membresActifs ?? 0} membres actifs au total`}
-          badge={null}
-          trend={membersTrend}
-          icon="group"
-          accent="#f95d00"
-        />
-        <StatCard
-          label="Réservations — période"
-          value={`${reservationsPeriode.count ?? 0}`}
-          sub={`${k.reservationsDuJour ?? 0} aujourd'hui · ${reservationsPeriode.confirmed ?? 0} confirmées`}
-          icon="event_available"
-          accent="#8b5cf6"
-          to="/admin/agenda"
-        />
-        <StatCard
-          label="Paiements en attente"
-          value={`${formatDT(k.paiementsEnAttente?.montantTotal ?? 0)} DT`}
-          sub={`${k.paiementsEnAttente?.count ?? 0} paiement(s) · ${label}`}
-          icon="pending_actions"
-          accent="#ba1a1a"
-          to="/admin/payments"
-        />
-      </div>
-
-      {/* ── Grille KPIs — Ligne 2 (Opérations) ─────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
-        <StatCard
-          label="Sessions de travail actives"
-          value={liveSessions.filter((s) => s.statut !== 'upcoming' && s.etat !== 'a_venir').length || sessions.length}
-          sub="Libération manuelle requise"
-          icon="timer"
-          accent="#f59e0b"
-          pulse={sessions.length > 0}
-        />
-        <StatCard
-          label="Formations — période"
-          value={k.formationsPeriode ?? 0}
-          sub={`${k.formationsDuJour ?? 0} prévue(s) aujourd'hui`}
-          icon="school"
-          accent="#8b5cf6"
-          to="/admin/formations"
-        />
-        <StatCard
-          label="Occupation moyenne"
-          value={`${occupationMoyen}%`}
-          sub={topEspace ? `Meilleur espace : ${topEspace.nom} (${topEspace.taux}%)` : '—'}
-          icon="domain"
-          accent="#0ea5e9"
-        />
-        <StatCard
-          label="Abonnements expirant"
-          value={k.abonnementsExpirant ?? '—'}
-          sub="Dans les 7 prochains jours"
-          icon="card_membership"
-          accent={k.abonnementsExpirant > 0 ? '#ba1a1a' : '#f95d00'}
-        />
-      </div>
-
-      {/* ══ CDC v3.0 — PILOTAGE OPÉRATIONNEL IMMÉDIAT (SOUS LES KPIs, AVANT MON COWORKING) ══ */}
-      {/* 1. Sessions de travail en cours + 2. Actions rapides */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+      {/* ── Demandes de compte en attente (prioritaire si > 0) ───────────── */}
+      {pendingAccounts.length > 0 && (
         <div
-          className="lg:col-span-8 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+          className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-amber-400/50 mb-6"
+          style={{ boxShadow: '0 8px 24px rgba(245,158,11,0.12)' }}
+        >
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 20 }}>pending_actions</span>
+              <h2 className="font-sora font-bold text-primary text-base">Demandes de compte en attente</h2>
+              <span className="flex h-5 px-2 items-center justify-center rounded-full text-[11px] font-bold text-white bg-amber-600 animate-pulse">
+                {pendingAccounts.length}
+              </span>
+            </div>
+            <Link to="/admin/clients" className="text-xs font-bold text-secondary hover:underline">
+              Voir clients →
+            </Link>
+          </div>
+          <div className="divide-y divide-outline-variant/10">
+            {pendingAccounts.map((p) => {
+              const isActing = approvingId === p.id;
+              return (
+                <div key={p.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 font-bold text-sm text-white"
+                      style={{ background: 'linear-gradient(135deg, #d97706, #f59e0b)' }}
+                    >
+                      {getInitials(p.prenom, p.nom)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-primary text-sm truncate">{p.prenom} {p.nom}</p>
+                      <p className="text-xs text-on-surface-variant truncate">{p.email}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleAccountAction(p.id, 'reject')}
+                      disabled={isActing}
+                      className="px-3 py-1.5 rounded-xl border border-red-500/30 text-red-600 text-xs font-semibold hover:bg-red-500/10 disabled:opacity-50"
+                    >
+                      Rejeter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAccountAction(p.id, 'approve')}
+                      disabled={isActing}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {isActing ? 'En cours…' : 'Approuver'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 2. Grille KPIs Cliquables (4 × 2, sans Occupation moyenne) ───── */}
+      <section aria-label="Indicateurs clés" className="mb-6 space-y-3">
+        <div key={`k1-${period}`} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
+          <StatCard
+            delayMs={0}
+            label="CA — période"
+            rawValue={ca.periode ?? 0}
+            decimals={3}
+            suffix=" DT"
+            sub={`${ca.transactions ?? 0} transactions · ${label}`}
+            badge={typeof k.caMoisPrecedent === 'number' ? `Mois préc. : ${formatDT(k.caMoisPrecedent)} DT` : null}
+            trend={{
+              text: `${ca.evolution > 0 ? '▲' : ca.evolution < 0 ? '▼' : '→'} ${Math.abs(ca.evolution ?? 0)}% vs période préc.`,
+              dir: ca.evolution > 0 ? 'up' : ca.evolution < 0 ? 'down' : 'flat',
+            }}
+            icon="payments"
+            accent="#2fbe8f"
+            to="/admin/payments"
+          />
+          <StatCard
+            delayMs={60}
+            label="Nouveaux membres"
+            rawValue={membres.periode ?? 0}
+            sub={`${k.membresActifs ?? 0} membres actifs au total`}
+            trend={membersTrend}
+            icon="group"
+            accent="#f95d00"
+            to="/admin/clients"
+          />
+          <StatCard
+            delayMs={120}
+            label="Réservations — période"
+            rawValue={reservationsPeriode.count ?? 0}
+            sub={`${k.reservationsDuJour ?? 0} aujourd'hui · ${reservationsPeriode.confirmed ?? 0} confirmées`}
+            icon="event_available"
+            accent="#8b5cf6"
+            to="/admin/reservations"
+          />
+          <StatCard
+            delayMs={180}
+            label="Paiements en attente"
+            rawValue={k.paiementsEnAttente?.montantTotal ?? 0}
+            decimals={3}
+            suffix=" DT"
+            sub={`${k.paiementsEnAttente?.count ?? 0} encaissement(s) sur place`}
+            icon="pending_actions"
+            accent="#ba1a1a"
+            pulse={(k.paiementsEnAttente?.count ?? 0) > 0}
+            to="/admin/payments"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
+          <StatCard
+            delayMs={240}
+            label="Sessions de travail actives"
+            rawValue={activeSessionsCount}
+            sub="Voir sur le Plan 2D en direct"
+            icon="timer"
+            accent="#f59e0b"
+            pulse={activeSessionsCount > 0}
+            to="/admin/agenda?view=plan"
+          />
+          <StatCard
+            delayMs={300}
+            label="Formations — période"
+            rawValue={k.formationsPeriode ?? 0}
+            sub={`${k.formationsDuJour ?? 0} prévue(s) aujourd'hui`}
+            icon="school"
+            accent="#8b5cf6"
+            to="/admin/formations"
+          />
+          <StatCard
+            delayMs={360}
+            label="Réservations invités"
+            rawValue={guestsPeriode.length}
+            sub={`${guests.length} invité(s) au total · ${label}`}
+            icon="person_add_alt"
+            accent="#0ea5e9"
+            pulse={guestsPeriode.some((g) => g.reservations?.[0]?.statut === 'pending')}
+            to="/admin/reservations"
+          />
+          <StatCard
+            delayMs={420}
+            label="Abonnements expirant"
+            rawValue={k.abonnementsExpirant ?? 0}
+            sub="Dans les 7 prochains jours"
+            icon="card_membership"
+            accent={(k.abonnementsExpirant ?? 0) > 0 ? '#ba1a1a' : '#2fbe8f'}
+            pulse={(k.abonnementsExpirant ?? 0) > 0}
+            to="/admin/clients"
+          />
+        </div>
+      </section>
+
+      {/* ── 3. HAUT DE PAGE : Prochaines réservations + Activité récente + Suivi formations ── */}
+      <section aria-label="Pilotage prioritaire" className="space-y-4 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Prochaines réservations (onglets À venir / Aujourd'hui) */}
+          <div
+            className="dash-enter lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 flex flex-col"
+            style={{ boxShadow: cardShadow, animationDelay: '120ms' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex items-center gap-2.5">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(14,165,233,0.12)] text-[#0ea5e9]">
+                  <span className="material-symbols-outlined" style={{ fontSize: 19 }}>upcoming</span>
+                </span>
+                <div>
+                  <h2 className="font-sora font-bold text-primary text-base">Prochaines réservations</h2>
+                  <p className="text-xs text-on-surface-variant">
+                    {bookingTab === 'upcoming'
+                      ? `${prochainesReservations.length} dans les 7 prochains jours`
+                      : `${calendrierDuJour.length} prévue(s) aujourd'hui`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setBookingTab('upcoming')}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      bookingTab === 'upcoming' ? 'bg-secondary text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                    }`}
+                  >
+                    À venir ({prochainesReservations.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBookingTab('today')}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      bookingTab === 'today' ? 'bg-secondary text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                    }`}
+                  >
+                    Aujourd&apos;hui ({calendrierDuJour.length})
+                  </button>
+                </div>
+                <Link
+                  to="/admin/reservations"
+                  className="text-xs font-bold text-secondary hover:underline whitespace-nowrap"
+                >
+                  Gérer →
+                </Link>
+              </div>
+            </div>
+
+            {visibleReservations.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
+                <span className="material-symbols-outlined text-[40px] text-on-surface-variant/35 mb-2">event_available</span>
+                <p className="text-sm text-on-surface-variant">
+                  {bookingTab === 'today' ? "Aucune réservation prévue aujourd'hui" : 'Aucune réservation à venir'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-outline-variant/10 max-h-[300px] overflow-y-auto pr-1">
+                {visibleReservations.map((r, idx) => {
+                  const clientName = r.profiles
+                    ? `${r.profiles.prenom || ''} ${r.profiles.nom || ''}`.trim()
+                    : (r.guest_nom || 'Client');
+                  const isConfirmed = r.statut === 'confirmed';
+                  return (
+                    <div
+                      key={r.id || idx}
+                      className="py-2.5 px-2 rounded-xl hover:bg-surface-container-low/60 transition-colors flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 font-bold text-xs text-white"
+                          style={{ background: CHART_COLORS[idx % CHART_COLORS.length] }}
+                        >
+                          {getInitials(r.profiles?.prenom || clientName, r.profiles?.nom || '')}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-primary text-sm truncate">{clientName}</p>
+                          <p className="text-xs text-on-surface-variant truncate">
+                            {r.espaces?.nom || 'Espace'} · {formatTimeShort(r.date_debut)} → {formatTimeShort(r.date_fin)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                        <span className="text-xs font-bold text-primary">
+                          {formatDateShort(r.date_debut)}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            isConfirmed
+                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                          }`}
+                        >
+                          {isConfirmed ? 'Confirmée' : 'En attente'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Activité récente */}
+          <div
+            className="dash-enter lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 flex flex-col"
+            style={{ boxShadow: cardShadow, animationDelay: '180ms' }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(249,93,0,0.11)] text-[#f95d00]">
+                  <span className="material-symbols-outlined" style={{ fontSize: 19 }}>bolt</span>
+                </span>
+                <div>
+                  <h2 className="font-sora font-bold text-primary text-base">Activité récente</h2>
+                  <p className="text-xs text-on-surface-variant">Flux en direct de l&apos;établissement</p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 text-[10px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live
+              </span>
+            </div>
+
+            {activiteRecente.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
+                <span className="material-symbols-outlined text-[40px] text-on-surface-variant/35 mb-2">history</span>
+                <p className="text-sm text-on-surface-variant">Aucune activité récente</p>
+              </div>
+            ) : (
+              <div className="relative pl-4 space-y-2.5 max-h-[300px] overflow-y-auto pr-1 before:content-[''] before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-px before:bg-outline-variant/25">
+                {activiteRecente.map((a, idx) => {
+                  const meta = a.type === 'paiement'
+                    ? { icon: 'payments', bg: 'bg-emerald-500/15', color: 'text-emerald-600' }
+                    : a.type === 'session'
+                      ? { icon: 'login', bg: 'bg-amber-500/15', color: 'text-amber-600' }
+                      : { icon: 'event_available', bg: 'bg-violet-500/15', color: 'text-violet-600' };
+                  return (
+                    <div
+                      key={a.id || idx}
+                      className="relative flex items-start gap-3 p-2 rounded-xl hover:bg-surface-container-low/60 transition-colors"
+                    >
+                      <span className={`relative z-10 flex items-center justify-center w-8 h-8 rounded-xl shrink-0 ${meta.bg} ${meta.color}`}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{meta.icon}</span>
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-primary font-medium leading-snug">{a.text}</p>
+                        <p className="text-[10px] text-on-surface-variant mt-0.5">{relTime(a.time)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Suivi des formations programmées (en haut) */}
+        <div
+          className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
+          style={{ boxShadow: cardShadow, animationDelay: '220ms' }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2.5">
+              <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(139,92,246,0.12)] text-[#8b5cf6]">
+                <span className="material-symbols-outlined" style={{ fontSize: 19 }}>school</span>
+              </span>
+              <div>
+                <h2 className="font-sora font-bold text-primary text-base">Suivi des formations programmées</h2>
+                <p className="text-xs text-on-surface-variant">
+                  {visibleFormations.length} formation(s) · {formationTab === 'today' ? "Aujourd'hui" : label}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setFormationTab('period')}
+                  className={`px-2.5 py-1 rounded-lg transition-all ${
+                    formationTab === 'period' ? 'bg-[#8b5cf6] text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                  }`}
+                >
+                  Période ({formationsPeriode.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormationTab('today')}
+                  className={`px-2.5 py-1 rounded-lg transition-all ${
+                    formationTab === 'today' ? 'bg-[#8b5cf6] text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                  }`}
+                >
+                  Aujourd&apos;hui ({formationsDuJourList.length})
+                </button>
+              </div>
+              <Link to="/admin/formations" className="text-xs font-bold text-secondary hover:underline whitespace-nowrap">
+                Gérer →
+              </Link>
+            </div>
+          </div>
+
+          {visibleFormations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-7 text-center">
+              <span className="material-symbols-outlined text-[38px] text-on-surface-variant/35 mb-2">school</span>
+              <p className="text-sm text-on-surface-variant">
+                {formationTab === 'today'
+                  ? "Aucune formation prévue aujourd'hui"
+                  : 'Aucune formation programmée dans cette période'}
+              </p>
+            </div>
+          ) : (
+            <div className="table-responsive-wrapper">
+              <table className="w-full min-w-[650px] text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-outline-variant/15">
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formation</th>
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formateur</th>
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Date &amp; Heure</th>
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Salle</th>
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-center">Remplissage</th>
+                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Tarif</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/10">
+                  {visibleFormations.slice(0, 6).map((f) => {
+                    const formateurName = f.profiles ? `${f.profiles.prenom || ''} ${f.profiles.nom || ''}`.trim() : '—';
+                    const fillPct = f.capacite_max > 0 ? Math.min(100, Math.round(((f.nb_inscrits || 0) / f.capacite_max) * 100)) : 0;
+                    const barColor = fillPct >= 90 ? 'bg-red-500' : fillPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500';
+                    const isFree = Number(f.prix_inscription || 0) <= 0;
+
+                    return (
+                      <tr key={f.id} className="hover:bg-surface-container-low/40 transition-colors">
+                        <td className="py-3 font-semibold text-primary">{f.titre}</td>
+                        <td className="py-3 text-on-surface-variant">
+                          <div>{formateurName}</div>
+                          {f.profiles?.specialite && (
+                            <div className="text-[10px] text-on-surface-variant/70">{f.profiles.specialite}</div>
+                          )}
+                        </td>
+                        <td className="py-3 text-on-surface-variant">
+                          <div className="font-medium text-primary">{formatDateShort(f.date_debut)}</div>
+                          <div className="text-[10px] text-on-surface-variant/75">{formatTimeShort(f.date_debut)}</div>
+                        </td>
+                        <td className="py-3 text-on-surface-variant">{f.espaces?.nom || '—'}</td>
+                        <td className="py-3">
+                          <div className="flex flex-col items-center justify-center min-w-[110px]">
+                            <div className="flex items-center justify-between w-full text-[10px] mb-1">
+                              <span className="font-semibold text-on-surface-variant">{f.nb_inscrits ?? 0} / {f.capacite_max ?? 0}</span>
+                              <span className="font-bold text-primary">{fillPct}%</span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-outline-variant/15 overflow-hidden">
+                              <div className={`dash-bar-grow h-full rounded-full ${barColor}`} style={{ width: `${fillPct}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right font-bold text-secondary">
+                          {!isFree
+                            ? formatDTMillimes(f.prix_inscription)
+                            : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
+                              ? 'Gratuit'
+                              : <span className="text-on-surface-variant/60 font-medium italic">Non défini</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── 4. Sessions de travail en cours + Actions rapides ────────────── */}
+      <section aria-label="Sessions en direct et actions" className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+        <div
+          className="dash-enter lg:col-span-8 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
+          style={{ boxShadow: cardShadow }}
         >
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <h2 className="font-sora font-bold text-primary text-base">Sessions de travail en cours</h2>
               {liveSessions.length > 0 && (
                 <span className="flex h-2.5 w-2.5 relative">
@@ -751,25 +1313,33 @@ export default function AdminDashboard({ session }) {
                 </span>
               )}
             </div>
-            <span className="text-[11px] text-on-surface-variant font-medium">
-              Minuteur temps réel · Libération manuelle obligatoire
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-on-surface-variant font-medium hidden sm:inline">
+                Minuteur temps réel · Libération manuelle obligatoire
+              </span>
+              <Link
+                to="/admin/agenda?view=plan"
+                className="text-xs font-bold text-secondary hover:underline whitespace-nowrap flex items-center gap-1"
+              >
+                Plan 2D en direct →
+              </Link>
+            </div>
           </div>
 
           {sessionActionMsg && (
-            <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 flex items-center justify-between">
+            <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
               <span>{sessionActionMsg}</span>
-              <button type="button" onClick={() => setSessionActionMsg('')} className="ml-2 text-emerald-700 hover:underline">Fermer</button>
+              <button type="button" onClick={() => setSessionActionMsg('')} className="ml-2 hover:underline">Fermer</button>
             </div>
           )}
 
           {liveSessions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">timer_off</span>
+            <div className="flex flex-col items-center justify-center py-9 text-center">
+              <span className="material-symbols-outlined text-[42px] text-on-surface-variant/35 mb-2">timer_off</span>
               <p className="text-sm text-on-surface-variant">Aucune session de travail active ou imminente en ce moment</p>
             </div>
           ) : (
-            <div className="divide-y divide-outline-variant/10">
+            <div className="divide-y divide-outline-variant/10 max-h-[320px] overflow-y-auto">
               {liveSessions.map((s) => (
                 <LiveSessionClockRow
                   key={s.id}
@@ -783,10 +1353,10 @@ export default function AdminDashboard({ session }) {
           )}
         </div>
 
-        {/* Actions rapides (4 boutons directs CDC v3.0) */}
+        {/* Actions rapides */}
         <div
-          className="lg:col-span-4 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 flex flex-col justify-between"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+          className="dash-enter lg:col-span-4 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 flex flex-col justify-between"
+          style={{ boxShadow: cardShadow }}
         >
           <div>
             <div className="flex items-center justify-between mb-4">
@@ -797,639 +1367,201 @@ export default function AdminDashboard({ session }) {
               <button
                 type="button"
                 onClick={() => navigate('/admin/reservations?new=1')}
-                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] transition-colors shadow-xs"
+                className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] transition-all hover:-translate-y-0.5 shadow-sm"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 19 }}>add_circle</span>
-                <span>Nouvelle réservation</span>
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined" style={{ fontSize: 19 }}>add_circle</span>
+                  Nouvelle réservation
+                </span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/agenda?view=plan')}
+                className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-all hover:-translate-y-0.5 border border-outline-variant/15"
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 19 }}>map</span>
+                  Plan 2D en direct
+                </span>
+                <span className="material-symbols-outlined opacity-40" style={{ fontSize: 16 }}>arrow_forward</span>
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/admin/agenda')}
-                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+                className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-all hover:-translate-y-0.5 border border-outline-variant/15"
               >
-                <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 19 }}>qr_code_scanner</span>
-                <span>Check-in</span>
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 19 }}>qr_code_scanner</span>
+                  Check-in &amp; Agenda
+                </span>
+                <span className="material-symbols-outlined opacity-40" style={{ fontSize: 16 }}>arrow_forward</span>
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/admin/clients?new=1')}
-                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+                className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-all hover:-translate-y-0.5 border border-outline-variant/15"
               >
-                <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 19 }}>person_add</span>
-                <span>Nouveau membre</span>
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 19 }}>person_add</span>
+                  Nouveau membre
+                </span>
+                <span className="material-symbols-outlined opacity-40" style={{ fontSize: 16 }}>arrow_forward</span>
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/admin/payments')}
-                className="flex items-center gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-colors border border-outline-variant/15"
+                className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-all hover:-translate-y-0.5 border border-outline-variant/15"
               >
-                <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 19 }}>payments</span>
-                <span>Encaisser un paiement</span>
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 19 }}>payments</span>
+                  Encaisser un paiement
+                </span>
+                <span className="material-symbols-outlined opacity-40" style={{ fontSize: 16 }}>arrow_forward</span>
               </button>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* 3. Agenda du jour (Réservations & Formations du jour) */}
-      <div
-        className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
-        style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}
+      {/* ── 5. JUSTE APRÈS LES SESSIONS : Réservations invités (Guests) ──── */}
+      <section
+        aria-label="Réservations invités"
+        className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 mb-6"
+        style={{ boxShadow: cardShadow }}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2.5">
-            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>today</span>
+            <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(14,165,233,0.12)] text-[#0ea5e9]">
+              <span className="material-symbols-outlined" style={{ fontSize: 19 }}>person_add_alt</span>
+            </span>
             <div>
-              <h2 className="font-sora font-bold text-primary text-base">Agenda du jour</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-sora font-bold text-primary text-base">Réservations invités (guests)</h2>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-secondary text-white">
+                  {displayedGuests.length}
+                </span>
+              </div>
               <p className="text-xs text-on-surface-variant">
-                {calendrierDuJour.length} réservation(s) · {formationsDuJourList.length} formation(s) prévue(s) aujourd'hui
+                Visiteurs sans compte ayant réservé en ligne · {guestScope === 'period' ? label : 'Tout l’historique'}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate('/admin/agenda')}
-            className="text-xs font-bold text-[#f95d00] hover:underline flex items-center gap-1"
-          >
-            Ouvrir l'agenda complet
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>arrow_forward</span>
-          </button>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Réservations du jour */}
-          <div className="rounded-2xl bg-surface-container-low/50 p-4 border border-outline-variant/10">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Réservations du jour</span>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#f95d00]/12 text-[#f95d00]">
-                {calendrierDuJour.length}
-              </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setGuestScope('period')}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  guestScope === 'period' ? 'bg-primary text-on-primary shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                Période ({guestsPeriode.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setGuestScope('all')}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  guestScope === 'all' ? 'bg-primary text-on-primary shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                Tous ({guests.length})
+              </button>
             </div>
-            {calendrierDuJour.length === 0 ? (
-              <p className="text-xs text-on-surface-variant py-4 text-center">Aucune réservation prévue aujourd'hui</p>
-            ) : (
-              <div className="divide-y divide-outline-variant/10 max-h-60 overflow-y-auto">
-                {calendrierDuJour.map((r) => (
-                  <div key={r.id} className="py-2.5 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary text-sm truncate">
-                        {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : (r.guest_nom || 'Client')}
-                      </p>
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {r.espaces?.nom || 'Espace'} · {formatTimeShort(r.date_debut)} – {formatTimeShort(r.date_fin)}
-                      </p>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                      r.statut === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {r.statut === 'confirmed' ? 'Confirmée' : 'En attente'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
-          {/* Formations du jour */}
-          <div className="rounded-2xl bg-surface-container-low/50 p-4 border border-outline-variant/10">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Formations du jour</span>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#8b5cf6]/12 text-[#8b5cf6]">
-                {formationsDuJourList.length}
-              </span>
-            </div>
-            {formationsDuJourList.length === 0 ? (
-              <p className="text-xs text-on-surface-variant py-4 text-center">Aucune session de formation aujourd'hui</p>
-            ) : (
-              <div className="divide-y divide-outline-variant/10 max-h-60 overflow-y-auto">
-                {formationsDuJourList.map((f) => (
-                  <div key={f.id} className="py-2.5 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary text-sm truncate">{f.titre}</p>
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : 'Formateur'} · {f.espaces?.nom || 'Salle'}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-bold text-primary">{formatTimeShort(f.date_debut)}</p>
-                      <p className="text-[10px] text-on-surface-variant">{f.nb_inscrits ?? 0}/{f.capacite_max ?? 0} inscrits</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Mon Coworking (image + coordonnées) ────────────────────────── */}
-      {coworking && (
-        <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/10 mb-6"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)', overflow: 'hidden' }}>
-          <div className="flex items-center gap-5 p-5 flex-wrap">
-            <img
-              src={coworking.cover_url || coworking.logo_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=400&fit=crop'}
-              alt={coworking.nom}
-              className="w-full sm:w-64 h-32 object-cover rounded-2xl shrink-0"
-              style={{ maxWidth: '100%' }}
-            />
-            <div className="flex-1 min-w-0" style={{ minWidth: 160 }}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>domain</span>
-                <h2 className="font-sora font-bold text-primary text-base">Mon Coworking</h2>
-              </div>
-              <p className="font-sora font-bold text-primary" style={{ fontSize: 18 }}>{coworking.nom}</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 mt-1 text-xs text-on-surface-variant">
-                {(coworking.adresse || coworking.ville) && (
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>location_on</span>
-                    {[coworking.adresse, coworking.ville, coworking.pays].filter(Boolean).join(', ')}
-                  </span>
-                )}
-                {coworking.telephone && (
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>phone</span>
-                    {coworking.telephone}
-                  </span>
-                )}
-                {coworking.latitude && coworking.longitude && (
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>place</span>
-                    GPS {coworking.latitude}, {coworking.longitude}
-                  </span>
-                )}
-                {coworking.email && (
-                  <span className="flex items-center gap-1 truncate">
-                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>mail</span>
-                    {coworking.email}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <Link to={`/coworking/${coworking.id}`}
-                className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border border-secondary/30 bg-secondary/10 text-secondary hover:bg-secondary/20 transition-colors shrink-0">
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility</span>
-                Consulter mon espace
-              </Link>
-              <Link to="/admin/profile-coworking"
-                className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-full text-xs font-semibold hover:bg-secondary/90 transition-colors shrink-0">
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
-                Modifier le profil
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Graphiques : CA / espace + occupation / réservations ───────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
-
-        {/* Évolution des revenus (buckets selon période) */}
-        <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Évolution des revenus</h2>
-              <p className="text-xs text-on-surface-variant">{bucketCaption}</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(47,190,143,0.1)]">
-              <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 17 }}>trending_up</span>
-            </span>
-          </div>
-          {revenueChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={revenueChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="revBar" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2fbe8f" stopOpacity={0.9} />
-                    <stop offset="95%" stopColor="#2fbe8f" stopOpacity={0.25} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                <XAxis dataKey="mois" tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis yAxisId="ca" tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => `${v} DT`} width={70} />
-                <YAxis yAxisId="tx" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} width={30} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="ca" dataKey="ca" name="CA (DT)" fill="url(#revBar)" radius={[5, 5, 0, 0]} isAnimationActive={false} />
-                <Line yAxisId="tx" type="monotone" dataKey="transactions" name="Transactions" stroke="#f95d00" strokeWidth={2.2} dot={{ r: 3, fill: '#f95d00' }} activeDot={{ r: 5 }} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[220px] flex items-center justify-center text-sm text-on-surface-variant">
-              Aucune donnée disponible
-            </div>
-          )}
-        </div>
-
-        {/* Donut CA par espace */}
-        <div className="lg:col-span-5">
-          <DonutBySpace
-            data={caParEspace}
-            title="CA par espace"
-            sub={label}
-            totalFormatter={(v) => `${v.toLocaleString('fr-FR')} DT`}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {/* Évolution occupation */}
-        <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Taux d'occupation moyen</h2>
-              <p className="text-xs text-on-surface-variant">{bucketCaption}</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(0,84,203,0.09)]">
-              <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 17 }}>domain</span>
-            </span>
-          </div>
-          {occupationChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={occupationChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="occFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                <XAxis dataKey="mois" tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} width={40} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="taux" name="Occupation (%)" stroke="#0ea5e9" strokeWidth={2.5} fill="url(#occFill)" isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[200px] flex items-center justify-center text-sm text-on-surface-variant">
-              Aucune donnée disponible
-            </div>
-          )}
-        </div>
-
-        {/* Réservations par espace (empilé) */}
-        <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Réservations par espace</h2>
-              <p className="text-xs text-on-surface-variant">{reservationsParEspace.length} espace(s) · {label}</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(245,158,11,0.1)]">
-              <span className="material-symbols-outlined text-[#f59e0b]" style={{ fontSize: 17 }}>chair</span>
-            </span>
-          </div>
-          {reservationsParEspace.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={reservationsParEspace} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                <XAxis dataKey="nom" tick={{ fontSize: 10, fill: '#64748b' }}
-                  tickFormatter={(v) => (v.length > 10 ? v.slice(0, 10) + '…' : v)} />
-                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} width={32} allowDecimals={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="confirmed" name="Confirmées" stackId="a" fill="#2fbe8f" radius={[0, 0, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="pending" name="En attente" stackId="a" fill="#f59e0b" radius={[5, 5, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[200px] flex items-center justify-center text-sm text-on-surface-variant">
-              Aucune donnée disponible
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Top membres + Prochaines réservations + Activité récente ──── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
-        {/* Top 5 membres (CA période) */}
-        <div className="lg:col-span-6 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-sora font-bold text-primary text-base">Top membres</h2>
-            <span className="text-xs text-on-surface-variant font-medium">Par CA · {label}</span>
-          </div>
-          {topMembres.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">leaderboard</span>
-              <p className="text-sm text-on-surface-variant">Aucun paiement enregistré</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {topMembres.map((m, i) => {
-                const medals = ['🥇', '🥈', '🥉'];
-                const maxCa = topMembres[0]?.ca || 1;
-                return (
-                  <div key={i} className="flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container-low/50 transition-colors">
-                    <span className="text-lg w-6 text-center shrink-0">{medals[i] || `#${i + 1}`}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-primary text-sm truncate">{m.nom}</p>
-                      <div className="h-1 rounded-full bg-outline-variant/10 overflow-hidden mt-1">
-                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(6, Math.round((m.ca / maxCa) * 100))}%`, background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                      </div>
-                    </div>
-                    <span className="font-bold text-[#2fbe8f] text-sm shrink-0">
-                      {formatDT(m.ca)} DT
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Prochaines réservations (J+7) */}
-        <div className="lg:col-span-6 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Prochaines réservations</h2>
-              <p className="text-xs text-on-surface-variant">Dans les 7 prochains jours</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(0,84,203,0.09)]">
-              <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 17 }}>upcoming</span>
-            </span>
-          </div>
-          {prochainesReservations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">event_available</span>
-              <p className="text-sm text-on-surface-variant">Aucune réservation à venir</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-outline-variant/10 max-h-[320px] overflow-y-auto">
-              {prochainesReservations.map((r) => (
-                <div key={r.id} className="py-3 flex items-center gap-3">
-                  <span className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 bg-[rgba(47,190,143,0.1)] text-[#2fbe8f]">
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calendar_month</span>
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-primary text-sm truncate">
-                      {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : 'Membre'}
-                    </p>
-                    <p className="text-xs text-on-surface-variant truncate">{r.espaces?.nom || 'Espace'}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs font-bold text-primary">
-                      {new Date(r.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                    </p>
-                    <p className="text-[10px] text-on-surface-variant">{formatTimeShort(r.date_debut)}</p>
-                  </div>
-                </div>
+            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+              {[
+                { id: 'all', label: 'Tous' },
+                { id: 'pending', label: 'En attente' },
+                { id: 'confirmed', label: 'Confirmées' },
+              ].map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => setGuestStatusFilter(st.id)}
+                  className={`px-2.5 py-1 rounded-lg transition-all ${
+                    guestStatusFilter === st.id ? 'bg-secondary text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
+                  }`}
+                >
+                  {st.label}
+                </button>
               ))}
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* ── Activité récente ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
-        <div className="lg:col-span-12 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10"
-          style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-sora font-bold text-primary text-base">Activité récente</h2>
-              <p className="text-xs text-on-surface-variant">Derniers événements</p>
-            </div>
-            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(249,93,0,0.09)]">
-              <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 17 }}>bolt</span>
-            </span>
-          </div>
-          {activiteRecente.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">history</span>
-              <p className="text-sm text-on-surface-variant">Aucune activité récente</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-outline-variant/10 max-h-[320px] overflow-y-auto">
-              {activiteRecente.map((a) => {
-                const meta = a.type === 'paiement'
-                  ? { icon: 'payments', bg: 'bg-[rgba(47,190,143,0.1)]', color: 'text-[#2fbe8f]' }
-                  : a.type === 'session'
-                    ? { icon: 'login', bg: 'bg-[rgba(245,158,11,0.1)]', color: 'text-[#f59e0b]' }
-                    : { icon: 'event_available', bg: 'bg-[rgba(139,92,246,0.1)]', color: 'text-[#8b5cf6]' };
-                return (
-                  <div key={a.id} className="py-2.5 flex items-center gap-3">
-                    <span className={`flex items-center justify-center w-8 h-8 rounded-xl shrink-0 ${meta.bg} ${meta.color}`}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{meta.icon}</span>
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-primary font-medium leading-snug">{a.text}</p>
-                      <p className="text-[10px] text-on-surface-variant mt-0.5">{relTime(a.time)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Section Demandes en attente ───────────────────────────────── */}
-      {pendingAccounts.length > 0 && (
-        <div className="bg-surface-container-lowest rounded-3xl p-5 border border-amber-200/60 mb-6"
-          style={{ boxShadow: '0 4px 16px rgba(245,158,11,0.08)' }}>
-          <div className="flex items-center gap-2 mb-4">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#d97706' }}>pending_actions</span>
-              <h2 className="font-sora font-bold text-primary text-base">Demandes de compte en attente</h2>
-            </div>
-            <span className="ml-2 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white animate-pulse"
-              style={{ background: '#d97706' }}>{pendingAccounts.length}</span>
-          </div>
-
-          <div className="divide-y divide-outline-variant/10">
-            {pendingAccounts.map((p) => {
-              const roleColors = { formateur: { bg: '#f5f3ff', text: '#6d28d9' }, member: { bg: '#eff6ff', text: '#1d4ed8' }, default: { bg: '#f1f5f9', text: '#475569' } };
-              const rc = roleColors[p.role] || roleColors.default;
-              const isActing = approvingId === p.id;
-              const dateInscrit = new Date(p.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
-              return (
-                <div key={p.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 font-bold text-sm text-white"
-                      style={{ background: 'linear-gradient(135deg, #d97706, #f59e0b)', minWidth: 40 }}>
-                      {(p.prenom?.[0] || '').toUpperCase()}{(p.nom?.[0] || '').toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary text-sm">{p.prenom} {p.nom}</p>
-                      <p className="text-xs text-on-surface-variant truncate">{p.email}</p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: rc.bg, color: rc.text }}>
-                          {p.role === 'formateur' ? 'Formateur' : 'Membre'}
-                          {p.specialite ? ` · ${p.specialite}` : ''}
-                        </span>
-                        <span className="text-[10px] text-on-surface-variant">Inscrit le {dateInscrit}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                    <button
-                      onClick={() => handleAccountAction(p.id, 'reject')}
-                      disabled={isActing}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors disabled:opacity-50"
-                      style={{ borderColor: 'rgba(186,26,26,0.25)', color: '#ba1a1a', background: 'rgba(186,26,26,0.05)' }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                      Rejeter
-                    </button>
-                    <button
-                      onClick={() => handleAccountAction(p.id, 'approve')}
-                      disabled={isActing}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-50 text-white"
-                      style={{ background: isActing ? '#94a3b8' : 'linear-gradient(135deg, #059669, #10b981)' }}
-                    >
-                      {isActing
-                        ? <span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
-                        : <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>
-                      }
-                      {isActing ? 'En cours…' : 'Approuver'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            <Link to="/admin/reservations" className="text-xs font-bold text-secondary hover:underline whitespace-nowrap">
+              Voir les réservations →
+            </Link>
           </div>
         </div>
-      )}
 
-      {/* ── Formations (période) ──────────────────────────────────────── */}
-      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
-        style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[#8b5cf6]" style={{ fontSize: 20 }}>school</span>
-            <h2 className="font-sora font-bold text-primary text-base">Suivi des formations programmées</h2>
-          </div>
-          <span className="text-xs text-on-surface-variant font-medium">
-            {formationsPeriode.length} formation(s) · {label}
-          </span>
-        </div>
-
-        {formationsPeriode.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center">
-            <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-2">school</span>
-            <p className="text-sm text-on-surface-variant">Aucune formation programmée dans cette période</p>
+        {displayedGuests.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-7 text-center">
+            <span className="material-symbols-outlined text-[38px] text-on-surface-variant/35 mb-2">group_off</span>
+            <p className="text-sm text-on-surface-variant">Aucune réservation invité pour ce filtre.</p>
           </div>
         ) : (
           <div className="table-responsive-wrapper">
             <table className="w-full min-w-[650px] text-left text-sm border-collapse">
               <thead>
-                <tr className="border-b border-outline-variant/10 pb-2">
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formation</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formateur</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Date de début</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Espace</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-center">Inscriptions</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Prix</th>
+                <tr className="border-b border-outline-variant/15">
+                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Invité(e)</th>
+                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Contact</th>
+                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Espace réservé</th>
+                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Créneau</th>
+                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Statut</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
-                {formationsPeriode.slice(0, 5).map((f) => {
-                  const formateurName = f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : '—';
-                  const fillPct = f.capacite_max > 0 ? Math.min(100, Math.round((f.nb_inscrits / f.capacite_max) * 100)) : 0;
-                  const barColor = fillPct >= 90 ? 'bg-red-500' : fillPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500';
-
-                  return (
-                    <tr key={f.id} className="hover:bg-surface-container-low/30 transition-colors">
-                      <td className="py-3 font-semibold text-primary">{f.titre}</td>
-                      <td className="py-3 text-on-surface-variant">
-                        <div>{formateurName}</div>
-                        {f.profiles?.specialite && <div className="text-[10px] text-on-surface-variant/70">{f.profiles.specialite}</div>}
-                      </td>
-                      <td className="py-3 text-on-surface-variant">
-                        <div>{new Date(f.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</div>
-                        <div className="text-[10px] text-on-surface-variant/70">{formatTimeShort(f.date_debut)}</div>
-                      </td>
-                      <td className="py-3 text-on-surface-variant">{f.espaces?.nom || '—'}</td>
-                      <td className="py-3">
-                        <div className="flex flex-col items-center justify-center min-w-[100px]">
-                          <div className="flex items-center justify-between w-full text-[10px] mb-1">
-                            <span className="font-semibold text-on-surface-variant">{f.nb_inscrits} / {f.capacite_max}</span>
-                            <span className="font-bold text-on-surface-variant">{fillPct}%</span>
-                          </div>
-                          <div className="w-full h-1 rounded-full bg-outline-variant/10 overflow-hidden">
-                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${fillPct}%` }} />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 text-right font-bold text-secondary">
-                        {f.prix_inscription > 0 ? `${f.prix_inscription} DT` : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? 'Gratuit' : <span className="text-slate-400 font-medium italic">Non défini</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Réservations invités (guests) ──────────────────────────────── */}
-      <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 mb-6"
-        style={{ boxShadow: '0 4px 16px rgba(16,35,63,0.06)' }}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>person_off</span>
-            <h2 className="font-sora font-bold text-primary text-base">Réservations invités (guests)</h2>
-          </div>
-          {guestsPeriode.length > 0 && (
-            <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white"
-              style={{ background: '#f95d00' }}>{guestsPeriode.length}</span>
-          )}
-        </div>
-
-        {guestsPeriode.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-6 text-center">
-            <span className="material-symbols-outlined text-[38px] text-on-surface-variant/40 mb-2">group_off</span>
-            <p className="text-sm text-on-surface-variant">Aucune réservation invité sur {label}.</p>
-          </div>
-        ) : (
-          <div className="table-responsive-wrapper">
-            <table className="w-full min-w-[650px] text-left text-sm border-collapse">
-              <thead>
-                <tr className="border-b border-outline-variant/10">
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Invitée(e)</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Contact</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Espace réservé</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Date</th>
-                  <th className="pb-2 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Statut</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-outline-variant/10">
-                {guestsPeriode.slice(0, 10).map((g) => {
+                {displayedGuests.slice(0, 10).map((g, idx) => {
                   const res = g.reservations?.[0];
+                  const statut = res?.statut;
                   return (
-                    <tr key={g.id} className="hover:bg-surface-container-low/30 transition-colors">
+                    <tr key={g.id} className="hover:bg-surface-container-low/40 transition-colors">
                       <td className="py-3">
                         <div className="flex items-center gap-2.5">
-                          <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-[rgba(249,93,0,0.09)] text-secondary font-bold text-xs">
-                            {(g.prenom?.[0] || '?').toUpperCase()}{(g.nom?.[0] || '').toUpperCase()}
+                          <span
+                            className="flex items-center justify-center w-9 h-9 rounded-xl font-bold text-xs text-white shrink-0"
+                            style={{ background: CHART_COLORS[idx % CHART_COLORS.length] }}
+                          >
+                            {getInitials(g.prenom, g.nom, '?')}
                           </span>
                           <span className="font-semibold text-primary">{g.prenom} {g.nom}</span>
                         </div>
                       </td>
                       <td className="py-3 text-on-surface-variant">
-                        <div className="truncate max-w-[200px]">{g.email}</div>
-                        {g.telephone && <div className="text-[10px] text-on-surface-variant/70">{g.telephone}</div>}
+                        <div className="truncate max-w-[220px]">{g.email}</div>
+                        {g.telephone && <div className="text-[10px] text-on-surface-variant/75">{g.telephone}</div>}
                       </td>
-                      <td className="py-3 text-on-surface-variant">{res?.espaces?.nom || '—'}</td>
+                      <td className="py-3 text-on-surface-variant font-medium">{res?.espaces?.nom || '—'}</td>
                       <td className="py-3 text-on-surface-variant">
-                        {res?.date_debut ? new Date(res.date_debut).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '—'}
+                        {res?.date_debut ? (
+                          <div>
+                            <div className="font-medium text-primary">{formatDateShort(res.date_debut)}</div>
+                            <div className="text-[10px] opacity-75">
+                              {formatTimeShort(res.date_debut)} → {formatTimeShort(res.date_fin)}
+                            </div>
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="py-3 text-right">
-                        <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-tight ${
-                          res?.statut === 'confirmed' ? 'bg-emerald-100 text-emerald-800'
-                            : res?.statut === 'pending' ? 'bg-amber-100 text-amber-800'
-                              : res?.statut === 'cancelled' ? 'bg-red-100 text-red-800'
-                                : 'bg-gray-100 text-gray-700'
-                        }`}>
-                          {res?.statut === 'confirmed' ? 'Confirmée'
-                            : res?.statut === 'pending' ? 'En attente'
-                              : res?.statut === 'cancelled' ? 'Annulée'
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${
+                            statut === 'confirmed'
+                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                              : statut === 'pending'
+                                ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                                : statut === 'cancelled'
+                                  ? 'bg-red-500/15 text-red-700 dark:text-red-300'
+                                  : 'bg-slate-500/15 text-slate-600'
+                          }`}
+                        >
+                          {statut === 'confirmed'
+                            ? 'Confirmée'
+                            : statut === 'pending'
+                              ? 'En attente'
+                              : statut === 'cancelled'
+                                ? 'Annulée'
                                 : '—'}
                         </span>
                       </td>
@@ -1440,8 +1572,186 @@ export default function AdminDashboard({ session }) {
             </table>
           </div>
         )}
-      </div>
+      </section>
 
+      {/* ── 6. Analytique & Performance (sans Occupation moyenne) ─────────── */}
+      <section aria-label="Analytique et performance" className="space-y-4 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Évolution des revenus */}
+          <div
+            className="dash-enter lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
+            style={{ boxShadow: cardShadow }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-sora font-bold text-primary text-base">Évolution des revenus</h2>
+                <p className="text-xs text-on-surface-variant">{bucketCaption}</p>
+              </div>
+              <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(47,190,143,0.12)]">
+                <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 18 }}>trending_up</span>
+              </span>
+            </div>
+            {revenueChart.length > 0 ? (
+              <ResponsiveContainer width="100%" height={230}>
+                <ComposedChart data={revenueChart} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="revBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2fbe8f" stopOpacity={0.92} />
+                      <stop offset="95%" stopColor="#2fbe8f" stopOpacity={0.22} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'} />
+                  <XAxis dataKey="mois" tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} />
+                  <YAxis yAxisId="ca" tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} tickFormatter={(v) => `${v} DT`} width={72} />
+                  <YAxis yAxisId="tx" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} width={30} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar
+                    yAxisId="ca"
+                    dataKey="ca"
+                    name="CA (DT)"
+                    fill="url(#revBar)"
+                    radius={[6, 6, 0, 0]}
+                    isAnimationActive
+                    animationDuration={750}
+                  />
+                  <Line
+                    yAxisId="tx"
+                    type="monotone"
+                    dataKey="transactions"
+                    name="Transactions"
+                    stroke="#f95d00"
+                    strokeWidth={2.4}
+                    dot={{ r: 3.5, fill: '#f95d00' }}
+                    activeDot={{ r: 5.5 }}
+                    isAnimationActive
+                    animationDuration={850}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[230px] flex items-center justify-center text-sm text-on-surface-variant">
+                Aucune donnée disponible
+              </div>
+            )}
+          </div>
+
+          {/* Donut CA par espace */}
+          <div className="lg:col-span-5">
+            <DonutBySpace
+              data={caParEspace}
+              title="CA par espace"
+              sub={label}
+              totalFormatter={(v) => `${formatDT(v)} DT`}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Réservations par espace */}
+          <div
+            className="dash-enter lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
+            style={{ boxShadow: cardShadow }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-sora font-bold text-primary text-base">Réservations par espace</h2>
+                <p className="text-xs text-on-surface-variant">{reservationsParEspace.length} espace(s) · {label}</p>
+              </div>
+              <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(245,158,11,0.12)]">
+                <span className="material-symbols-outlined text-[#f59e0b]" style={{ fontSize: 18 }}>chair</span>
+              </span>
+            </div>
+            {reservationsParEspace.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={reservationsParEspace} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'} />
+                  <XAxis
+                    dataKey="nom"
+                    tick={{ fontSize: 10, fill: dark ? '#a3a09b' : '#64748b' }}
+                    tickFormatter={(v) => (v.length > 12 ? `${v.slice(0, 12)}…` : v)}
+                  />
+                  <YAxis tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} width={32} allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar
+                    dataKey="confirmed"
+                    name="Confirmées"
+                    stackId="a"
+                    fill="#2fbe8f"
+                    radius={[0, 0, 0, 0]}
+                    isAnimationActive
+                    animationDuration={750}
+                  />
+                  <Bar
+                    dataKey="pending"
+                    name="En attente"
+                    stackId="a"
+                    fill="#f59e0b"
+                    radius={[6, 6, 0, 0]}
+                    isAnimationActive
+                    animationDuration={750}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[220px] flex items-center justify-center text-sm text-on-surface-variant">
+                Aucune donnée disponible
+              </div>
+            )}
+          </div>
+
+          {/* Top membres (CA période) */}
+          <div
+            className="dash-enter lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
+            style={{ boxShadow: cardShadow }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-sora font-bold text-primary text-base">Top membres</h2>
+                <p className="text-xs text-on-surface-variant">Par CA · {label}</p>
+              </div>
+              <Link to="/admin/clients" className="text-xs font-bold text-secondary hover:underline">
+                Clients →
+              </Link>
+            </div>
+            {topMembres.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <span className="material-symbols-outlined text-[40px] text-on-surface-variant/35 mb-2">leaderboard</span>
+                <p className="text-sm text-on-surface-variant">Aucun paiement enregistré</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {topMembres.map((m, i) => {
+                  const medals = ['🥇', '🥈', '🥉'];
+                  const maxCa = topMembres[0]?.ca || 1;
+                  const pct = Math.max(6, Math.round((m.ca / maxCa) * 100));
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3 p-2.5 rounded-2xl hover:bg-surface-container-low/60 transition-colors"
+                    >
+                      <span className="text-lg w-6 text-center shrink-0">{medals[i] || `#${i + 1}`}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-primary text-sm truncate">{m.nom}</p>
+                        <div className="h-1.5 rounded-full bg-outline-variant/15 overflow-hidden mt-1.5">
+                          <div
+                            className="dash-bar-grow h-full rounded-full"
+                            style={{ width: `${pct}%`, background: CHART_COLORS[i % CHART_COLORS.length] }}
+                          />
+                        </div>
+                      </div>
+                      <span className="font-bold text-[#2fbe8f] text-xs sm:text-sm shrink-0">
+                        {formatDT(m.ca)} DT
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </PortalLayout>
   );
 }
