@@ -809,17 +809,20 @@ export default function AdminDashboard({ session }) {
           <div className="flex flex-col items-start xl:items-end gap-2.5">
             <PeriodFilter value={period} onChange={setPeriod} />
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                to="/admin/agenda?view=plan"
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all hover:-translate-y-0.5 shadow-xs no-underline ${
-                  dark
-                    ? 'bg-white/10 text-white border border-white/15 hover:bg-white/18'
-                    : 'bg-[#100f0d] text-white hover:bg-[#242220]'
+              <button
+                type="button"
+                onClick={() => navigate('/admin/agenda?view=plan')}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all hover:-translate-y-0.5 shadow-xs ${
+                  dark ? 'border border-white/15 hover:brightness-125' : 'hover:brightness-125'
                 }`}
+                style={{
+                  backgroundColor: dark ? 'rgba(255,255,255,0.12)' : '#100f0d',
+                  color: '#ffffff',
+                }}
               >
                 <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 17 }}>map</span>
-                Plan 2D Live
-              </Link>
+                <span style={{ color: '#ffffff' }}>Plan 2D Live</span>
+              </button>
               {profile?.role !== 'staff' && (
                 <>
                   <button

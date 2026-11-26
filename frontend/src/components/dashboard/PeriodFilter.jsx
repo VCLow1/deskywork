@@ -170,7 +170,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
 
       <div
         ref={containerRef}
-        className={`inline-flex flex-wrap items-center gap-1.5 rounded-2xl border p-1.5 backdrop-blur-md transition-all max-w-full ${barBg} ${className}`}
+        className={`inline-flex flex-wrap lg:flex-nowrap items-center gap-1.5 rounded-2xl border p-1.5 backdrop-blur-md transition-all max-w-full ${barBg} ${className}`}
         style={{
           boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.07)',
         }}
