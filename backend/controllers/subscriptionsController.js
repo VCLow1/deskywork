@@ -288,12 +288,13 @@ async function updateSubscription(req, res) {
   try {
     const { statut, renouvellement_auto, date_fin } = req.body;
     const updates = {};
+    const validStatuses = ['active', 'actif', 'a_renouveler', 'expired', 'suspended', 'resilie'];
 
     if (statut !== undefined) {
-      if (!['active', 'suspended', 'expired'].includes(statut)) {
+      if (!validStatuses.includes(statut)) {
         return res.status(400).json({ error: 'statut invalide.' });
       }
-      updates.statut = statut;
+      updates.statut = statut === 'actif' ? 'active' : statut;
     }
 
     if (renouvellement_auto !== undefined) {
@@ -308,16 +309,38 @@ async function updateSubscription(req, res) {
       return res.status(400).json({ error: 'Aucune mise à jour fournie.' });
     }
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from('abonnements')
       .update(updates)
       .eq('id', req.params.id)
-      .select()
+      .select('*, profiles(nom, prenom, email)')
       .single();
+
+    if (error && updates.statut === 'resilie') {
+      // Repli si la contrainte SQL n'autorise pas encore 'resilie'
+      ({ data, error } = await supabaseAdmin
+        .from('abonnements')
+        .update({ ...updates, statut: 'suspended' })
+        .eq('id', req.params.id)
+        .select('*, profiles(nom, prenom, email)')
+        .single());
+    }
 
     if (error) {
       return res.status(400).json({ error: error.message });
     }
+
+    const { logActivity } = require('../models/activityLogger');
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId || data?.tenant_id,
+      user: req.user,
+      action: 'changement_statut',
+      entiteType: 'abonnement',
+      entiteId: req.params.id,
+      details: `Mise à jour de l'abonnement (${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(', ')})`,
+      apres: updates,
+    });
 
     res.json({ subscription: data });
   } catch (err) {
@@ -327,9 +350,10 @@ async function updateSubscription(req, res) {
 
 async function listSubscriptions(req, res) {
   try {
+    const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
     let query = supabaseAdmin
       .from('abonnements')
-      .select('*, profiles(nom, prenom, email)')
+      .select('*, profiles(nom, prenom, email, telephone)')
       .order('created_at', { ascending: false });
 
     query = applyTenantFilter(query, req);
@@ -339,7 +363,95 @@ async function listSubscriptions(req, res) {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ subscriptions: data });
+    let archIds = new Set();
+    if (req.tenantId) {
+      const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+      if (Array.isArray(tRow?.settings?.archived_subscriptions)) {
+        archIds = new Set(tRow.settings.archived_subscriptions);
+      }
+    }
+
+    const list = (data || []).map((a) => ({
+      ...a,
+      archived_at: a.archived_at || (archIds.has(a.id) ? (a.updated_at || a.created_at) : null),
+    }));
+
+    res.json({ subscriptions: includeArchived ? list : list.filter((a) => !a.archived_at) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function archiveSubscription(req, res) {
+  try {
+    const nowIso = new Date().toISOString();
+    let { data, error } = await supabaseAdmin
+      .from('abonnements')
+      .update({ archived_at: nowIso, archived_by: req.user?.id || null, statut: 'suspended' })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ data, error } = await supabaseAdmin.from('abonnements').update({ statut: 'suspended' }).eq('id', req.params.id).select().single());
+    }
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (req.tenantId) {
+      const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+      const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+      const next = Array.from(new Set([...(Array.isArray(cur.archived_subscriptions) ? cur.archived_subscriptions : []), req.params.id]));
+      await supabaseAdmin.from('tenants').update({ settings: { ...cur, archived_subscriptions: next } }).eq('id', req.tenantId);
+    }
+
+    const { logActivity } = require('../models/activityLogger');
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId || data?.tenant_id,
+      user: req.user,
+      action: 'archivage',
+      entiteType: 'abonnement',
+      entiteId: req.params.id,
+      details: `Archivage de l'abonnement ${req.params.id}`,
+    });
+
+    res.json({ subscription: { ...data, archived_at: nowIso }, message: 'Abonnement archivé.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function restoreSubscription(req, res) {
+  try {
+    let { data, error } = await supabaseAdmin
+      .from('abonnements')
+      .update({ archived_at: null, archived_by: null, statut: 'active' })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ data, error } = await supabaseAdmin.from('abonnements').update({ statut: 'active' }).eq('id', req.params.id).select().single());
+    }
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (req.tenantId) {
+      const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+      const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+      const next = (Array.isArray(cur.archived_subscriptions) ? cur.archived_subscriptions : []).filter((x) => x !== req.params.id);
+      await supabaseAdmin.from('tenants').update({ settings: { ...cur, archived_subscriptions: next } }).eq('id', req.tenantId);
+    }
+
+    const { logActivity } = require('../models/activityLogger');
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId || data?.tenant_id,
+      user: req.user,
+      action: 'restauration',
+      entiteType: 'abonnement',
+      entiteId: req.params.id,
+      details: `Restauration de l'abonnement ${req.params.id}`,
+    });
+
+    res.json({ subscription: data, message: 'Abonnement restauré.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -352,4 +464,6 @@ module.exports = {
   subscribeSelf,
   updateSubscription,
   listSubscriptions,
+  archiveSubscription,
+  restoreSubscription,
 };

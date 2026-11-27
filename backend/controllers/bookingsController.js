@@ -4,6 +4,8 @@ const { getBookingAvailability, getCancellationPolicy, getCancellationPolicyForE
 const { applyTenantFilter } = require('../middleware/guards');
 const { notifyConfirmationReservation, notifyAnnulationReservation } = require('../services/notificationService');
 const { sendEmailUniversal } = require('../utils/sendEmail');
+const { DEFAULT_TVA_PCT, roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
+const { logActivity } = require('../models/activityLogger');
 
 async function getBookingsCalendar(req, res) {
   try {
@@ -169,12 +171,16 @@ async function createBooking(req, res) {
       });
     }
 
-    // Calcul automatique du montant total selon le tarif horaire de l'espace
-    const { data: espData } = await req.db
+    // Calcul automatique du montant total selon le tarif horaire de l'espace (snapshot HT/TTC immuable LOT 2)
+    let espDataRes = await req.db
       .from('espaces')
-      .select('tarif_horaire, tenant_id, type, capacite')
+      .select('tarif_horaire, tarif_horaire_ht, tva_pct, tenant_id, type, capacite')
       .eq('id', espace_id)
       .single();
+    if (espDataRes.error && /column|does not exist|schema cache/i.test(espDataRes.error.message || '')) {
+      espDataRes = await req.db.from('espaces').select('tarif_horaire, tenant_id, type, capacite').eq('id', espace_id).single();
+    }
+    const espData = espDataRes.data;
 
     const rawNbParticipants = req.body.nb_participants ?? entreprise_info?.nb_personnes;
     let parsedParticipants = null;
@@ -221,8 +227,13 @@ async function createBooking(req, res) {
     }
 
     const hours = Math.max(1, (new Date(date_fin) - new Date(date_debut)) / (1000 * 60 * 60));
-    const tarif = parseFloat(espData?.tarif_horaire) || 0;
-    const computedMontant = parseFloat((hours * tarif).toFixed(3));
+    const tvaApplique = Number(espData?.tva_pct ?? DEFAULT_TVA_PCT);
+    const tarifTTC = roundMillime(espData?.tarif_horaire || 0);
+    const tarifHT = espData?.tarif_horaire_ht !== undefined && espData?.tarif_horaire_ht !== null
+      ? roundMillime(espData.tarif_horaire_ht)
+      : computeHTFromTTC(tarifTTC, tvaApplique);
+    const computedMontantHT = roundMillime(hours * tarifHT);
+    const computedMontant = tarifTTC > 0 ? roundMillime(hours * tarifTTC) : computeTTC(computedMontantHT, tvaApplique);
 
     const bookingTenantId = req.tenantId || espData?.tenant_id || null;
 
@@ -277,6 +288,11 @@ async function createBooking(req, res) {
         date_fin,
         statut: initialStatut,
         mode: dbMode,
+        tarif_applique_ht: tarifHT,
+        tva_pct_applique: tvaApplique,
+        montant_ht: computedMontantHT,
+        montant_ttc: computedMontant,
+        montant_total: computedMontant,
         ...(floor_plan_item_id ? { floor_plan_item_id } : {}),
         ...(combinedNotes ? { notes: combinedNotes } : {}),
       },
@@ -286,6 +302,17 @@ async function createBooking(req, res) {
     if (error) {
       return res.status(400).json({ error: error.message });
     }
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: bookingTenantId,
+      user: req.user,
+      action: 'creation',
+      entiteType: 'reservation',
+      entiteId: data.id,
+      details: `Nouvelle réservation ${espData?.nom || espace_id} (${computedMontant.toFixed(3)} DT TTC)`,
+      apres: { espace_id, date_debut, date_fin, montant_ht: computedMontantHT, montant_ttc: computedMontant, tva_pct_applique: tvaApplique },
+    });
 
     let payment = null;
     if (computedMontant > 0) {

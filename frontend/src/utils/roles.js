@@ -189,58 +189,19 @@ export const MEMBER_NAV = [
   },
 ];
 
+// LOT 2 : Nouvelle architecture de navigation Admin — 8 entrées maximum, sans scroll interne caché
 export const ADMIN_NAV = [
   {
-    group: 'Pilotage',
+    group: 'Pilotage & Opérations',
     items: [
       { id: 'admin_dashboard', label: "Aujourd'hui", icon: 'dashboard', to: '/admin/dashboard' },
-      { id: 'admin_rapports', label: 'Rapports', icon: 'analytics', to: '/admin/rapports' },
-      { id: 'admin_statistiques', label: 'Visibilité Marketplace', icon: 'monitoring', to: '/admin/statistiques', badge: 'Premium' },
-    ],
-  },
-  {
-    group: 'Réservations',
-    items: [
-      { id: 'admin_agenda', label: 'Agenda & Check-in', icon: 'calendar_month', to: '/admin/agenda' },
       { id: 'admin_reservations', label: 'Réservations', icon: 'event_available', to: '/admin/reservations' },
-      { id: 'admin_clients', label: 'Membres & Clients', icon: 'people', to: '/admin/clients' },
-    ],
-  },
-  {
-    group: 'Espaces & Tarifs',
-    items: [
-      { id: 'admin_espaces', label: 'Mes Espaces', icon: 'meeting_room', to: '/admin/espaces' },
-      { id: 'admin_pricing', label: 'Tarification', icon: 'sell', to: '/admin/pricing' },
-    ],
-  },
-  {
-    group: 'Finance',
-    items: [
-      { id: 'admin_payments', label: 'Gestion paiements', icon: 'account_balance_wallet', to: '/admin/payments' },
-    ],
-  },
-  {
-    group: 'Organisation',
-    items: [
-      { id: 'admin_profile_coworking', label: 'Profil & Activité', icon: 'tune', to: '/admin/profile-coworking' },
-      { id: 'admin_team', label: 'Équipe (Staff)', icon: 'badge', to: '/admin/team' },
-      { id: 'admin_subscription', label: 'Mon Abonnement', icon: 'workspace_premium', to: '/admin/subscription' },
-      { id: 'admin_sites', label: 'Multi-sites', icon: 'location_city', to: '/admin/sites', locked: true, badge: 'Bientôt' },
-      { id: 'admin_cancellation', label: 'Politique annulation', icon: 'gavel', to: '/admin/cancellation-policy' },
-    ],
-  },
-  {
-    group: 'Formations',
-    items: [
-      { id: 'admin_formations', label: 'Formations & Apprenants', icon: 'school', to: '/admin/formations' },
-      { id: 'admin_formateurs', label: 'Formateurs & Versements', icon: 'groups', to: '/admin/formateurs' },
-    ],
-  },
-  {
-    group: 'Communication',
-    items: [
-      { id: 'admin_messages', label: 'Messagerie', icon: 'chat', to: '/admin/messages' },
-      { id: 'admin_notifications_support', label: 'Notifications & Support', icon: 'support_agent', to: '/admin/notifications-support' },
+      { id: 'admin_clients', label: 'Membres', icon: 'people', to: '/admin/clients' },
+      { id: 'admin_abonnements', label: 'Abonnements', icon: 'card_membership', to: '/admin/abonnements' },
+      { id: 'admin_payments', label: 'Finance', icon: 'account_balance_wallet', to: '/admin/payments' },
+      { id: 'admin_espaces', label: 'Espaces et offres', icon: 'meeting_room', to: '/admin/espaces' },
+      { id: 'admin_formations', label: 'Formations', icon: 'school', to: '/admin/formations' },
+      { id: 'admin_rapports', label: 'Analyses', icon: 'analytics', to: '/admin/rapports' },
     ],
   },
 ];
@@ -251,17 +212,11 @@ export const STAFF_NAV = [
     group: 'Opérations',
     items: [
       { id: 'staff_dashboard', label: "Aujourd'hui", icon: 'dashboard', to: '/admin/dashboard' },
-      { id: 'staff_agenda', label: 'Agenda & Check-in', icon: 'calendar_month', to: '/admin/agenda' },
       { id: 'staff_reservations', label: 'Réservations', icon: 'event_available', to: '/admin/reservations' },
-      { id: 'staff_clients', label: 'Membres & Clients', icon: 'people', to: '/admin/clients' },
-      { id: 'staff_payments', label: 'Paiements du jour', icon: 'point_of_sale', to: '/admin/payments' },
-    ],
-  },
-  {
-    group: 'Communication',
-    items: [
-      { id: 'staff_messages', label: 'Messagerie', icon: 'chat', to: '/admin/messages' },
-      { id: 'staff_notifications_support', label: 'Notifications & Support', icon: 'support_agent', to: '/admin/notifications-support' },
+      { id: 'staff_clients', label: 'Membres', icon: 'people', to: '/admin/clients' },
+      { id: 'staff_abonnements', label: 'Abonnements', icon: 'card_membership', to: '/admin/abonnements' },
+      { id: 'staff_payments', label: 'Finance', icon: 'point_of_sale', to: '/admin/payments' },
+      { id: 'staff_espaces', label: 'Espaces et offres', icon: 'meeting_room', to: '/admin/espaces' },
     ],
   },
 ];
@@ -348,16 +303,16 @@ export const SUPER_ADMIN_NAV = [
 
 // Aplatit les sections (Menu/Sous-menu) en une liste de liens (recherche header, breadcrumb)
 /**
- * Filtre la navigation Admin selon le type d'activité configuré par l'établissement (CDC v3.0 D5) :
- * - 'coworking'        : masque les menus Formations / Apprenants / Formateurs
- * - 'centre_formation' : met l'accent sur Formations, Salles, Apprenants et Formateurs
- * - 'mixte' (défaut)   : tous les menus actifs
+ * Filtre la navigation Admin selon l'activation du module Formations et l'activité :
+ * - moduleFormationsActif === false ou activite === 'coworking' : masque Formations
  */
-export function getAdminNav(activite = 'mixte') {
-  if (activite === 'coworking') {
-    return ADMIN_NAV.filter((section) => section.group !== 'Formations');
-  }
-  return ADMIN_NAV;
+export function getAdminNav(activite = 'mixte', moduleFormationsActif = true) {
+  const hideFormations = moduleFormationsActif === false || activite === 'coworking';
+  if (!hideFormations) return ADMIN_NAV;
+  return ADMIN_NAV.map((section) => ({
+    ...section,
+    items: (section.items || []).filter((item) => item.id !== 'admin_formations'),
+  }));
 }
 
 export function flattenNav(sections) {

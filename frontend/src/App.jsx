@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, createContext, useContext, lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { RoleGuard, HomeRedirect } from './components/auth/RoleGuard';
 import { LanguageProvider } from './context/LanguageContext';
@@ -155,6 +155,14 @@ const AdminSubscription = lazy(() => import('./pages/AdminSubscription'));
 const AdminReports = lazy(() => import('./pages/AdminReports'));
 const AdminMarketplaceStats = lazy(() => import('./pages/AdminMarketplaceStats'));
 const AdminNotificationsSupport = lazy(() => import('./pages/AdminNotificationsSupport'));
+const AdminSubscriptions = lazy(() => import('./pages/AdminSubscriptions'));
+const AdminSettings = lazy(() => import('./pages/AdminSettings'));
+
+function AgendaRedirect() {
+  const { search } = useLocation();
+  const view = new URLSearchParams(search).get('view') === 'plan' ? 'plan' : 'calendar';
+  return <Navigate to={`/admin/reservations?view=${view}`} replace />;
+}
 
 // Espace Formateur
 const TrainerPlanning = lazy(() => import('./pages/TrainerPlanning'));
@@ -373,29 +381,34 @@ export default function App() {
             <Route path="/book/step2" element={<BookerRoute><BookingStep2 session={session} /></BookerRoute>} />
             <Route path="/book/step3" element={<BookerRoute><BookingStep3 session={session} /></BookerRoute>} />
 
-            {/* ── Espace Administration Coworking / Centre de Formation ── */}
+            {/* ── Espace Administration Coworking / Centre de Formation (LOT 2 Hub Architecture) ── */}
             <Route path="/admin/onboarding" element={<AdminRoute><AdminOnboarding session={session} /></AdminRoute>} />
             <Route path="/admin/dashboard" element={<AdminRoute><AdminDashboard session={session} /></AdminRoute>} />
-            <Route path="/admin/rapports" element={<AdminRoute adminOnly><AdminReports session={session} /></AdminRoute>} />
-            <Route path="/admin/statistiques" element={<AdminRoute adminOnly><AdminMarketplaceStats session={session} /></AdminRoute>} />
             <Route path="/admin/reservations" element={<AdminRoute><AdminReservations session={session} /></AdminRoute>} />
             <Route path="/admin/clients" element={<AdminRoute><AdminClients session={session} /></AdminRoute>} />
-            <Route path="/admin/pricing" element={<AdminRoute adminOnly><AdminPricing session={session} /></AdminRoute>} />
+            <Route path="/admin/abonnements" element={<AdminRoute><AdminSubscriptions session={session} /></AdminRoute>} />
             <Route path="/admin/payments" element={<AdminRoute><AdminPayments session={session} /></AdminRoute>} />
-            <Route path="/admin/formations" element={<AdminRoute><AdminFormations session={session} /></AdminRoute>} />
             <Route path="/admin/espaces" element={<AdminRoute><AdminEspaces session={session} /></AdminRoute>} />
-            <Route path="/admin/spaces" element={<Navigate to="/admin/espaces" replace />} />
-            <Route path="/admin/profile-coworking" element={<AdminRoute adminOnly><AdminCoworkingProfile session={session} /></AdminRoute>} />
-            <Route path="/admin/team" element={<AdminRoute adminOnly><AdminTeam session={session} /></AdminRoute>} />
-            <Route path="/admin/subscription" element={<AdminRoute adminOnly><AdminSubscription session={session} /></AdminRoute>} />
-            <Route path="/admin/formateurs" element={<AdminRoute><AdminFormateurs session={session} /></AdminRoute>} />
-            <Route path="/admin/cancellation-policy" element={<AdminRoute adminOnly><AdminCancellationPolicy session={session} /></AdminRoute>} />
+            <Route path="/admin/formations" element={<AdminRoute><AdminFormations session={session} /></AdminRoute>} />
+            <Route path="/admin/rapports" element={<AdminRoute adminOnly><AdminReports session={session} /></AdminRoute>} />
+            <Route path="/admin/settings" element={<AdminRoute adminOnly><AdminSettings session={session} /></AdminRoute>} />
             <Route path="/admin/messages" element={<AdminRoute><AdminMessages session={session} /></AdminRoute>} />
-            <Route path="/admin/agenda" element={<AdminRoute><AdminAgenda session={session} /></AdminRoute>} />
             <Route path="/admin/notifications" element={<AdminRoute><AdminNotifications session={session} /></AdminRoute>} />
             <Route path="/admin/notifications-support" element={<AdminRoute><AdminNotificationsSupport session={session} /></AdminRoute>} />
             <Route path="/admin/support" element={<AdminRoute><AdminNotificationsSupport session={session} /></AdminRoute>} />
             <Route path="/admin/sites" element={<AdminRoute adminOnly><AdminMultiSites session={session} /></AdminRoute>} />
+
+            {/* Redirections de compatibilité LOT 2 (anciennes URLs → nouveaux Hubs) */}
+            <Route path="/admin/spaces" element={<Navigate to="/admin/espaces" replace />} />
+            <Route path="/admin/agenda" element={<AdminRoute><AgendaRedirect /></AdminRoute>} />
+            <Route path="/admin/pricing" element={<Navigate to="/admin/espaces?tab=tarifs" replace />} />
+            <Route path="/admin/statistiques" element={<Navigate to="/admin/rapports?tab=marketplace" replace />} />
+            <Route path="/admin/reports" element={<Navigate to="/admin/rapports" replace />} />
+            <Route path="/admin/formateurs" element={<Navigate to="/admin/formations?tab=formateurs" replace />} />
+            <Route path="/admin/profile-coworking" element={<Navigate to="/admin/settings?tab=etablissement" replace />} />
+            <Route path="/admin/cancellation-policy" element={<Navigate to="/admin/settings?tab=annulation" replace />} />
+            <Route path="/admin/team" element={<Navigate to="/admin/settings?tab=equipe" replace />} />
+            <Route path="/admin/subscription" element={<Navigate to="/admin/settings?tab=abonnement" replace />} />
 
             {/* ── Espace Formateur ── */}
             <Route path="/trainer-dashboard" element={<TrainerRoute><TrainerDashboard session={session} /></TrainerRoute>} />

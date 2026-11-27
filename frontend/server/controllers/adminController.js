@@ -1,6 +1,48 @@
-// controllers/adminController.js — MODULE ADMIN : Tenant, Espaces, Membres, Conversations
+// controllers/adminController.js — MODULE ADMIN : Tenant, Espaces, Membres, Ressources, Audit (LOT 2)
+const crypto = require('crypto');
 const { supabaseAdmin } = require('../config/supabase');
 const { applyTenantFilter } = require('../middleware/guards');
+const {
+  SAAS_PACKS,
+  PACK_LIST,
+  DEFAULT_TVA_PCT,
+  resolveTenantPack,
+  hasPackFeature,
+} = require('../config/deskyworkPacks');
+const { roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
+const {
+  logActivity,
+  listActivityLogs,
+  hasFutureUntreatedReservations,
+} = require('../models/activityLogger');
+const { isStaffRole } = require('../models/kpisCalculator');
+
+function isMissingSchemaError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  const code = String(err?.code || '');
+  return (
+    code === '42703' ||
+    code === '42P01' ||
+    code === 'PGRST204' ||
+    code === 'PGRST205' ||
+    msg.includes('does not exist') ||
+    msg.includes('could not find the') ||
+    msg.includes('schema cache')
+  );
+}
+
+async function readTenantSettings(tid) {
+  if (!tid) return {};
+  const { data } = await supabaseAdmin.from('tenants').select('settings').eq('id', tid).maybeSingle();
+  return (data && data.settings && typeof data.settings === 'object') ? { ...data.settings } : {};
+}
+
+async function writeTenantSettingsKey(tid, key, value) {
+  const cur = await readTenantSettings(tid);
+  const next = { ...cur, [key]: value };
+  await supabaseAdmin.from('tenants').update({ settings: next, updated_at: new Date().toISOString() }).eq('id', tid);
+  return next;
+}
 
 // ── GET /api/admin/tenant ─────────────────────────────────────────────────
 async function getTenant(req, res) {
@@ -23,6 +65,7 @@ async function getTenant(req, res) {
     tenant,
     space_count: spaceCount || 0,
     onboarding_completed: tenant.settings?.onboarding_completed === true,
+    module_formations_actif: tenant.settings?.module_formations_actif !== false,
   });
 }
 
@@ -37,22 +80,37 @@ async function updateTenant(req, res) {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   }
 
-  // CDC v3.0 : fusion sécurisée de settings (activite, tarif_depassement_heure, auto_confirmation, gallery_photos, equipements, domiciliation)
-  if (
+  // Fusion sécurisée de settings (module formations, TVA par défaut, taxes, intégrations, etc.)
+  const hasSettingsPayload =
     req.body.settings !== undefined ||
     req.body.activite !== undefined ||
     req.body.tarif_depassement_heure !== undefined ||
     req.body.auto_confirmation !== undefined ||
     req.body.gallery_photos !== undefined ||
     req.body.equipements !== undefined ||
-    req.body.domiciliation !== undefined
-  ) {
+    req.body.domiciliation !== undefined ||
+    req.body.module_formations_actif !== undefined ||
+    req.body.tva_defaut_pct !== undefined ||
+    req.body.taxes_facturation !== undefined ||
+    req.body.integrations !== undefined;
+
+  let prevSettingsSnapshot = null;
+  if (hasSettingsPayload) {
     const { data: curTenant } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
     const curSettings = (curTenant && curTenant.settings && typeof curTenant.settings === 'object') ? curTenant.settings : {};
+    prevSettingsSnapshot = curSettings;
     const nextSettings = { ...curSettings, ...(req.body.settings && typeof req.body.settings === 'object' ? req.body.settings : {}) };
     if (['coworking', 'centre_formation', 'mixte'].includes(req.body.activite)) nextSettings.activite = req.body.activite;
     if (req.body.tarif_depassement_heure !== undefined) nextSettings.tarif_depassement_heure = Number(req.body.tarif_depassement_heure) || 0;
     if (req.body.auto_confirmation !== undefined) nextSettings.auto_confirmation = Boolean(req.body.auto_confirmation);
+    if (req.body.module_formations_actif !== undefined) nextSettings.module_formations_actif = Boolean(req.body.module_formations_actif);
+    if (req.body.tva_defaut_pct !== undefined) nextSettings.tva_defaut_pct = Number(req.body.tva_defaut_pct) >= 0 ? Number(req.body.tva_defaut_pct) : DEFAULT_TVA_PCT;
+    if (req.body.taxes_facturation && typeof req.body.taxes_facturation === 'object') {
+      nextSettings.taxes_facturation = { ...(curSettings.taxes_facturation || {}), ...req.body.taxes_facturation };
+    }
+    if (req.body.integrations && typeof req.body.integrations === 'object') {
+      nextSettings.integrations = { ...(curSettings.integrations || {}), ...req.body.integrations };
+    }
     if (Array.isArray(req.body.gallery_photos)) nextSettings.gallery_photos = req.body.gallery_photos.filter(Boolean);
     if (Array.isArray(req.body.equipements)) nextSettings.equipements = req.body.equipements.filter(Boolean);
     if (req.body.domiciliation !== undefined) {
@@ -76,6 +134,19 @@ async function updateTenant(req, res) {
     .single();
 
   if (error) return res.status(400).json({ error: error.message });
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'modification',
+    entiteType: 'etablissement',
+    entiteId: req.tenantId,
+    details: 'Mise à jour des paramètres de l\'établissement',
+    avant: prevSettingsSnapshot,
+    apres: updates.settings || updates,
+  });
+
   res.json({ tenant: data });
 }
 
@@ -84,8 +155,10 @@ async function createEspace(req, res) {
   if (!req.tenantId) return res.status(404).json({ error: 'Aucun coworking associé à votre compte.' });
 
   const {
-    nom, type, capacite, tarif_horaire, tarif_journalier, tarif_mensuel,
-    description, equipements, horaires, statut, actif, photo_url, photos_urls
+    nom, type, capacite,
+    tarif_horaire, tarif_journalier, tarif_mensuel,
+    tarif_horaire_ht, tarif_journalier_ht, tarif_mensuel_ht, tva_pct, tarifs_actifs,
+    description, equipements, horaires, statut, actif, photo_url, photos_urls,
   } = req.body;
   if (!nom || !type || !capacite) {
     return res.status(400).json({ error: 'Nom, type et capacité sont requis.' });
@@ -98,27 +171,44 @@ async function createEspace(req, res) {
 
   const { data: tenant } = await supabaseAdmin
     .from('tenants')
-    .select('limite_espaces')
+    .select('limite_espaces, settings, plan, slug, id')
     .eq('id', req.tenantId)
     .single();
 
+  const pack = resolveTenantPack(tenant);
   const { count: currentCount } = await supabaseAdmin
     .from('espaces')
     .select('*', { count: 'exact', head: true })
     .eq('tenant_id', req.tenantId);
 
-  if (currentCount >= (tenant?.limite_espaces || 10)) {
-    return res.status(400).json({ error: "Limite d'espaces atteinte pour votre plan." });
+  const maxEspaces = pack.max_espaces ?? tenant?.limite_espaces ?? 10;
+  if (maxEspaces && currentCount >= maxEspaces) {
+    return res.status(400).json({ error: `Limite du pack ${pack.name} atteinte (${maxEspaces} espaces max).` });
   }
+
+  const tvaRate = tva_pct !== undefined ? Number(tva_pct) : Number(tenant?.settings?.tva_defaut_pct ?? DEFAULT_TVA_PCT);
+  const hHT = tarif_horaire_ht !== undefined ? roundMillime(tarif_horaire_ht) : computeHTFromTTC(tarif_horaire || 0, tvaRate);
+  const jHT = tarif_journalier_ht !== undefined ? roundMillime(tarif_journalier_ht) : computeHTFromTTC(tarif_journalier || 0, tvaRate);
+  const mHT = tarif_mensuel_ht !== undefined ? roundMillime(tarif_mensuel_ht) : computeHTFromTTC(tarif_mensuel || 0, tvaRate);
+  const hTTC = tarif_horaire !== undefined ? roundMillime(tarif_horaire) : computeTTC(hHT, tvaRate);
+  const jTTC = tarif_journalier !== undefined ? roundMillime(tarif_journalier) : computeTTC(jHT, tvaRate);
+  const mTTC = tarif_mensuel !== undefined ? roundMillime(tarif_mensuel) : computeTTC(mHT, tvaRate);
 
   const isActif = statut !== undefined ? statut === 'actif' : (actif !== undefined ? Boolean(actif) : true);
   const insertData = {
     nom: String(nom).trim(),
     type,
     capacite: parseInt(capacite, 10),
-    tarif_horaire: parseFloat(tarif_horaire) || 0,
-    tarif_journalier: parseFloat(tarif_journalier) || 0,
-    tarif_mensuel: parseFloat(tarif_mensuel) || 0,
+    tarif_horaire: hTTC,
+    tarif_journalier: jTTC,
+    tarif_mensuel: mTTC,
+    tarif_horaire_ht: hHT,
+    tarif_journalier_ht: jHT,
+    tarif_mensuel_ht: mHT,
+    tva_pct: tvaRate,
+    tarifs_actifs: tarifs_actifs && typeof tarifs_actifs === 'object'
+      ? tarifs_actifs
+      : { horaire: true, journalier: jHT > 0, mensuel: mHT > 0 },
     description: description || null,
     horaires: horaires || '08:00 - 20:00',
     statut: statut || (isActif ? 'actif' : 'inactif'),
@@ -135,14 +225,18 @@ async function createEspace(req, res) {
     .select()
     .single();
 
-  if (error && /column|does not exist/i.test(error.message || '')) {
+  if (error && isMissingSchemaError(error)) {
     const fallbackData = {
       nom: String(nom).trim(),
       type,
       capacite: parseInt(capacite, 10),
-      tarif_horaire: parseFloat(tarif_horaire) || 0,
+      tarif_horaire: hTTC,
+      tarif_journalier: jTTC,
+      tarif_mensuel: mTTC,
+      horaires: horaires || '08:00 - 20:00',
       description: description || null,
       actif: isActif,
+      statut: statut || (isActif ? 'actif' : 'inactif'),
       tenant_id: req.tenantId,
     };
     if (photo_url) fallbackData.photo_url = photo_url;
@@ -151,6 +245,18 @@ async function createEspace(req, res) {
   }
 
   if (error) return res.status(400).json({ error: error.message });
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'creation',
+    entiteType: 'espace',
+    entiteId: data.id,
+    details: `Création de l'espace "${data.nom}" (${data.type})`,
+    apres: data,
+  });
+
   res.status(201).json({ espace: data });
 }
 
@@ -160,7 +266,7 @@ async function updateEspace(req, res) {
 
   const { data: existing, error: fetchErr } = await supabaseAdmin
     .from('espaces')
-    .select('id')
+    .select('*')
     .eq('id', req.params.id)
     .eq('tenant_id', req.tenantId)
     .single();
@@ -169,13 +275,14 @@ async function updateEspace(req, res) {
 
   const allowed = [
     'nom', 'type', 'capacite', 'tarif_horaire', 'tarif_journalier', 'tarif_mensuel',
-    'description', 'equipements', 'horaires', 'statut', 'actif', 'photo_url', 'photos_urls'
+    'tarif_horaire_ht', 'tarif_journalier_ht', 'tarif_mensuel_ht', 'tva_pct', 'tarifs_actifs',
+    'description', 'equipements', 'horaires', 'statut', 'actif', 'photo_url', 'photos_urls',
   ];
   const updates = {};
   for (const field of allowed) {
     if (req.body[field] !== undefined) {
-      if (['tarif_horaire', 'tarif_journalier', 'tarif_mensuel'].includes(field)) {
-        updates[field] = parseFloat(req.body[field]) || 0;
+      if (['tarif_horaire', 'tarif_journalier', 'tarif_mensuel', 'tarif_horaire_ht', 'tarif_journalier_ht', 'tarif_mensuel_ht', 'tva_pct'].includes(field)) {
+        updates[field] = roundMillime(req.body[field]);
       } else if (field === 'capacite') {
         updates[field] = parseInt(req.body[field], 10);
       } else if (field === 'statut') {
@@ -196,35 +303,274 @@ async function updateEspace(req, res) {
     .select()
     .single();
 
-  if (error && /column|does not exist/i.test(error.message || '')) {
+  if (error && isMissingSchemaError(error)) {
     const safeUpdates = { ...updates };
-    delete safeUpdates.tarif_journalier;
-    delete safeUpdates.tarif_mensuel;
-    delete safeUpdates.horaires;
-    delete safeUpdates.statut;
+    delete safeUpdates.tarif_horaire_ht;
+    delete safeUpdates.tarif_journalier_ht;
+    delete safeUpdates.tarif_mensuel_ht;
+    delete safeUpdates.tva_pct;
+    delete safeUpdates.tarifs_actifs;
     ({ data, error } = await supabaseAdmin.from('espaces').update(safeUpdates).eq('id', req.params.id).select().single());
   }
 
   if (error) return res.status(400).json({ error: error.message });
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'modification',
+    entiteType: 'espace',
+    entiteId: data.id,
+    details: `Modification de l'espace "${data.nom}"`,
+    avant: existing,
+    apres: updates,
+  });
+
   res.json({ espace: data });
 }
 
-// ── DELETE /api/admin/espaces/:id ─────────────────────────────────────────
-async function deleteEspace(req, res) {
+// ── DELETE /api/admin/espaces/:id & POST /api/admin/espaces/:id/archive ──
+// LOT 2 : Aucune suppression physique — soft-delete uniquement (bloqué si réservations futures)
+async function archiveEspace(req, res) {
   if (!req.tenantId) return res.status(404).json({ error: 'Aucun coworking associé à votre compte.' });
 
   const { data: existing, error: fetchErr } = await supabaseAdmin
     .from('espaces')
-    .select('id, nom')
+    .select('id, nom, statut, actif')
     .eq('id', req.params.id)
     .eq('tenant_id', req.tenantId)
     .single();
 
   if (fetchErr || !existing) return res.status(404).json({ error: 'Espace introuvable.' });
 
-  const { error } = await supabaseAdmin.from('espaces').delete().eq('id', req.params.id);
+  const check = await hasFutureUntreatedReservations({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    espaceId: req.params.id,
+  });
+  if (check.blocked) {
+    return res.status(409).json({
+      error: `Impossible d'archiver "${existing.nom}" : ${check.count} réservation(s) future(s) non traitée(s) y sont rattachées.`,
+      future_count: check.count,
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  let { data, error } = await supabaseAdmin
+    .from('espaces')
+    .update({ archived_at: nowIso, archived_by: req.user?.id || null, actif: false, statut: 'inactif' })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error && isMissingSchemaError(error)) {
+    ({ data, error } = await supabaseAdmin
+      .from('espaces')
+      .update({ actif: false, statut: 'inactif' })
+      .eq('id', req.params.id)
+      .select()
+      .single());
+  }
+
   if (error) return res.status(400).json({ error: error.message });
-  res.json({ message: `Espace "${existing.nom}" supprimé.` });
+
+  const settings = await readTenantSettings(req.tenantId);
+  const archivedIds = Array.from(new Set([...(Array.isArray(settings.archived_espaces) ? settings.archived_espaces : []), req.params.id]));
+  await writeTenantSettingsKey(req.tenantId, 'archived_espaces', archivedIds);
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'archivage',
+    entiteType: 'espace',
+    entiteId: req.params.id,
+    details: `Archivage de l'espace "${existing.nom}"`,
+    avant: existing,
+    apres: { archived_at: nowIso },
+  });
+
+  res.json({ espace: { ...data, archived_at: data?.archived_at || nowIso }, message: `Espace "${existing.nom}" archivé.` });
+}
+
+async function restoreEspace(req, res) {
+  if (!req.tenantId) return res.status(404).json({ error: 'Aucun coworking associé à votre compte.' });
+
+  const { data: existing } = await supabaseAdmin
+    .from('espaces')
+    .select('id, nom')
+    .eq('id', req.params.id)
+    .eq('tenant_id', req.tenantId)
+    .single();
+
+  if (!existing) return res.status(404).json({ error: 'Espace introuvable.' });
+
+  let { data, error } = await supabaseAdmin
+    .from('espaces')
+    .update({ archived_at: null, archived_by: null, actif: true, statut: 'actif' })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error && isMissingSchemaError(error)) {
+    ({ data, error } = await supabaseAdmin
+      .from('espaces')
+      .update({ actif: true, statut: 'actif' })
+      .eq('id', req.params.id)
+      .select()
+      .single());
+  }
+  if (error) return res.status(400).json({ error: error.message });
+
+  const settings = await readTenantSettings(req.tenantId);
+  const nextIds = (Array.isArray(settings.archived_espaces) ? settings.archived_espaces : []).filter((id) => id !== req.params.id);
+  await writeTenantSettingsKey(req.tenantId, 'archived_espaces', nextIds);
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'restauration',
+    entiteType: 'espace',
+    entiteId: req.params.id,
+    details: `Restauration de l'espace "${existing.nom}"`,
+  });
+
+  res.json({ espace: data, message: `Espace "${existing.nom}" restauré.` });
+}
+
+async function deleteEspace(req, res) {
+  return archiveEspace(req, res);
+}
+
+// ── PUT /api/admin/espaces/:id/tarifs & GET /api/admin/tarifs/historique ──
+async function updateEspaceTarifs(req, res) {
+  if (!req.tenantId) return res.status(404).json({ error: 'Aucun coworking associé à votre compte.' });
+  const { id } = req.params;
+
+  const { data: espace, error: fetchErr } = await supabaseAdmin
+    .from('espaces')
+    .select('*')
+    .eq('id', id)
+    .eq('tenant_id', req.tenantId)
+    .single();
+
+  if (fetchErr || !espace) return res.status(404).json({ error: 'Espace introuvable.' });
+
+  const tvaPct = req.body.tva_pct !== undefined ? Number(req.body.tva_pct) : Number(espace.tva_pct ?? DEFAULT_TVA_PCT);
+  const tarifsActifs = req.body.tarifs_actifs && typeof req.body.tarifs_actifs === 'object'
+    ? {
+        horaire: Boolean(req.body.tarifs_actifs.horaire),
+        journalier: Boolean(req.body.tarifs_actifs.journalier),
+        mensuel: Boolean(req.body.tarifs_actifs.mensuel),
+      }
+    : (espace.tarifs_actifs || { horaire: true, journalier: true, mensuel: true });
+
+  if (!tarifsActifs.horaire && !tarifsActifs.journalier && !tarifsActifs.mensuel) {
+    return res.status(400).json({ error: 'Au moins un type de tarif (Horaire, Journalier ou Mensuel) doit être actif.' });
+  }
+
+  const hHT = tarifsActifs.horaire ? roundMillime(req.body.tarif_horaire_ht ?? computeHTFromTTC(req.body.tarif_horaire ?? espace.tarif_horaire, tvaPct)) : 0;
+  const jHT = tarifsActifs.journalier ? roundMillime(req.body.tarif_journalier_ht ?? computeHTFromTTC(req.body.tarif_journalier ?? espace.tarif_journalier, tvaPct)) : 0;
+  const mHT = tarifsActifs.mensuel ? roundMillime(req.body.tarif_mensuel_ht ?? computeHTFromTTC(req.body.tarif_mensuel ?? espace.tarif_mensuel, tvaPct)) : 0;
+
+  const updates = {
+    tva_pct: tvaPct,
+    tarifs_actifs: tarifsActifs,
+    tarif_horaire_ht: hHT,
+    tarif_journalier_ht: jHT,
+    tarif_mensuel_ht: mHT,
+    tarif_horaire: computeTTC(hHT, tvaPct),
+    tarif_journalier: computeTTC(jHT, tvaPct),
+    tarif_mensuel: computeTTC(mHT, tvaPct),
+  };
+
+  let { data: updated, error } = await supabaseAdmin.from('espaces').update(updates).eq('id', id).select().single();
+  if (error && isMissingSchemaError(error)) {
+    ({ data: updated, error } = await supabaseAdmin.from('espaces').update({
+      tarif_horaire: updates.tarif_horaire,
+      tarif_journalier: updates.tarif_journalier,
+      tarif_mensuel: updates.tarif_mensuel,
+    }).eq('id', id).select().single());
+  }
+  if (error) return res.status(400).json({ error: error.message });
+
+  const histRow = {
+    id: crypto.randomUUID(),
+    tenant_id: req.tenantId,
+    espace_id: id,
+    espace_nom: espace.nom,
+    tarif_horaire_ht: hHT,
+    tarif_journalier_ht: jHT,
+    tarif_mensuel_ht: mHT,
+    tva_pct: tvaPct,
+    tarifs_actifs: tarifsActifs,
+    modifie_par: req.user?.id || null,
+    modifie_par_nom: `${req.user?.prenom || ''} ${req.user?.nom || ''}`.trim() || req.user?.email || 'Admin',
+    note: String(req.body.note || '').trim() || null,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    const ins = await supabaseAdmin.from('tarif_historique').insert({
+      tenant_id: req.tenantId,
+      espace_id: id,
+      tarif_horaire_ht: hHT,
+      tarif_journalier_ht: jHT,
+      tarif_mensuel_ht: mHT,
+      tva_pct: tvaPct,
+      tarifs_actifs: tarifsActifs,
+      modifie_par: req.user?.id || null,
+      note: histRow.note,
+    });
+    if (ins.error) throw ins.error;
+  } catch (_) {
+    const settings = await readTenantSettings(req.tenantId);
+    const list = Array.isArray(settings.tarif_historique) ? settings.tarif_historique : [];
+    await writeTenantSettingsKey(req.tenantId, 'tarif_historique', [histRow, ...list].slice(0, 100));
+  }
+
+  await logActivity({
+    supabaseAdmin,
+    tenantId: req.tenantId,
+    user: req.user,
+    action: 'modification',
+    entiteType: 'tarif',
+    entiteId: id,
+    details: `Mise à jour des tarifs HT/TTC pour "${espace.nom}" (TVA ${tvaPct}%)`,
+    avant: {
+      tarif_horaire: espace.tarif_horaire,
+      tarif_journalier: espace.tarif_journalier,
+      tarif_mensuel: espace.tarif_mensuel,
+    },
+    apres: updates,
+  });
+
+  res.json({ espace: updated, history_entry: histRow });
+}
+
+async function getTarifHistory(req, res) {
+  try {
+    const tid = req.tenantId;
+    let q = supabaseAdmin
+      .from('tarif_historique')
+      .select('*, espaces(id, nom)')
+      .eq('tenant_id', tid)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    if (req.query.espace_id) q = q.eq('espace_id', req.query.espace_id);
+    const { data, error } = await q;
+    if (!error && Array.isArray(data)) {
+      return res.json({ historique: data });
+    }
+    const settings = await readTenantSettings(tid);
+    const list = Array.isArray(settings.tarif_historique) ? settings.tarif_historique : [];
+    const filtered = req.query.espace_id ? list.filter((h) => h.espace_id === req.query.espace_id) : list;
+    res.json({ historique: filtered });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 // ── POST /api/admin/onboarding/complete ───────────────────────────────────
@@ -494,83 +840,8 @@ async function uploadPhoto(req, res) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CDC v3.0 — CONSTANTES PACKS SAAS & HELPERS
+// PACKS SAAS DESKYWORK — source centralisée ../config/deskyworkPacks.js
 // ══════════════════════════════════════════════════════════════════════════════
-const SAAS_PACKS = {
-  essentiel: {
-    key: 'essentiel',
-    name: 'Essentiel',
-    prix: 90,
-    max_espaces: 10,
-    max_membres: 100,
-    max_staff: 1,
-    features: [
-      'Jusqu\'à 10 espaces / ressources',
-      'Jusqu\'à 100 membres actifs',
-      '1 compte Staff / Réceptionniste',
-      'Paiements sur place & Reçus PDF numérotés',
-      'Alertes In-App & E-mail automatiques',
-    ],
-  },
-  standard: {
-    key: 'standard',
-    name: 'Standard',
-    prix: 150,
-    max_espaces: 30,
-    max_membres: 500,
-    max_staff: 3,
-    features: [
-      'Tout Essentiel inclus',
-      'Jusqu\'à 30 espaces / ressources',
-      'Jusqu\'à 500 membres actifs',
-      'Jusqu\'à 3 comptes Staff / Réceptionniste',
-      'Rapports avancés & exports Excel / PDF',
-      'Codes promo, abonnements membres & crédits',
-    ],
-  },
-  premium: {
-    key: 'premium',
-    name: 'Premium',
-    prix: 220,
-    max_espaces: null,
-    max_membres: null,
-    max_staff: 10,
-    features: [
-      'Tout Standard inclus',
-      'Espaces & membres illimités',
-      'Jusqu\'à 10 comptes Staff / Réceptionniste',
-      'Statistiques fiche Marketplace (vues, clics, conversions)',
-      'Mise en avant prioritaire sur la Marketplace',
-    ],
-  },
-};
-
-function resolveTenantPack(tenant) {
-  const raw = String(tenant?.settings?.saas_pack || tenant?.plan || 'essentiel').toLowerCase().trim();
-  const isPartner = Boolean(
-    tenant?.settings?.partenaire_officiel ||
-    tenant?.settings?.tarif_partenaire ||
-    tenant?.slug === 'nero-coworking' ||
-    tenant?.slug === 'thirty-three-space' ||
-    tenant?.id === 'a1111111-1111-4111-8111-111111111111' ||
-    tenant?.id === 'a3333333-3333-4333-8333-333333333333'
-  );
-  const key = (isPartner || raw.includes('prem') || raw.includes('enterp'))
-    ? 'premium'
-    : (raw.includes('stand') || raw.includes('pro'))
-      ? 'standard'
-      : 'essentiel';
-  const base = SAAS_PACKS[key];
-  return {
-    ...base,
-    name: base.name,
-    is_partner: isPartner,
-    max_espaces: isPartner ? null : (tenant?.limite_espaces ?? base.max_espaces),
-    max_membres: isPartner ? null : (tenant?.limite_membres ?? base.max_membres),
-    max_staff: isPartner ? 10 : (tenant?.settings?.limite_staff ?? base.max_staff),
-    prix: base.prix,
-  };
-}
 
 function buildDeskyWorkInvoices(tenant, pack) {
   const saved = Array.isArray(tenant?.settings?.factures_deskywork) ? tenant.settings.factures_deskywork : [];
@@ -680,13 +951,14 @@ async function globalSearch(req, res) {
 async function getClientsOverview(req, res) {
   try {
     const tid = req.tenantId;
+    const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
 
     let profQ = supabaseAdmin
       .from('profiles')
       .select('id, nom, prenom, email, telephone, role, type_membre, statut_compte, created_at')
-      .in('role', ['member', 'guest'])
       .order('created_at', { ascending: false });
     let guestQ = supabaseAdmin.from('guests').select('*').order('created_at', { ascending: false });
+    let persQ = supabaseAdmin.from('personnes').select('*').order('created_at', { ascending: false });
     let resQ = supabaseAdmin
       .from('reservations')
       .select('id, user_id, espace_id, date_debut, date_fin, statut, montant_total, mode_reservation, guest_nom, guest_email, guest_telephone, notes, created_at, espaces(id, nom, type)')
@@ -702,6 +974,7 @@ async function getClientsOverview(req, res) {
     if (tid) {
       profQ = profQ.eq('tenant_id', tid);
       guestQ = guestQ.eq('tenant_id', tid);
+      persQ = persQ.eq('tenant_id', tid);
       resQ = resQ.eq('tenant_id', tid);
       payQ = payQ.eq('tenant_id', tid);
       aboQ = aboQ.eq('tenant_id', tid);
@@ -710,14 +983,39 @@ async function getClientsOverview(req, res) {
     }
 
     const [
-      { data: profiles },
-      { data: guests },
+      { data: profilesRaw },
+      { data: guestsRaw },
+      persRes,
       { data: reservations },
       { data: paiements },
       { data: abonnements },
       { data: contenus },
       { data: signatures },
-    ] = await Promise.all([profQ, guestQ, resQ, payQ, aboQ, contQ, docMemQ]);
+      settings,
+    ] = await Promise.all([
+      profQ,
+      guestQ,
+      Promise.resolve(persQ).catch(() => ({ data: [], error: true })),
+      resQ,
+      payQ,
+      aboQ,
+      contQ,
+      docMemQ,
+      readTenantSettings(tid),
+    ]);
+
+    const archivedProfileIds = new Set(Array.isArray(settings?.archived_profiles) ? settings.archived_profiles : []);
+    // Exclure strictement les comptes staff / admin / super_admin
+    const profiles = (profilesRaw || []).filter((p) => {
+      if (isStaffRole(p.role)) return false;
+      const isArch = Boolean(p.archived_at) || archivedProfileIds.has(p.id);
+      return includeArchived ? true : !isArch;
+    });
+
+    const guests = (guestsRaw || []).filter((g) => {
+      const isArch = Boolean(g.archived_at) || archivedProfileIds.has(g.id);
+      return includeArchived ? true : !isArch;
+    });
 
     const resByUser = {};
     (reservations || []).forEach((r) => {
@@ -737,16 +1035,83 @@ async function getClientsOverview(req, res) {
 
     const aboByUser = {};
     (abonnements || []).forEach((a) => {
-      if (a.user_id && a.statut === 'active') aboByUser[a.user_id] = a;
+      if (a.user_id && ['active', 'actif', 'a_renouveler'].includes(String(a.statut || '').toLowerCase())) {
+        aboByUser[a.user_id] = a;
+      }
     });
 
-    const members = (profiles || []).map((m) => ({
+    const members = profiles.map((m) => ({
       ...m,
+      type_personne: m.role === 'guest' ? 'invite' : 'membre',
+      archived_at: m.archived_at || (archivedProfileIds.has(m.id) ? (m.updated_at || m.created_at) : null),
       reservations_count: (resByUser[m.id] || []).length,
       total_paye: Number((payByUser[m.id]?.paye || 0).toFixed(3)),
       total_du: Number((payByUser[m.id]?.du || 0).toFixed(3)),
       abonnement_actif: aboByUser[m.id] || null,
     }));
+
+    // Table unifiée personnes (table Supabase OU fallback settings + fusion membres/invités)
+    const fallbackPersonnes = Array.isArray(settings?.personnes) ? settings.personnes : [];
+    const tablePersonnes = !persRes?.error && Array.isArray(persRes?.data) && persRes.data.length > 0
+      ? persRes.data
+      : [];
+    const customPersonnes = (tablePersonnes.length > 0 ? tablePersonnes : fallbackPersonnes)
+      .filter((p) => {
+        const isArch = Boolean(p.archived_at) || archivedProfileIds.has(p.id);
+        return includeArchived ? true : !isArch;
+      });
+
+    const unifiedMap = new Map();
+    members.forEach((m) => {
+      unifiedMap.set(`prof-${m.id}`, {
+        id: m.id,
+        profile_id: m.id,
+        source: 'profile',
+        type_personne: m.role === 'guest' ? 'invite' : 'membre',
+        nom: m.nom,
+        prenom: m.prenom,
+        email: m.email,
+        telephone: m.telephone,
+        type_membre: m.type_membre || 'particulier',
+        statut_compte: m.statut_compte,
+        reservations_count: m.reservations_count,
+        total_paye: m.total_paye,
+        total_du: m.total_du,
+        abonnement_actif: m.abonnement_actif,
+        archived_at: m.archived_at,
+        created_at: m.created_at,
+      });
+    });
+    guests.forEach((g) => {
+      const k = g.email ? `email-${g.email.toLowerCase()}` : `guest-${g.id}`;
+      if (!Array.from(unifiedMap.values()).some((v) => v.email && g.email && v.email.toLowerCase() === g.email.toLowerCase())) {
+        unifiedMap.set(k, {
+          id: g.id,
+          source: 'guest',
+          type_personne: 'invite',
+          nom: g.nom,
+          prenom: g.prenom || '',
+          email: g.email || '',
+          telephone: g.telephone || '',
+          type_membre: 'particulier',
+          statut_compte: 'actif',
+          reservations_count: 0,
+          total_paye: 0,
+          total_du: 0,
+          archived_at: g.archived_at || (archivedProfileIds.has(g.id) ? g.created_at : null),
+          created_at: g.created_at,
+        });
+      }
+    });
+    customPersonnes.forEach((p) => {
+      const existingByProfile = p.profile_id ? unifiedMap.get(`prof-${p.profile_id}`) : null;
+      if (existingByProfile) return;
+      unifiedMap.set(`pers-${p.id}`, {
+        ...p,
+        source: 'personnes',
+        archived_at: p.archived_at || (archivedProfileIds.has(p.id) ? p.created_at : null),
+      });
+    });
 
     const entrepriseMap = new Map();
     members
@@ -796,7 +1161,8 @@ async function getClientsOverview(req, res) {
 
     res.json({
       members,
-      guests: guests || [],
+      guests,
+      personnes: Array.from(unifiedMap.values()),
       entreprises: Array.from(entrepriseMap.values()),
       documents: {
         contenus: contenus || [],
@@ -1137,7 +1503,7 @@ async function deleteStaff(req, res) {
     const { id } = req.params;
     const { data: target } = await supabaseAdmin
       .from('profiles')
-      .select('id, role, tenant_id, nom, prenom')
+      .select('id, role, tenant_id, nom, prenom, statut_compte')
       .eq('id', id)
       .single();
 
@@ -1145,9 +1511,34 @@ async function deleteStaff(req, res) {
       return res.status(404).json({ error: 'Compte Staff introuvable.' });
     }
 
-    try { await supabaseAdmin.auth.admin.deleteUser(id); } catch (_) {}
-    await supabaseAdmin.from('profiles').delete().eq('id', id);
-    res.json({ message: `Compte Staff "${target.prenom || ''} ${target.nom}" supprimé.` });
+    const nowIso = new Date().toISOString();
+    let { error } = await supabaseAdmin
+      .from('profiles')
+      .update({ statut_compte: 'suspendu', archived_at: nowIso, archived_by: req.user?.id || null, updated_at: nowIso })
+      .eq('id', id);
+
+    if (error && isMissingSchemaError(error)) {
+      ({ error } = await supabaseAdmin.from('profiles').update({ statut_compte: 'suspendu', updated_at: nowIso }).eq('id', id));
+    }
+    if (error) return res.status(400).json({ error: error.message });
+
+    const settings = await readTenantSettings(req.tenantId);
+    const archivedIds = Array.from(new Set([...(Array.isArray(settings.archived_profiles) ? settings.archived_profiles : []), id]));
+    await writeTenantSettingsKey(req.tenantId, 'archived_profiles', archivedIds);
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId,
+      user: req.user,
+      action: 'archivage',
+      entiteType: 'staff',
+      entiteId: id,
+      details: `Archivage du compte Staff "${target.prenom || ''} ${target.nom}"`,
+      avant: target,
+      apres: { statut_compte: 'suspendu', archived_at: nowIso },
+    });
+
+    res.json({ message: `Compte Staff "${target.prenom || ''} ${target.nom}" archivé.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1287,7 +1678,7 @@ async function downloadDeskyInvoicePdf(req, res) {
     doc.text(`${Number(inv.montant || pack.prix).toFixed(3)} DT`, 430, 332, { width: 105, align: 'right' });
 
     doc.fillColor('#64748b').font('Helvetica').fontSize(8.5).text(
-      'Document émis par DeskyWork (CDC v3.0). Règlement par virement, chèque ou espèces auprès de votre gestionnaire DeskyWork.',
+      'Document émis par DeskyWork. Règlement par virement bancaire, chèque ou espèces auprès de votre gestionnaire DeskyWork.',
       50, 400, { width: 495, align: 'center' }
     );
     doc.end();
@@ -1453,12 +1844,364 @@ async function getMarketplaceStats(req, res) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// LOT 2 : PERSONNES (INVITÉ / PROSPECT / MEMBRE), SOFT-ARCHIVE, AUDIT, HUB CRUD
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function createPersonne(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { nom, prenom = '', email = '', telephone = '', type_personne = 'prospect', entreprise_nom = '', notes = '' } = req.body;
+    if (!nom) return res.status(400).json({ error: 'Le nom est obligatoire.' });
+    const cleanType = ['membre', 'invite', 'prospect'].includes(type_personne) ? type_personne : 'prospect';
+
+    const payload = {
+      tenant_id: tid,
+      type_personne: cleanType,
+      nom: String(nom).trim(),
+      prenom: String(prenom).trim(),
+      email: String(email).trim().toLowerCase() || null,
+      telephone: String(telephone).trim() || null,
+      entreprise_nom: String(entreprise_nom).trim() || null,
+      notes: String(notes).trim() || null,
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabaseAdmin.from('personnes').insert(payload).select().single();
+    let row = data;
+    if (error && isMissingSchemaError(error)) {
+      row = { id: crypto.randomUUID(), ...payload };
+      const settings = await readTenantSettings(tid);
+      const list = Array.isArray(settings.personnes) ? settings.personnes : [];
+      await writeTenantSettingsKey(tid, 'personnes', [row, ...list]);
+    } else if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: tid,
+      user: req.user,
+      action: 'creation',
+      entiteType: 'personne',
+      entiteId: row.id,
+      details: `Ajout ${cleanType} : ${row.prenom} ${row.nom}`.trim(),
+      apres: row,
+    });
+
+    res.status(201).json({ personne: row });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function archivePersonne(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+    const check = await hasFutureUntreatedReservations({ supabaseAdmin, tenantId: tid, userId: id });
+    if (check.blocked) {
+      return res.status(409).json({
+        error: `Impossible d'archiver : cette fiche possède ${check.count} réservation(s) future(s) non traitée(s).`,
+        future_count: check.count,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    await supabaseAdmin.from('personnes').update({ archived_at: nowIso, archived_by: req.user?.id || null }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('profiles').update({ archived_at: nowIso, archived_by: req.user?.id || null, statut_compte: 'suspendu' }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('guests').update({ archived_at: nowIso, archived_by: req.user?.id || null }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+
+    const settings = await readTenantSettings(tid);
+    const archIds = Array.from(new Set([...(Array.isArray(settings.archived_profiles) ? settings.archived_profiles : []), id]));
+    const persList = (Array.isArray(settings.personnes) ? settings.personnes : []).map((p) => (p.id === id ? { ...p, archived_at: nowIso } : p));
+    await supabaseAdmin.from('tenants').update({
+      settings: { ...settings, archived_profiles: archIds, personnes: persList },
+      updated_at: nowIso,
+    }).eq('id', tid);
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: tid,
+      user: req.user,
+      action: 'archivage',
+      entiteType: 'personne',
+      entiteId: id,
+      details: 'Archivage d\'une fiche membre / invité / prospect',
+      apres: { archived_at: nowIso },
+    });
+
+    res.json({ message: 'Fiche archivée.', archived_at: nowIso });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function restorePersonne(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+    const nowIso = new Date().toISOString();
+
+    await supabaseAdmin.from('personnes').update({ archived_at: null, archived_by: null }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('profiles').update({ archived_at: null, archived_by: null, statut_compte: 'actif' }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('guests').update({ archived_at: null, archived_by: null }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+
+    const settings = await readTenantSettings(tid);
+    const archIds = (Array.isArray(settings.archived_profiles) ? settings.archived_profiles : []).filter((x) => x !== id);
+    const persList = (Array.isArray(settings.personnes) ? settings.personnes : []).map((p) => (p.id === id ? { ...p, archived_at: null } : p));
+    await supabaseAdmin.from('tenants').update({
+      settings: { ...settings, archived_profiles: archIds, personnes: persList },
+      updated_at: nowIso,
+    }).eq('id', tid);
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: tid,
+      user: req.user,
+      action: 'restauration',
+      entiteType: 'personne',
+      entiteId: id,
+      details: 'Restauration d\'une fiche archivée',
+    });
+
+    res.json({ message: 'Fiche restaurée.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function getActivityLog(req, res) {
+  try {
+    const logs = await listActivityLogs({
+      supabaseAdmin,
+      tenantId: req.tenantId,
+      entiteType: req.query.entite_type || null,
+      action: req.query.action || null,
+      limit: Number(req.query.limit || 100),
+    });
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function getPacks(req, res) {
+  res.json({ packs: PACK_LIST, map: SAAS_PACKS, default_tva_pct: DEFAULT_TVA_PCT });
+}
+
+// Helper CRUD générique (table Supabase avec repli automatique settings.<key> + soft-archive)
+function makeCollectionHandlers({ table, settingsKey, entiteType, requiredField = 'nom', labelFn }) {
+  return {
+    list: async (req, res) => {
+      try {
+        const tid = req.tenantId;
+        const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
+        let q = supabaseAdmin.from(table).select('*').eq('tenant_id', tid).order('created_at', { ascending: false });
+        if (!includeArchived) q = q.is('archived_at', null);
+        const { data, error } = await q;
+        if (!error && Array.isArray(data)) {
+          return res.json({ items: data });
+        }
+        const settings = await readTenantSettings(tid);
+        const raw = Array.isArray(settings[settingsKey]) ? settings[settingsKey] : [];
+        const items = includeArchived ? raw : raw.filter((i) => !i.archived_at);
+        res.json({ items });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+    create: async (req, res) => {
+      try {
+        const tid = req.tenantId;
+        if (!req.body[requiredField]) {
+          return res.status(400).json({ error: `Le champ "${requiredField}" est obligatoire.` });
+        }
+        const nowIso = new Date().toISOString();
+        const payload = { ...req.body, tenant_id: tid, created_at: nowIso, updated_at: nowIso };
+        delete payload.id;
+
+        const { data, error } = await supabaseAdmin.from(table).insert(payload).select().single();
+        let row = data;
+        if (error && isMissingSchemaError(error)) {
+          row = { id: crypto.randomUUID(), ...payload, archived_at: null };
+          const settings = await readTenantSettings(tid);
+          const raw = Array.isArray(settings[settingsKey]) ? settings[settingsKey] : [];
+          await writeTenantSettingsKey(tid, settingsKey, [row, ...raw]);
+        } else if (error) {
+          return res.status(400).json({ error: error.message });
+        }
+
+        await logActivity({
+          supabaseAdmin,
+          tenantId: tid,
+          user: req.user,
+          action: 'creation',
+          entiteType,
+          entiteId: row.id,
+          details: `Création ${entiteType} : ${labelFn ? labelFn(row) : row[requiredField]}`,
+          apres: row,
+        });
+        res.status(201).json({ item: row });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+    update: async (req, res) => {
+      try {
+        const tid = req.tenantId;
+        const { id } = req.params;
+        const nowIso = new Date().toISOString();
+        const patch = { ...req.body, updated_at: nowIso };
+        delete patch.id;
+        delete patch.tenant_id;
+
+        const { data, error } = await supabaseAdmin.from(table).update(patch).eq('id', id).eq('tenant_id', tid).select().single();
+        let row = data;
+        if (error && isMissingSchemaError(error)) {
+          const settings = await readTenantSettings(tid);
+          const raw = Array.isArray(settings[settingsKey]) ? settings[settingsKey] : [];
+          const next = raw.map((it) => (it.id === id ? { ...it, ...patch } : it));
+          row = next.find((it) => it.id === id);
+          if (!row) return res.status(404).json({ error: 'Élément introuvable.' });
+          await writeTenantSettingsKey(tid, settingsKey, next);
+        } else if (error) {
+          return res.status(400).json({ error: error.message });
+        }
+
+        await logActivity({
+          supabaseAdmin,
+          tenantId: tid,
+          user: req.user,
+          action: 'modification',
+          entiteType,
+          entiteId: id,
+          details: `Modification ${entiteType} : ${labelFn ? labelFn(row) : (row[requiredField] || id)}`,
+          apres: patch,
+        });
+        res.json({ item: row });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+    archive: async (req, res) => {
+      try {
+        const tid = req.tenantId;
+        const { id } = req.params;
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabaseAdmin
+          .from(table)
+          .update({ archived_at: nowIso, archived_by: req.user?.id || null, updated_at: nowIso })
+          .eq('id', id)
+          .eq('tenant_id', tid)
+          .select()
+          .single();
+
+        let row = data;
+        if (error && isMissingSchemaError(error)) {
+          const settings = await readTenantSettings(tid);
+          const raw = Array.isArray(settings[settingsKey]) ? settings[settingsKey] : [];
+          const next = raw.map((it) => (it.id === id ? { ...it, archived_at: nowIso, archived_by: req.user?.id || null } : it));
+          row = next.find((it) => it.id === id);
+          await writeTenantSettingsKey(tid, settingsKey, next);
+        } else if (error) {
+          return res.status(400).json({ error: error.message });
+        }
+
+        await logActivity({
+          supabaseAdmin,
+          tenantId: tid,
+          user: req.user,
+          action: 'archivage',
+          entiteType,
+          entiteId: id,
+          details: `Archivage ${entiteType} (${id})`,
+          apres: { archived_at: nowIso },
+        });
+        res.json({ item: row, message: 'Élément archivé.' });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+    restore: async (req, res) => {
+      try {
+        const tid = req.tenantId;
+        const { id } = req.params;
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabaseAdmin
+          .from(table)
+          .update({ archived_at: null, archived_by: null, updated_at: nowIso })
+          .eq('id', id)
+          .eq('tenant_id', tid)
+          .select()
+          .single();
+
+        let row = data;
+        if (error && isMissingSchemaError(error)) {
+          const settings = await readTenantSettings(tid);
+          const raw = Array.isArray(settings[settingsKey]) ? settings[settingsKey] : [];
+          const next = raw.map((it) => (it.id === id ? { ...it, archived_at: null, archived_by: null } : it));
+          row = next.find((it) => it.id === id);
+          await writeTenantSettingsKey(tid, settingsKey, next);
+        } else if (error) {
+          return res.status(400).json({ error: error.message });
+        }
+
+        await logActivity({
+          supabaseAdmin,
+          tenantId: tid,
+          user: req.user,
+          action: 'restauration',
+          entiteType,
+          entiteId: id,
+          details: `Restauration ${entiteType} (${id})`,
+        });
+        res.json({ item: row, message: 'Élément restauré.' });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    },
+  };
+}
+
+const ressourcesHandlers = makeCollectionHandlers({
+  table: 'ressources',
+  settingsKey: 'ressources',
+  entiteType: 'ressource',
+  requiredField: 'nom',
+});
+
+const servicesHandlers = makeCollectionHandlers({
+  table: 'services_additionnels',
+  settingsKey: 'services_additionnels',
+  entiteType: 'service',
+  requiredField: 'nom',
+});
+
+const incidentsHandlers = makeCollectionHandlers({
+  table: 'incidents_maintenance',
+  settingsKey: 'incidents_maintenance',
+  entiteType: 'incident',
+  requiredField: 'titre',
+});
+
+const devisFacturesHandlers = makeCollectionHandlers({
+  table: 'devis_factures',
+  settingsKey: 'devis_factures',
+  entiteType: 'devis_facture',
+  requiredField: 'numero',
+});
+
 module.exports = {
   getTenant,
   updateTenant,
   createEspace,
   updateEspace,
   deleteEspace,
+  archiveEspace,
+  restoreEspace,
+  updateEspaceTarifs,
+  getTarifHistory,
   completeOnboarding,
   listMembers,
   createAdminConversation,
@@ -1467,6 +2210,9 @@ module.exports = {
   globalSearch,
   getClientsOverview,
   createMember,
+  createPersonne,
+  archivePersonne,
+  restorePersonne,
   getMemberHistory,
   listStaff,
   createStaff,
@@ -1479,4 +2225,10 @@ module.exports = {
   updateAlertSettings,
   createSupportTicket,
   getMarketplaceStats,
+  getActivityLog,
+  getPacks,
+  ressourcesHandlers,
+  servicesHandlers,
+  incidentsHandlers,
+  devisFacturesHandlers,
 };

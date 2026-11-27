@@ -94,7 +94,7 @@ function Modal({ open, onClose, title, subtitle, icon, children, footer, maxWidt
 /* ═══════════════════════════════════════════════════════════════════════════
    PAGE : ADMIN FORMATEURS
 ═══════════════════════════════════════════════════════════════════════════ */
-export default function AdminFormateurs({ session }) {
+export default function AdminFormateurs({ session, embedded = false, viewSection = 'all' }) {
   const [profile, setProfile] = useState(null);
   const [formateurs, setFormateurs] = useState([]);
   const [remunerations, setRemunerations] = useState([]);
@@ -269,23 +269,25 @@ export default function AdminFormateurs({ session }) {
     </div>
   );
 
-  return (
-    <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
-      <div className="p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto">
+  const content = (
+    <>
+      <div className={embedded ? 'w-full' : 'p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto'}>
 
         {/* ── Header ── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
-                <span className="material-symbols-outlined text-violet-600" style={{ fontSize: 16 }}>school</span>
-              </span>
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-800">Gestion Formateurs</span>
+        {!embedded && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 16 }}>school</span>
+                </span>
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-800">Gestion Formateurs</span>
+              </div>
+              <h1 className="font-sora font-bold text-slate-900 text-2xl sm:text-3xl">Formateurs</h1>
+              <p className="text-sm text-on-surface-variant mt-0.5">Gérer vos intervenants et leurs versements.</p>
             </div>
-            <h1 className="font-sora font-bold text-slate-900 text-2xl sm:text-3xl">Formateurs</h1>
-            <p className="text-sm text-on-surface-variant mt-0.5">Gérer vos intervenants et leurs honoraires.</p>
           </div>
-        </div>
+        )}
 
         {/* ── KPIs ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
@@ -779,6 +781,12 @@ export default function AdminFormateurs({ session }) {
           );
         })()}
       </Modal>
+    </>
+  );
+
+  return embedded ? content : (
+    <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+      {content}
     </PortalLayout>
   );
 }

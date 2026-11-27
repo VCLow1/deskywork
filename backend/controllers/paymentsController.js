@@ -14,6 +14,8 @@ const {
   constructWebhookEvent,
 } = require('../services/stripeService');
 const { notifyPaiementEnregistre } = require('../services/notificationService');
+const { roundMillime } = require('../models/pricingMath');
+const { logActivity } = require('../models/activityLogger');
 
 async function createPayment(req, res) {
   try {
@@ -772,6 +774,19 @@ async function collectPayment(req, res) {
       console.warn('⚠️ Notification/Reçu email encaissement:', e.message);
     }
 
+    try {
+      await logActivity({
+        supabaseAdmin,
+        tenantId: req.tenantId || remainingPayment?.tenant_id || paidPayment?.tenant_id,
+        user: req.user,
+        action: 'encaissement',
+        entiteType: 'paiement',
+        entiteId: paidPayment?.id || pendingRow.id,
+        details: `Encaissement de ${encaisse.toFixed(3)} DT (Reçu ${paidPayment?.numero_recu || ''})`,
+        apres: { montant: encaisse, mode, reste },
+      });
+    } catch (_) {}
+
     res.json({
       partial: reste > 0.009,
       paid_payment: paidPayment,
@@ -780,6 +795,78 @@ async function collectPayment(req, res) {
       message: reste > 0.009
         ? `Encaissement partiel de ${encaisse.toFixed(3)} DT enregistré (Reçu ${paidPayment.numero_recu}). Reste dû : ${reste.toFixed(3)} DT.`
         : `Encaissement complet de ${encaisse.toFixed(3)} DT enregistré (Reçu ${paidPayment.numero_recu}).`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/payments/:id/refund — Remboursement total ou partiel + traçabilité
+async function refundPayment(req, res) {
+  try {
+    const { id } = req.params;
+    const { montant_rembourse, motif_remboursement = '' } = req.body || {};
+
+    let q = supabaseAdmin.from('paiements').select('*, profiles(id, nom, prenom, email)').eq('id', id);
+    if (req.tenantId) q = q.eq('tenant_id', req.tenantId);
+    const { data: existing, error: fetchErr } = await q.single();
+    if (fetchErr || !existing) return res.status(404).json({ error: 'Paiement introuvable.' });
+
+    if (existing.statut !== 'paid') {
+      return res.status(400).json({ error: 'Seul un paiement encaissé peut être remboursé.' });
+    }
+
+    const totalInitial = roundMillime(existing.montant || 0);
+    const refundAmount = montant_rembourse !== undefined ? roundMillime(montant_rembourse) : totalInitial;
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0 || refundAmount > totalInitial) {
+      return res.status(400).json({ error: `Le montant à rembourser doit être compris entre 0,001 DT et ${totalInitial.toFixed(3)} DT.` });
+    }
+
+    const nowIso = new Date().toISOString();
+    let { data, error } = await supabaseAdmin
+      .from('paiements')
+      .update({
+        statut: 'refunded',
+        montant_rembourse: refundAmount,
+        motif_remboursement: String(motif_remboursement || '').trim() || 'Remboursement administratif',
+        refunded_at: nowIso,
+        refunded_by: req.user?.id || null,
+        updated_at: nowIso,
+      })
+      .eq('id', id)
+      .select('*, profiles(id, nom, prenom, email)')
+      .single();
+
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ data, error } = await supabaseAdmin
+        .from('paiements')
+        .update({
+          statut: 'refunded',
+          reference_externe: `REMBOURSEMENT ${refundAmount.toFixed(3)} DT${motif_remboursement ? ` — ${motif_remboursement}` : ''}`,
+          updated_at: nowIso,
+        })
+        .eq('id', id)
+        .select('*, profiles(id, nom, prenom, email)')
+        .single());
+    }
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId || existing.tenant_id,
+      user: req.user,
+      action: 'remboursement',
+      entiteType: 'paiement',
+      entiteId: id,
+      details: `Remboursement de ${refundAmount.toFixed(3)} DT (${motif_remboursement || 'Sans motif'})`,
+      avant: { statut: existing.statut, montant: totalInitial },
+      apres: { statut: 'refunded', montant_rembourse: refundAmount, motif_remboursement },
+    });
+
+    res.json({
+      payment: { ...data, montant_rembourse: refundAmount, refunded_at: nowIso, motif_remboursement: motif_remboursement || data?.motif_remboursement },
+      message: `Remboursement de ${refundAmount.toFixed(3)} DT enregistré.`,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -847,6 +934,7 @@ module.exports = {
   getMontantDu,
   createMontantDu,
   collectPayment,
+  refundPayment,
   getPaymentReceipt,
   stripePay,
   stripeVerify,

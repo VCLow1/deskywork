@@ -983,15 +983,17 @@ export default function AdminDashboard({ session }) {
             pulse={activeSessionsCount > 0}
             to="/admin/agenda?view=plan"
           />
-          <StatCard
-            delayMs={300}
-            label="Formations — période"
-            rawValue={k.formationsPeriode ?? 0}
-            sub={`${k.formationsDuJour ?? 0} prévue(s) aujourd'hui`}
-            icon="school"
-            accent="#8b5cf6"
-            to="/admin/formations"
-          />
+          {k.module_formations_actif !== false && (
+            <StatCard
+              delayMs={300}
+              label="Formations — période"
+              rawValue={k.formationsPeriode ?? 0}
+              sub={`${k.formationsDuJour ?? 0} prévue(s) aujourd'hui`}
+              icon="school"
+              accent="#8b5cf6"
+              to="/admin/formations"
+            />
+          )}
           <StatCard
             delayMs={360}
             label="Réservations invités"
@@ -1010,7 +1012,7 @@ export default function AdminDashboard({ session }) {
             icon="card_membership"
             accent={(k.abonnementsExpirant ?? 0) > 0 ? '#ba1a1a' : '#2fbe8f'}
             pulse={(k.abonnementsExpirant ?? 0) > 0}
-            to="/admin/clients"
+            to="/admin/abonnements"
           />
         </div>
       </section>
@@ -1177,7 +1179,8 @@ export default function AdminDashboard({ session }) {
           </div>
         </div>
 
-        {/* Suivi des formations programmées (en haut) */}
+        {/* Suivi des formations programmées (en haut) — masqué si module désactivé */}
+        {k.module_formations_actif !== false && (
         <div
           className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15"
           style={{ boxShadow: cardShadow, animationDelay: '220ms' }}
@@ -1291,6 +1294,7 @@ export default function AdminDashboard({ session }) {
             </div>
           )}
         </div>
+        )}
       </section>
 
       {/* ── 4. Sessions de travail en cours + Actions rapides ────────────── */}

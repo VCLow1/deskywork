@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { paymentApi, memberApi } from '../services/api';
+import { paymentApi, memberApi, tenantAdminApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import { exportPaymentsToExcel } from '../utils/exportPaymentsExcel';
@@ -57,7 +58,11 @@ export default function AdminPayments({ session }) {
   const [profile, setProfile] = useState(() =>
     userId ? { id: userId, email, role: metadata.role || 'admin', ...metadata } : null
   );
+  const [searchParams] = useSearchParams();
+  const [hubTab, setHubTab] = useState('paiements'); // 'paiements' | 'factures_devis' | 'impayes' | 'remboursements'
   const [payments, setPayments] = useState([]);
+  const [devisFactures, setDevisFactures] = useState([]);
+  const [includeArchivedDocs, setIncludeArchivedDocs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -70,10 +75,16 @@ export default function AdminPayments({ session }) {
   const [collecting, setCollecting] = useState(false);
   const [collectFeedback, setCollectFeedback] = useState('');
   const [lastPaidId, setLastPaidId] = useState(null);
-  const [showAddDuModal, setShowAddDuModal] = useState(false);
+  const [showAddDuModal, setShowAddDuModal] = useState(() => searchParams.get('new') === '1');
   const [duMembers, setDuMembers] = useState([]);
   const [newDuForm, setNewDuForm] = useState({ user_id: '', categorie: 'penalite', motif: '', montant: '' });
   const [creatingDu, setCreatingDu] = useState(false);
+  const [refundTarget, setRefundTarget] = useState(null);
+  const [refundForm, setRefundForm] = useState({ montant_rembourse: '', motif_remboursement: '' });
+  const [refunding, setRefunding] = useState(false);
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docForm, setDocForm] = useState({ type_doc: 'facture', numero: '', client_nom: '', montant_ht: '', tva_pct: 19, statut: 'emise' });
+  const [savingDoc, setSavingDoc] = useState(false);
 
   const filteredPayments = useMemo(() => {
     let result = [...payments];
@@ -106,25 +117,90 @@ export default function AdminPayments({ session }) {
 
   useEffect(() => {
     fetchProfileAndPayments();
-  }, []);
+  }, [includeArchivedDocs]);
+
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setShowAddDuModal(true);
+    }
+  }, [searchParams]);
 
   const fetchProfileAndPayments = async () => {
     try {
       setErrorMsg('');
       if (!payments.length) setLoading(true);
-      const [profRes, data, mdRes] = await Promise.all([
+      const [profRes, data, mdRes, docsRes] = await Promise.all([
         Promise.resolve(supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()).catch(() => null),
         paymentApi.getAll().catch(() => ({ payments: [] })),
         paymentApi.getMontantDu().catch(() => ({ items: [], total_du: 0, count: 0 })),
+        tenantAdminApi.getDevisFactures(includeArchivedDocs ? { include_archived: 'true' } : {}).catch(() => ({ items: [] })),
       ]);
 
       if (profRes?.data) setProfile(profRes.data);
       if (data?.payments) setPayments(data.payments);
       if (mdRes?.items) setMontantDuData(mdRes);
+      setDevisFactures(docsRes?.items || []);
     } catch (err) {
       setErrorMsg(err.message || "Erreur de chargement");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenRefund = (p) => {
+    setRefundTarget(p);
+    setRefundForm({
+      montant_rembourse: String(Number(p.montant || 0).toFixed(3)),
+      motif_remboursement: '',
+    });
+  };
+
+  const handleConfirmRefund = async (e) => {
+    e.preventDefault();
+    if (!refundTarget) return;
+    setRefunding(true);
+    setErrorMsg('');
+    try {
+      const res = await paymentApi.refund(refundTarget.id, {
+        montant_rembourse: Number(refundForm.montant_rembourse),
+        motif_remboursement: refundForm.motif_remboursement,
+      });
+      setCollectFeedback(res.message || 'Remboursement enregistré.');
+      setRefundTarget(null);
+      await fetchProfileAndPayments();
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur lors du remboursement.');
+    } finally {
+      setRefunding(false);
+    }
+  };
+
+  const handleCreateDoc = async (e) => {
+    e.preventDefault();
+    setSavingDoc(true);
+    setErrorMsg('');
+    try {
+      const ht = Number(docForm.montant_ht || 0);
+      const tva = Number(docForm.tva_pct ?? 19);
+      const ttc = Math.round(ht * (1 + tva / 100) * 1000) / 1000;
+      const num = docForm.numero.trim() || `${docForm.type_doc === 'devis' ? 'DEV' : 'FAC'}-${new Date().getFullYear()}-${String(devisFactures.length + 1).padStart(3, '0')}`;
+      await tenantAdminApi.createDevisFacture({
+        type_doc: docForm.type_doc,
+        numero: num,
+        client_nom: docForm.client_nom.trim(),
+        montant_ht: ht,
+        tva_pct: tva,
+        montant_ttc: ttc,
+        statut: docForm.statut,
+      });
+      setShowDocModal(false);
+      setDocForm({ type_doc: 'facture', numero: '', client_nom: '', montant_ht: '', tva_pct: 19, statut: 'emise' });
+      setCollectFeedback('Document enregistré.');
+      await fetchProfileAndPayments();
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setSavingDoc(false);
     }
   };
 
@@ -196,19 +272,55 @@ export default function AdminPayments({ session }) {
 
   return (
     <PortalLayout profile={profile} onLogout={handleLogout}>
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="font-sora text-2xl sm:text-3xl font-bold text-primary mb-1">Gestion des Paiements</h1>
-          <p className="text-sm text-on-surface-variant">Consultez et téléchargez les reçus des transactions.</p>
+      <div className="mb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="text-left">
+          <h1 className="font-sora text-2xl sm:text-3xl font-bold text-primary mb-1">Finance</h1>
+          <p className="text-sm text-on-surface-variant">Paiements sur place, factures et devis, impayés et remboursements.</p>
         </div>
-        <button
-          onClick={handleExportExcel}
-          disabled={payments.length === 0}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-secondary text-on-secondary rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-colors disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined text-[18px]">download</span>
-          Exporter Excel
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDocModal(true)}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-outline-variant/25 bg-white text-primary font-semibold text-sm hover:bg-surface-container-low"
+          >
+            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 18 }}>description</span>
+            Nouveau devis / facture
+          </button>
+          <button
+            onClick={handleExportExcel}
+            disabled={payments.length === 0}
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm hover:opacity-95 transition-colors disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            Exporter Excel
+          </button>
+        </div>
+      </div>
+
+      {/* Onglets Hub Finance */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {[
+          { id: 'paiements', label: 'Paiements', icon: 'payments' },
+          { id: 'factures_devis', label: `Factures et devis (${devisFactures.length})`, icon: 'receipt_long' },
+          { id: 'impayes', label: `Impayés et relances (${montantDuData.items.length})`, icon: 'pending_actions' },
+          { id: 'remboursements', label: `Remboursements (${payments.filter((p) => p.statut === 'refunded').length})`, icon: 'currency_exchange' },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setHubTab(t.id)}
+            style={hubTab === t.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+              hubTab === t.id
+                ? 'shadow-xs'
+                : 'bg-white border border-outline-variant/20 text-on-surface-variant hover:text-primary'
+            }`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {/* Cartes de statistiques (KPIs) — un seul filet neutre */}
@@ -457,15 +569,26 @@ export default function AdminPayments({ session }) {
                         {STATUT_LABELS[p.statut] || p.statut}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => handleDownload(p.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#f95d00] hover:bg-orange-50 rounded-lg transition-colors"
-                        title="Télécharger le reçu PDF"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">download</span>
-                        <span className="hidden sm:inline">Télécharger le reçu</span>
-                      </button>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleDownload(p.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#f95d00] hover:bg-orange-50 rounded-lg transition-colors"
+                          title="Télécharger le reçu PDF"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">download</span>
+                          <span className="hidden sm:inline">Télécharger le reçu</span>
+                        </button>
+                        {p.statut === 'paid' && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRefund(p)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 rounded-lg border border-red-200 transition-colors"
+                          >
+                            Rembourser
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -493,6 +616,109 @@ export default function AdminPayments({ session }) {
           label="paiements"
         />
       </div>
+
+      {/* Section Factures et devis (visible dans son onglet) */}
+      {hubTab === 'factures_devis' && (
+        <div className="mt-6 bg-surface-container-lowest rounded-2xl border border-outline-variant/25 p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-sora font-bold text-base text-primary">Factures et devis</h2>
+              <p className="text-xs text-on-surface-variant">Montants HT / TVA / TTC · Archivage sécurisé sans suppression physique.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                <input type="checkbox" checked={includeArchivedDocs} onChange={(e) => setIncludeArchivedDocs(e.target.checked)} className="accent-[#f95d00]" />
+                Afficher les archivés
+              </label>
+              <button type="button" onClick={() => setShowDocModal(true)} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="px-3.5 py-1.5 rounded-xl text-xs font-bold">
+                + Nouveau document
+              </button>
+            </div>
+          </div>
+          {devisFactures.length === 0 ? (
+            <p className="text-sm text-on-surface-variant text-center py-6">Aucun devis ou facture enregistré.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-outline-variant/20 text-xs uppercase text-on-surface-variant">
+                    <th className="py-2.5 px-3">Numéro</th>
+                    <th className="py-2.5 px-3">Type</th>
+                    <th className="py-2.5 px-3">Client</th>
+                    <th className="py-2.5 px-3">Montant HT</th>
+                    <th className="py-2.5 px-3">Montant TTC</th>
+                    <th className="py-2.5 px-3">Statut</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/10">
+                  {devisFactures.map((d) => (
+                    <tr key={d.id} className={d.archived_at ? 'opacity-60' : ''}>
+                      <td className="py-2.5 px-3 font-mono font-bold text-primary">{d.numero}</td>
+                      <td className="py-2.5 px-3 capitalize">{d.type_doc}</td>
+                      <td className="py-2.5 px-3 font-semibold">{d.client_nom || '—'}</td>
+                      <td className="py-2.5 px-3"><Money amount={d.montant_ht} showTaxType="HT" /></td>
+                      <td className="py-2.5 px-3 font-bold text-[#f95d00]"><Money amount={d.montant_ttc} showTaxType="TTC" /></td>
+                      <td className="py-2.5 px-3 text-xs font-bold uppercase">{d.archived_at ? 'Archivé' : d.statut}</td>
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-2">
+                        {d.archived_at ? (
+                          <button type="button" onClick={async () => { await tenantAdminApi.restoreDevisFacture(d.id); await fetchProfileAndPayments(); }} className="text-emerald-700 font-semibold text-xs hover:underline">
+                            Restaurer
+                          </button>
+                        ) : (
+                          <>
+                            {d.type_doc === 'devis' && (
+                              <button type="button" onClick={async () => { await tenantAdminApi.updateDevisFacture(d.id, { type_doc: 'facture', statut: 'emise' }); await fetchProfileAndPayments(); }} className="text-[#f95d00] font-semibold text-xs hover:underline">
+                                Convertir en facture
+                              </button>
+                            )}
+                            <button type="button" onClick={async () => { if (window.confirm('Archiver ce document ?')) { await tenantAdminApi.archiveDevisFacture(d.id); await fetchProfileAndPayments(); } }} className="text-on-surface-variant font-semibold text-xs hover:underline">
+                              Archiver
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Section Remboursements dédiée */}
+      {hubTab === 'remboursements' && (
+        <div className="mt-6 bg-surface-container-lowest rounded-2xl border border-outline-variant/25 p-5 shadow-sm">
+          <h2 className="font-sora font-bold text-base text-primary mb-3">Historique des remboursements</h2>
+          {payments.filter((p) => p.statut === 'refunded').length === 0 ? (
+            <p className="text-sm text-on-surface-variant py-6 text-center">Aucun remboursement enregistré.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-outline-variant/20 text-xs uppercase text-on-surface-variant">
+                    <th className="py-2.5 px-3">Client</th>
+                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">Montant remboursé</th>
+                    <th className="py-2.5 px-3">Motif</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/10">
+                  {payments.filter((p) => p.statut === 'refunded').map((p) => (
+                    <tr key={p.id}>
+                      <td className="py-2.5 px-3 font-semibold">{p.profiles ? `${p.profiles.prenom || ''} ${p.profiles.nom || ''}`.trim() : 'Client'}</td>
+                      <td className="py-2.5 px-3 text-xs">{formatDateDMY(p.refunded_at || p.updated_at || p.date_paiement || p.created_at)}</td>
+                      <td className="py-2.5 px-3 font-bold text-red-700"><Money amount={p.montant_rembourse ?? p.montant} showTaxType="TTC" /></td>
+                      <td className="py-2.5 px-3 text-xs text-on-surface-variant">{p.motif_remboursement || p.reference_externe || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modale d'encaissement sur place (complet ou partiel) + Reçu PDF */}
       {collectTarget && (
@@ -647,6 +873,101 @@ export default function AdminPayments({ session }) {
               </button>
               <button type="submit" disabled={creatingDu} className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white disabled:opacity-50">
                 {creatingDu ? 'Ajout…' : 'Ajouter aux montants dus'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {refundTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form onSubmit={handleConfirmRefund} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Rembourser un paiement</h3>
+              <button type="button" onClick={() => setRefundTarget(null)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-600">
+              Montant initial encaissé : <strong><Money amount={refundTarget.montant} showTaxType="TTC" /></strong>
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Montant à rembourser (DT TTC) *</label>
+              <input
+                type="number"
+                step="0.001"
+                min="0.001"
+                max={Number(refundTarget.montant || 0)}
+                required
+                value={refundForm.montant_rembourse}
+                onChange={(e) => setRefundForm((f) => ({ ...f, montant_rembourse: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono font-bold"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Motif du remboursement *</label>
+              <input
+                type="text"
+                required
+                value={refundForm.motif_remboursement}
+                onChange={(e) => setRefundForm((f) => ({ ...f, motif_remboursement: e.target.value }))}
+                placeholder="Ex : Annulation dans le délai, erreur de saisie…"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setRefundTarget(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700">
+                Annuler
+              </button>
+              <button type="submit" disabled={refunding} className="flex-1 rounded-xl bg-red-600 py-2.5 text-xs font-bold text-white disabled:opacity-50">
+                {refunding ? 'Traitement…' : 'Confirmer le remboursement'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showDocModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form onSubmit={handleCreateDoc} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Nouveau devis ou facture</h3>
+              <button type="button" onClick={() => setShowDocModal(false)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Type</label>
+                <select value={docForm.type_doc} onChange={(e) => setDocForm((f) => ({ ...f, type_doc: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">
+                  <option value="facture">Facture</option>
+                  <option value="devis">Devis</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Numéro</label>
+                <input type="text" value={docForm.numero} onChange={(e) => setDocForm((f) => ({ ...f, numero: e.target.value }))} placeholder="Auto si vide" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Client / Société *</label>
+              <input type="text" required value={docForm.client_nom} onChange={(e) => setDocForm((f) => ({ ...f, client_nom: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Montant HT (DT) *</label>
+                <input type="number" step="0.001" min="0" required value={docForm.montant_ht} onChange={(e) => setDocForm((f) => ({ ...f, montant_ht: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono font-bold" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">TVA (%)</label>
+                <input type="number" step="0.5" min="0" value={docForm.tva_pct} onChange={(e) => setDocForm((f) => ({ ...f, tva_pct: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setShowDocModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700">
+                Annuler
+              </button>
+              <button type="submit" disabled={savingDoc} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold disabled:opacity-50">
+                {savingDoc ? 'Enregistrement…' : 'Enregistrer'}
               </button>
             </div>
           </form>

@@ -45,7 +45,7 @@ function NumInput({ label, value, onChange, min = 0, max = 100, step = 1, suffix
   );
 }
 
-export default function AdminCancellationPolicy({ session }) {
+export default function AdminCancellationPolicy({ session, embedded = false }) {
   const { userId, email, metadata } = useSessionUser(session);
   const [profile,     setProfile]     = useState(() =>
     userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null
@@ -135,8 +135,8 @@ export default function AdminCancellationPolicy({ session }) {
     setSpacePolicies(p => ({ ...p, [type]: { ...p[type], [key]: val } }));
   };
 
-  if (loading) return (
-    <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+  if (loading) {
+    const skeleton = (
       <div className="p-6 max-w-3xl mx-auto">
         <div className="h-8 w-64 bg-gray-200 rounded animate-pulse mb-6" />
         {[...Array(4)].map((_, i) => (
@@ -147,12 +147,16 @@ export default function AdminCancellationPolicy({ session }) {
           </div>
         ))}
       </div>
-    </PortalLayout>
-  );
+    );
+    return embedded ? skeleton : (
+      <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+        {skeleton}
+      </PortalLayout>
+    );
+  }
 
-  return (
-    <PortalLayout profile={profile} onLogout={() => { supabase.auth.signOut(); navigate('/'); }}>
-      <div className="max-w-4xl mx-auto p-4 sm:p-6">
+  const content = (
+      <div className={embedded ? 'w-full' : 'max-w-4xl mx-auto p-4 sm:p-6'}>
 
         {/* Header */}
         <div className="mb-6">
@@ -357,6 +361,11 @@ export default function AdminCancellationPolicy({ session }) {
           </div>
         )}
       </div>
+  );
+
+  return embedded ? content : (
+    <PortalLayout profile={profile} onLogout={() => { supabase.auth.signOut(); navigate('/'); }}>
+      {content}
     </PortalLayout>
   );
 }

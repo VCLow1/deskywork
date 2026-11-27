@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
@@ -6,6 +7,7 @@ import { kpiApi } from '../services/api';
 import { formatDT, formatDateDMY, formatDateTimeDMY } from '../utils/format';
 import { SPACE_TYPE_LABELS } from '../constants/spaceTypes';
 import Money from '../components/common/Money';
+import AdminMarketplaceStats from './AdminMarketplaceStats';
 
 const MODE_LABELS = {
   cash: 'Espèces',
@@ -21,6 +23,8 @@ export default function AdminReports({ session }) {
     () => (userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null),
     [userId, email, metadata]
   );
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [hubTab, setHubTab] = useState(() => (searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'rapports'));
   const [period, setPeriod] = useState('mois');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -167,45 +171,80 @@ export default function AdminReports({ session }) {
     }
   };
 
+  const moduleFormationsActif = report?.module_formations_actif !== false;
   const TABS = [
     { id: 'ca', label: 'Chiffre d\'affaires', icon: 'payments' },
     { id: 'occupation', label: 'Occupation', icon: 'domain' },
     { id: 'presence', label: 'Présence', icon: 'how_to_reg' },
     { id: 'membres', label: 'Membres', icon: 'group' },
     { id: 'impayes', label: 'Impayés', icon: 'pending_actions' },
-    { id: 'formations', label: 'Formations', icon: 'school' },
+    ...(moduleFormationsActif ? [{ id: 'formations', label: 'Formations', icon: 'school' }] : []),
   ];
 
   return (
     <PortalLayout profile={profile}>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Rapports & Analyses</h1>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="text-left">
+          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Analyses</h1>
           <p className="text-sm text-on-surface-variant">
-            Rapports détaillés filtrables par période et par espace avec exports Excel (.xlsx) et PDF.
+            Rapports détaillés alignés sur les formules KPI officielles et Visibilité Marketplace.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            disabled={exportingPdf || loading}
-            className="px-4 py-2 rounded-xl bg-surface-container-lowest border border-outline-variant/20 text-primary font-semibold text-sm hover:bg-surface-container-low flex items-center gap-2 disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 18 }}>picture_as_pdf</span>
-            {exportingPdf ? 'Génération PDF…' : 'Export PDF'}
-          </button>
-          <button
-            type="button"
-            onClick={handleExportExcel}
-            disabled={exportingExcel || !report}
-            className="px-4 py-2 rounded-xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] flex items-center gap-2 disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>table_view</span>
-            {exportingExcel ? 'Export Excel…' : 'Export Excel (.xlsx)'}
-          </button>
-        </div>
+        {hubTab === 'rapports' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={exportingPdf || loading}
+              className="px-4 py-2 rounded-xl bg-surface-container-lowest border border-outline-variant/20 text-primary font-semibold text-sm hover:bg-surface-container-low flex items-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 18 }}>picture_as_pdf</span>
+              {exportingPdf ? 'Génération PDF…' : 'Export PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={exportingExcel || !report}
+              style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+              className="px-4 py-2 rounded-xl font-semibold text-sm hover:opacity-95 flex items-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>table_view</span>
+              {exportingExcel ? 'Export Excel…' : 'Export Excel (.xlsx)'}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Onglets Hub Analyses : Rapports | Visibilité Marketplace */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {[
+          { id: 'rapports', label: 'Rapports', icon: 'analytics' },
+          { id: 'marketplace', label: 'Visibilité Marketplace', icon: 'monitoring' },
+        ].map((h) => (
+          <button
+            key={h.id}
+            type="button"
+            onClick={() => {
+              setHubTab(h.id);
+              setSearchParams(h.id === 'marketplace' ? { tab: 'marketplace' } : {});
+            }}
+            style={hubTab === h.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition ${
+              hubTab === h.id
+                ? 'shadow-xs'
+                : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant/15 hover:bg-surface-container-low'
+            }`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{h.icon}</span>
+            {h.label}
+          </button>
+        ))}
+      </div>
+
+      {hubTab === 'marketplace' ? (
+        <AdminMarketplaceStats session={session} embedded />
+      ) : (
+        <>
 
       {/* Filtres Période & Espace */}
       <div className="bg-surface-container-lowest rounded-3xl p-4 border border-outline-variant/15 mb-5 flex flex-wrap items-end gap-3">
@@ -290,10 +329,14 @@ export default function AdminReports({ session }) {
         <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15">
           {activeTab === 'ca' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div className="p-4 rounded-2xl bg-surface-container-low/60">
-                  <p className="text-xs text-on-surface-variant font-bold uppercase">CA Total</p>
-                  <p className="font-sora font-bold text-2xl text-[#2fbe8f] mt-1"><Money amount={report.ca?.total} /></p>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase">CA net encaissé</p>
+                  <p className="font-sora font-bold text-2xl text-[#2fbe8f] mt-1"><Money amount={report.ca?.total} showTaxType="TTC" /></p>
+                </div>
+                <div className="p-4 rounded-2xl bg-surface-container-low/60">
+                  <p className="text-xs text-on-surface-variant font-bold uppercase">Remboursements déduits</p>
+                  <p className="font-sora font-bold text-2xl text-[#ba1a1a] mt-1"><Money amount={report.remboursements?.total || report.ca?.remboursements || 0} showTaxType="TTC" /></p>
                 </div>
                 <div className="p-4 rounded-2xl bg-surface-container-low/60">
                   <p className="text-xs text-on-surface-variant font-bold uppercase">Transactions</p>
@@ -301,7 +344,7 @@ export default function AdminReports({ session }) {
                 </div>
                 <div className="p-4 rounded-2xl bg-surface-container-low/60">
                   <p className="text-xs text-on-surface-variant font-bold uppercase">Panier moyen</p>
-                  <p className="font-sora font-bold text-2xl text-[#100f0d] mt-1"><Money amount={report.ca?.panier_moyen} /></p>
+                  <p className="font-sora font-bold text-2xl text-[#100f0d] mt-1"><Money amount={report.ca?.panier_moyen} showTaxType="TTC" /></p>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -509,6 +552,8 @@ export default function AdminReports({ session }) {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </PortalLayout>
   );

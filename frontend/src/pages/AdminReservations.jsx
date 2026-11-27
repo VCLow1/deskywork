@@ -5,6 +5,7 @@ import { bookingApi, memberApi, paymentApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import AdminAgenda from './AdminAgenda';
 import { formatDateDMY, formatTime24h, tunisLocalToISO } from '../utils/format';
 
 const STATUT_CONFIG = {
@@ -62,10 +63,13 @@ export default function AdminReservations({ session }) {
 
   // Filtres
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialHubTab = ['list', 'calendar', 'plan'].includes(searchParams.get('view')) ? searchParams.get('view') : 'list';
+  const [hubTab, setHubTab] = useState(initialHubTab);
+  const [scannerTrigger, setScannerTrigger] = useState(0);
   const [filterStatut, setFilterStatut] = useState('all');
   const [filterEspace, setFilterEspace] = useState('all');
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') || '');
-  const [showNewModal, setShowNewModal] = useState(() => searchParams.get('new') === '1');
+  const [showNewModal, setShowNewModal] = useState(() => searchParams.get('new') === '1' || searchParams.get('walkin') === '1');
   const [membersList, setMembersList] = useState([]);
   const [creatingBooking, setCreatingBooking] = useState(false);
   const [newBookingForm, setNewBookingForm] = useState(() => {
@@ -77,7 +81,7 @@ export default function AdminReservations({ session }) {
       heure_debut: '09:00',
       heure_fin: '12:00',
       nb_participants: 1,
-      notes: '',
+      notes: searchParams.get('walkin') === '1' ? 'Client sur place' : '',
     };
   });
 
@@ -86,7 +90,16 @@ export default function AdminReservations({ session }) {
   useEffect(() => {
     const q = searchParams.get('search');
     if (q !== null) setSearchQuery(q);
-    if (searchParams.get('new') === '1') setShowNewModal(true);
+    if (searchParams.get('new') === '1' || searchParams.get('walkin') === '1') {
+      setShowNewModal(true);
+      if (searchParams.get('walkin') === '1') {
+        setNewBookingForm((p) => ({ ...p, notes: p.notes || 'Client sur place' }));
+      }
+    }
+    const v = searchParams.get('view');
+    if (v && ['list', 'calendar', 'plan'].includes(v)) {
+      setHubTab(v);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -276,39 +289,82 @@ export default function AdminReservations({ session }) {
       )}
 
       {/* En-tête */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div className="min-w-0">
-          <h1 className="font-sora font-bold text-primary" style={{ fontSize: 'clamp(20px, 4vw, 28px)' }}>Gestion des Réservations</h1>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+        <div className="min-w-0 text-left">
+          <h1 className="font-sora font-bold text-primary" style={{ fontSize: 'clamp(20px, 4vw, 28px)' }}>Réservations</h1>
           <p className="text-on-surface-variant text-sm mt-1">
-            Visualisez, confirmez et gérez toutes les réservations des espaces de coworking.
+            Liste, calendrier, plan interactif 2D en direct et contrôle d'accès par code QR.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setHubTab('calendar');
+              setSearchParams({ view: 'calendar' });
+              setScannerTrigger((c) => c + 1);
+            }}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-outline-variant/30 text-primary rounded-xl font-bold text-xs sm:text-sm hover:bg-surface-container transition-all shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 18 }}>qr_code_scanner</span>
+            <span>Scanner</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowNewModal(true)}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-[#f95d00] text-white rounded-xl font-semibold text-xs sm:text-sm hover:bg-[#e55500] transition-all shadow-sm"
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm hover:opacity-95 transition-all shadow-sm"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_circle</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add</span>
             <span>Nouvelle réservation</span>
           </button>
-          <Link
-            to="/admin/agenda"
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-outline-variant/30 text-primary rounded-xl font-semibold text-xs sm:text-sm hover:bg-surface-container transition-all shadow-sm"
-          >
-            <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>calendar_month</span>
-            <span>Voir l'Agenda</span>
-          </Link>
           <button
             onClick={loadData}
             title="Rafraîchir"
-            className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-outline-variant/30 text-on-surface-variant hover:text-secondary hover:border-secondary transition-all shrink-0"
+            className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-outline-variant/30 text-on-surface-variant hover:text-[#f95d00] transition-all shrink-0"
           >
             <span className="material-symbols-outlined" style={{ fontSize: 20 }}>sync</span>
           </button>
         </div>
       </div>
+
+      {/* Onglets Hub Réservations : Liste | Calendrier | Plan en direct */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {[
+          { id: 'list', label: 'Liste', icon: 'view_list' },
+          { id: 'calendar', label: 'Calendrier', icon: 'calendar_month' },
+          { id: 'plan', label: 'Plan en direct', icon: 'map' },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => {
+              setHubTab(t.id);
+              setSearchParams(t.id === 'list' ? {} : { view: t.id });
+            }}
+            style={hubTab === t.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+              hubTab === t.id
+                ? 'shadow-xs'
+                : 'bg-white border border-outline-variant/20 text-on-surface-variant hover:text-primary'
+            }`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {hubTab !== 'list' ? (
+        <AdminAgenda
+          session={session}
+          embedded
+          initialView={hubTab === 'plan' ? 'plan' : 'week'}
+          openScannerTrigger={scannerTrigger}
+        />
+      ) : (
+        <>
 
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl flex items-center gap-2.5">
@@ -799,6 +855,8 @@ export default function AdminReservations({ session }) {
             </div>
           </form>
         </div>
+      )}
+        </>
       )}
     </PortalLayout>
   );

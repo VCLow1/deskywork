@@ -15,7 +15,7 @@ const PERM_LABELS = [
   { key: 'equipe_gestion', label: 'Gestion équipe & abonnement SaaS (Verrouillé Staff)', allowed: false },
 ];
 
-export default function AdminTeam({ session }) {
+export default function AdminTeam({ session, embedded = false }) {
   const { userId, email, metadata } = useSessionUser(session);
   const profile = useMemo(
     () => (userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null),
@@ -91,10 +91,10 @@ export default function AdminTeam({ session }) {
   };
 
   const handleDelete = async (member) => {
-    if (!window.confirm(`Supprimer définitivement le compte Staff "${member.prenom} ${member.nom}" ?`)) return;
+    if (!window.confirm(`Archiver le compte Staff "${member.prenom} ${member.nom}" ?`)) return;
     try {
       const res = await tenantAdminApi.deleteStaff(member.id);
-      setMsg(res.message || 'Compte supprimé.');
+      setMsg(res.message || 'Compte archivé.');
       await loadData();
     } catch (err) {
       setError(err.message);
@@ -104,25 +104,41 @@ export default function AdminTeam({ session }) {
   const quotaPct = quota.max > 0 ? Math.min(100, Math.round((quota.used / quota.max) * 100)) : 100;
   const quotaFull = quota.used >= quota.max;
 
-  return (
-    <PortalLayout profile={profile}>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Équipe (Staff & Réception)</h1>
-          <p className="text-sm text-on-surface-variant">
-            Créez des accès Staff avec permissions opérationnelles restreintes (Essentiel : 1, Standard : 3, Premium : 10).
-          </p>
+  const content = (
+    <div>
+      {!embedded && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Équipe (Staff & Réception)</h1>
+            <p className="text-sm text-on-surface-variant">
+              Créez des accès Staff avec permissions opérationnelles restreintes (Essentiel : 1, Standard : 3, Premium : 10).
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={quotaFull}
+            onClick={() => { setTempPwd(''); setShowCreate(true); }}
+            className="px-4 py-2.5 rounded-xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>badge</span>
+            Ajouter un réceptionniste
+          </button>
         </div>
-        <button
-          type="button"
-          disabled={quotaFull}
-          onClick={() => { setTempPwd(''); setShowCreate(true); }}
-          className="px-4 py-2.5 rounded-xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>badge</span>
-          Ajouter un réceptionniste
-        </button>
-      </div>
+      )}
+      {embedded && (
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            disabled={quotaFull}
+            onClick={() => { setTempPwd(''); setShowCreate(true); }}
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm disabled:opacity-45 flex items-center gap-2"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>badge</span>
+            Ajouter un réceptionniste
+          </button>
+        </div>
+      )}
 
       {/* Jauge quota Staff selon Pack actif */}
       <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 mb-6">
@@ -306,6 +322,8 @@ export default function AdminTeam({ session }) {
           </div>
         </div>
       )}
-    </PortalLayout>
+    </div>
   );
+
+  return embedded ? content : <PortalLayout profile={profile}>{content}</PortalLayout>;
 }

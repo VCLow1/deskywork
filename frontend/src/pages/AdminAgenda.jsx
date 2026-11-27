@@ -153,14 +153,17 @@ function bookingPosition(booking, dayDate) {
   };
 }
 
-export default function AdminAgenda({ session }) {
+export default function AdminAgenda({ session, embedded = false, initialView = null, openScannerTrigger = 0 }) {
   const [profile, setProfile] = useState(null);
   const [espaces, setEspaces] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedEspace, setSelectedEspace] = useState('');
-  const [viewMode, setViewMode] = useState(() => (searchParams.get('view') === 'plan' ? 'floorplan' : 'week'));
+  const [viewMode, setViewMode] = useState(() => {
+    if (initialView === 'plan' || searchParams.get('view') === 'plan') return 'floorplan';
+    return 'week';
+  });
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [qrInput, setQrInput] = useState('');
@@ -418,56 +421,67 @@ export default function AdminAgenda({ session }) {
   const isSessionActive = (reservationId) =>
     activeSessions.some((s) => s.reservation_id === reservationId && s.statut === 'active');
 
+  useEffect(() => {
+    if (initialView === 'plan') setViewMode('floorplan');
+    else if (initialView === 'week') setViewMode('week');
+  }, [initialView]);
+
+  useEffect(() => {
+    if (openScannerTrigger > 0) {
+      setShowScanner(true);
+    }
+  }, [openScannerTrigger]);
+
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F4F6F9]">
+    const spin = (
+      <div className="py-20 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-secondary" />
       </div>
     );
+    return embedded ? spin : <div className="min-h-screen flex items-center justify-center bg-[#F4F6F9]">{spin}</div>;
   }
 
-  return (
-    <PortalLayout profile={profile} onLogout={handleLogout}>
-      <header className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div>
-          <h1 className="font-sora text-2xl sm:text-3xl font-bold text-primary">Agenda admin</h1>
-          <p className="text-on-surface-variant text-sm mt-1">
-            Calendrier interactif avec check-in/check-out en temps réel
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-          {viewMode !== 'floorplan' && (
-            <select
-              value={selectedEspace}
-              onChange={(e) => setSelectedEspace(e.target.value)}
-              className="flex-1 sm:flex-none border border-outline-variant/30 rounded-xl px-3 py-2 text-xs sm:text-sm bg-white outline-none focus:border-secondary"
-            >
-              <option value="">Tous les espaces</option>
-              {espaces.map((es) => (
-                <option key={es.id} value={es.id}>{es.nom}</option>
-              ))}
-            </select>
-          )}
-          <div className="flex rounded-xl overflow-hidden border border-outline-variant/20 bg-white">
-            {[
-              { id: 'day', label: 'Jour' },
-              { id: 'week', label: 'Semaine' },
-              { id: 'floorplan', label: 'Vue Plan en direct', icon: 'map' },
-            ].map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                onClick={() => {
-                  setViewMode(mode.id);
-                  setSearchParams(mode.id === 'floorplan' ? { view: 'plan' } : {});
-                }}
-                className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold transition-colors ${
-                  viewMode === mode.id
-                    ? ''
-                    : 'bg-white text-on-surface-variant hover:text-primary'
-                }`}
-                style={viewMode === mode.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+  const content = (
+    <div>
+      {!embedded && (
+        <header className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+          <div>
+            <h1 className="font-sora text-2xl sm:text-3xl font-bold text-primary">Agenda & Plan en direct</h1>
+            <p className="text-on-surface-variant text-sm mt-1">
+              Calendrier interactif avec check-in/check-out en temps réel
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+            {viewMode !== 'floorplan' && (
+              <select
+                value={selectedEspace}
+                onChange={(e) => setSelectedEspace(e.target.value)}
+                className="flex-1 sm:flex-none border border-outline-variant/30 rounded-xl px-3 py-2 text-xs sm:text-sm bg-white outline-none focus:border-secondary"
               >
+                <option value="">Tous les espaces</option>
+                {espaces.map((es) => (
+                  <option key={es.id} value={es.id}>{es.nom}</option>
+                ))}
+              </select>
+            )}
+            <div className="flex rounded-xl overflow-hidden border border-outline-variant/20 bg-white">
+              {[
+                { id: 'day', label: 'Jour' },
+                { id: 'week', label: 'Semaine' },
+                { id: 'floorplan', label: 'Vue Plan en direct', icon: 'map' },
+              ].map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    setViewMode(mode.id);
+                    setSearchParams(mode.id === 'floorplan' ? { view: 'plan' } : {});
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold transition-colors ${
+                    viewMode === mode.id ? '' : 'bg-white text-on-surface-variant hover:text-primary'
+                  }`}
+                  style={viewMode === mode.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+                >
                 {mode.icon && <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{mode.icon}</span>}
                 {mode.label}
               </button>
@@ -482,6 +496,7 @@ export default function AdminAgenda({ session }) {
           )}
         </div>
       </header>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-error-container text-on-error-container text-sm rounded-xl">{error}</div>
@@ -832,6 +847,12 @@ export default function AdminAgenda({ session }) {
           </div>
         </div>
       )}
+    </div>
+  );
+
+  return embedded ? content : (
+    <PortalLayout profile={profile} onLogout={handleLogout}>
+      {content}
     </PortalLayout>
   );
 }

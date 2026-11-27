@@ -43,19 +43,27 @@ const PAGE_TITLES = {
   '/book/step1': 'Réserver un espace',
   '/book/step2': 'Réserver un espace',
   '/book/step3': 'Réserver un espace',
-  '/admin/profile-coworking': 'Profil & Activité',
+  '/admin/dashboard': "Aujourd'hui",
+  '/admin/reservations': 'Réservations',
+  '/admin/agenda': 'Réservations',
+  '/admin/clients': 'Membres',
+  '/admin/abonnements': 'Abonnements',
+  '/admin/payments': 'Finance',
+  '/admin/espaces': 'Espaces et offres',
+  '/admin/pricing': 'Espaces et offres · Tarifs',
   '/admin/formations': 'Formations',
-  '/admin/formateurs': 'Formateurs',
+  '/admin/formateurs': 'Formations · Formateurs',
+  '/admin/rapports': 'Analyses',
+  '/admin/statistiques': 'Analyses · Visibilité Marketplace',
+  '/admin/settings': 'Paramètres',
+  '/admin/profile-coworking': 'Paramètres · Établissement',
+  '/admin/cancellation-policy': "Paramètres · Politique d'annulation",
+  '/admin/team': 'Paramètres · Équipe et rôles',
+  '/admin/subscription': 'Paramètres · Mon abonnement DESKYWORK',
   '/admin/onboarding': 'Configuration initiale',
   '/admin/notifications': 'Notifications',
-  '/admin/notifications-support': 'Notifications & Support',
-  '/admin/clients': 'Membres & Clients',
-  '/admin/team': 'Équipe (Staff)',
-  '/admin/subscription': 'Mon Abonnement',
-  '/admin/rapports': 'Rapports',
-  '/admin/statistiques': 'Visibilité Marketplace',
-  '/admin/formateurs': 'Formateurs & Versements',
-  '/admin/dashboard': "Aujourd'hui",
+  '/admin/notifications-support': 'Aide et support',
+  '/admin/messages': 'Messagerie',
   '/trainer-dashboard': 'Tableau de bord',
   '/trainer/notifications': 'Notifications',
   '/member/profile': 'Mon Profil',
@@ -154,6 +162,8 @@ const routeChunkPreloaders = {
   '/admin/dashboard': () => import('../../pages/AdminDashboard'),
   '/admin/reservations': () => import('../../pages/AdminReservations'),
   '/admin/payments': () => import('../../pages/AdminPayments'),
+  '/admin/abonnements': () => import('../../pages/AdminSubscriptions'),
+  '/admin/settings': () => import('../../pages/AdminSettings'),
   '/admin/pricing': () => import('../../pages/AdminPricing'),
   '/admin/espaces': () => import('../../pages/AdminEspaces'),
   '/admin/formations': () => import('../../pages/AdminFormations'),
@@ -217,7 +227,7 @@ const tenantMetaCache = new Map();
 const notificationsCache = new Map();
 
 /* === NavLink Sidebar === */
-function NavLink({ item, isActive, onClick, dark }) {
+function NavLink({ item, isActive, onClick, dark, collapsed = false }) {
   if (item.locked) {
     return (
       <div
@@ -225,8 +235,9 @@ function NavLink({ item, isActive, onClick, dark }) {
         style={{
           display: 'flex',
           alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'flex-start',
           gap: 10,
-          padding: '10px 14px',
+          padding: collapsed ? '10px 0' : '10px 14px',
           borderRadius: 12,
           fontWeight: 600,
           fontSize: 13.5,
@@ -239,22 +250,26 @@ function NavLink({ item, isActive, onClick, dark }) {
         <span className="material-symbols-outlined" style={{ fontSize: 19, flexShrink: 0 }}>
           {item.icon}
         </span>
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {item.label}
-        </span>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            padding: '2px 8px',
-            borderRadius: 99,
-            background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.08)',
-            color: dark ? '#cbd5e1' : '#57534e',
-            flexShrink: 0,
-          }}
-        >
-          {item.badge || 'Bientôt'}
-        </span>
+        {!collapsed && (
+          <>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.label}
+            </span>
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                padding: '2px 8px',
+                borderRadius: 99,
+                background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.08)',
+                color: dark ? '#cbd5e1' : '#57534e',
+                flexShrink: 0,
+              }}
+            >
+              {item.badge || 'Bientôt'}
+            </span>
+          </>
+        )}
       </div>
     );
   }
@@ -275,13 +290,15 @@ function NavLink({ item, isActive, onClick, dark }) {
   return (
     <Link
       to={item.to}
+      title={collapsed ? translatedLabel : undefined}
       onClick={onClick}
       onMouseEnter={handleMouseEnter}
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 12,
-        padding: '10px 14px',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        gap: collapsed ? 0 : 12,
+        padding: collapsed ? '10px 0' : '10px 14px',
         borderRadius: 12,
         fontWeight: 600,
         fontSize: 14,
@@ -314,8 +331,8 @@ function NavLink({ item, isActive, onClick, dark }) {
       >
         {item.icon}
       </span>
-      <span style={{ flex: 1, color: itemColor }}>{translatedLabel}</span>
-      {item.badge && (
+      {!collapsed && <span style={{ flex: 1, color: itemColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{translatedLabel}</span>}
+      {!collapsed && item.badge && (
         <span
           style={{
             fontSize: 12,
@@ -331,7 +348,7 @@ function NavLink({ item, isActive, onClick, dark }) {
           {item.badge}
         </span>
       )}
-      {isActive && !item.badge && (
+      {!collapsed && isActive && !item.badge && (
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f95d00', flexShrink: 0 }} />
       )}
     </Link>
@@ -361,10 +378,16 @@ export default function PortalLayout({ children, profile, onLogout }) {
   );
   const [tenantLogo, setTenantLogo] = useState(null);
   const [tenantActivite, setTenantActivite] = useState(() => localStorage.getItem('active_org_activite') || 'mixte');
+  const [moduleFormationsActif, setModuleFormationsActif] = useState(() => localStorage.getItem('active_org_formations') !== 'false');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('deskywork_sidebar_collapsed') === 'true'; } catch { return false; }
+  });
+  const [quickNewOpen, setQuickNewOpen] = useState(false);
 
   const dropdownRef = useRef(null);
   const notifRef = useRef(null);
   const searchRef = useRef(null);
+  const quickNewRef = useRef(null);
   const seenNotifIdsRef = useRef(new Set());
   const initialNotifsLoadedRef = useRef(false);
   const bellTimerRef = useRef(null);
@@ -439,6 +462,10 @@ export default function PortalLayout({ children, profile, onLogout }) {
         setTenantActivite(cached.activite);
         localStorage.setItem('active_org_activite', cached.activite);
       }
+      if (cached.moduleFormationsActif !== undefined) {
+        setModuleFormationsActif(Boolean(cached.moduleFormationsActif));
+        localStorage.setItem('active_org_formations', String(Boolean(cached.moduleFormationsActif)));
+      }
       return;
     }
 
@@ -454,9 +481,11 @@ export default function PortalLayout({ children, profile, onLogout }) {
         loadedTenantRef.current = tenantId;
         const logoUrl = tenantData?.logo_url || null;
         const activite = tenantData?.settings?.activite || null;
+        const modForm = tenantData?.settings?.module_formations_actif !== false;
         tenantMetaCache.set(tenantId, {
           logoUrl,
           activite,
+          moduleFormationsActif: modForm,
           expiresAt: Date.now() + PORTAL_META_CACHE_TTL_MS,
         });
         if (logoUrl && !profile?.photo_url && !profile?.avatar_url) {
@@ -466,6 +495,8 @@ export default function PortalLayout({ children, profile, onLogout }) {
           setTenantActivite(activite);
           localStorage.setItem('active_org_activite', activite);
         }
+        setModuleFormationsActif(modForm);
+        localStorage.setItem('active_org_formations', String(modForm));
       } catch (e) {
         // silencieux
       }
@@ -473,6 +504,31 @@ export default function PortalLayout({ children, profile, onLogout }) {
     loadTenantLogo();
     return () => { cancelled = true; };
   }, [profile?.id, profile?.tenant_id, profile?.photo_url, profile?.avatar_url]);
+
+  useEffect(() => {
+    const onSettingsSync = (e) => {
+      if (e?.detail?.activite) {
+        setTenantActivite(e.detail.activite);
+        localStorage.setItem('active_org_activite', e.detail.activite);
+      }
+      if (e?.detail?.module_formations_actif !== undefined) {
+        const val = Boolean(e.detail.module_formations_actif);
+        setModuleFormationsActif(val);
+        localStorage.setItem('active_org_formations', String(val));
+      }
+      if (profile?.tenant_id) tenantMetaCache.delete(profile.tenant_id);
+    };
+    window.addEventListener('tenant-settings-updated', onSettingsSync);
+    return () => window.removeEventListener('tenant-settings-updated', onSettingsSync);
+  }, [profile?.tenant_id]);
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('deskywork_sidebar_collapsed', String(next)); } catch (_) {}
+      return next;
+    });
+  };
 
   // Déblocage AudioContext navigateur à la première interaction + badge onglet
   useEffect(() => {
@@ -663,7 +719,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
     : isStaff
       ? STAFF_NAV
       : adminView
-        ? getAdminNav(tenantActivite)
+        ? getAdminNav(tenantActivite, moduleFormationsActif)
         : isTrainer
           ? FORMATEUR_NAV
           : isCompany
@@ -751,6 +807,9 @@ export default function PortalLayout({ children, profile, onLogout }) {
       }
       if (notifRef.current && !notifRef.current.contains(event.target)) {
         setNotifOpen(false);
+      }
+      if (quickNewRef.current && !quickNewRef.current.contains(event.target)) {
+        setQuickNewOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -952,8 +1011,64 @@ export default function PortalLayout({ children, profile, onLogout }) {
           </div>
         )}
 
-        {/* Right: User profile + Notification Bell + Dark toggle + Clickable Avatar */}
+        {/* Right: + Nouveau (Admin/Staff) + User profile + Notification Bell + Dark toggle + Clickable Avatar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', flexShrink: 0 }}>
+
+          {['admin', 'staff'].includes(profile?.role) && (
+            <div style={{ position: 'relative' }} ref={quickNewRef}>
+              <button
+                type="button"
+                onClick={() => { setQuickNewOpen((v) => !v); setNotifOpen(false); setDropdownOpen(false); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  height: 36, padding: '0 14px', borderRadius: 10, border: 'none',
+                  cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                  backgroundColor: '#f95d00', color: '#ffffff',
+                  boxShadow: '0 2px 8px rgba(249,93,0,0.22)',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add</span>
+                <span className="hidden sm:inline">Nouveau</span>
+              </button>
+              {quickNewOpen && (
+                <div
+                  style={{
+                    position: 'absolute', right: 0, top: 44, width: 220, zIndex: 120,
+                    background: dark ? '#1d1b18' : '#ffffff',
+                    border: dark ? '1px solid rgba(255,255,255,0.10)' : '1px solid rgba(16,15,13,0.10)',
+                    borderRadius: 14, padding: 6,
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.16)',
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                  }}
+                >
+                  {[
+                    { label: 'Réservation', icon: 'event_available', to: '/admin/reservations?new=1' },
+                    { label: 'Membre / Invité', icon: 'person_add', to: '/admin/clients?new=1' },
+                    { label: 'Client sur place', icon: 'directions_walk', to: '/admin/reservations?walkin=1' },
+                    { label: 'Paiement / Encaissement', icon: 'payments', to: '/admin/payments?new=1' },
+                    { label: 'Incident maintenance', icon: 'build', to: '/admin/espaces?tab=incidents&new=1' },
+                  ].map((act) => (
+                    <button
+                      key={act.label}
+                      type="button"
+                      onClick={() => { setQuickNewOpen(false); navigate(act.to); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '9px 10px', borderRadius: 10, border: 'none',
+                        background: 'transparent', cursor: 'pointer', textAlign: 'left',
+                        fontSize: 13, fontWeight: 600, color: dark ? '#fbffff' : '#100f0d',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(249,93,0,0.10)'; e.currentTarget.style.color = '#f95d00'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = dark ? '#fbffff' : '#100f0d'; }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>{act.icon}</span>
+                      <span>{act.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Nom et rôle */}
           <div
@@ -1304,6 +1419,61 @@ export default function PortalLayout({ children, profile, onLogout }) {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {adminView && !isSuperAdmin && (
+                    <>
+                      <Link
+                        to="/admin/settings"
+                        onClick={() => setDropdownOpen(false)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '10px 12px', borderRadius: 12,
+                          fontSize: 13, fontWeight: 600,
+                          textDecoration: 'none',
+                          color: dark ? '#fbffff' : '#100f0d',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>settings</span>
+                        <span>Paramètres</span>
+                      </Link>
+                      <Link
+                        to="/admin/notifications-support"
+                        onClick={() => setDropdownOpen(false)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '10px 12px', borderRadius: 12,
+                          fontSize: 13, fontWeight: 600,
+                          textDecoration: 'none',
+                          color: dark ? '#fbffff' : '#100f0d',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>support_agent</span>
+                        <span>Aide et support</span>
+                      </Link>
+                      <Link
+                        to="/admin/messages"
+                        onClick={() => setDropdownOpen(false)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '10px 12px', borderRadius: 12,
+                          fontSize: 13, fontWeight: 600,
+                          textDecoration: 'none',
+                          color: dark ? '#fbffff' : '#100f0d',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>chat</span>
+                        <span>Messagerie</span>
+                      </Link>
+                    </>
+                  )}
                   <Link
                     to="/select-space"
                     onClick={() => setDropdownOpen(false)}
@@ -1322,23 +1492,25 @@ export default function PortalLayout({ children, profile, onLogout }) {
                     <span>Changer d'espace</span>
                   </Link>
 
-                  <Link
-                    to={profilePath}
-                    onClick={() => setDropdownOpen(false)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '10px 12px', borderRadius: 12,
-                      fontSize: 13, fontWeight: 600,
-                      textDecoration: 'none',
-                      color: dark ? '#fbffff' : '#100f0d',
-                      transition: 'background 0.15s ease',
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>account_circle</span>
-                    <span>Mon Profil</span>
-                  </Link>
+                  {(!adminView || isSuperAdmin) && (
+                    <Link
+                      to={profilePath}
+                      onClick={() => setDropdownOpen(false)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 12px', borderRadius: 12,
+                        fontSize: 13, fontWeight: 600,
+                        textDecoration: 'none',
+                        color: dark ? '#fbffff' : '#100f0d',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>account_circle</span>
+                      <span>Mon Profil</span>
+                    </Link>
+                  )}
 
                   <div style={{ margin: '6px 0', borderTop: dark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(16,15,13,0.08)' }} />
 
@@ -1381,13 +1553,13 @@ export default function PortalLayout({ children, profile, onLogout }) {
           />
         )}
 
-        {/* Sidebar (Desktop + Mobile Drawer) */}
+        {/* Sidebar (Desktop réductible en icônes + Mobile Drawer) */}
         <aside
           className={`portal-sidebar ${mobileMenuOpen ? 'portal-sidebar-open' : 'portal-sidebar-desktop'}`}
           style={{
             flexDirection: 'column',
             flexShrink: 0,
-            width: 250,
+            width: mobileMenuOpen ? 250 : (sidebarCollapsed ? 74 : 244),
             maxWidth: '85vw',
             minHeight: mobileMenuOpen ? '100vh' : 'calc(100vh - 68px)',
             position: mobileMenuOpen ? 'fixed' : 'sticky',
@@ -1401,10 +1573,10 @@ export default function PortalLayout({ children, profile, onLogout }) {
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
             borderRight: dark ? '1px solid rgba(255,255,255,0.07)' : '1px solid rgba(16,15,13,0.08)',
-            padding: mobileMenuOpen ? '20px 14px' : '24px 12px',
-            overflowY: 'auto',
+            padding: mobileMenuOpen ? '20px 14px' : (sidebarCollapsed ? '16px 10px' : '18px 12px'),
+            overflowY: mobileMenuOpen ? 'auto' : 'visible',
             boxShadow: mobileMenuOpen ? '4px 0 30px rgba(0,0,0,0.35)' : 'none',
-            transition: 'background 0.3s ease',
+            transition: 'width 0.2s ease, background 0.3s ease',
           }}
         >
           {mobileMenuOpen && (
@@ -1424,22 +1596,51 @@ export default function PortalLayout({ children, profile, onLogout }) {
             </div>
           )}
 
-          {/* Label section */}
-          <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', padding: '0 12px', marginBottom: 12, color: dark ? 'rgba(251,255,255,0.6)' : '#44474d' }}>
-            {portalLabel}
-          </p>
+          {/* En-tête sidebar + bouton réduire en icônes (desktop) */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: !mobileMenuOpen && sidebarCollapsed ? 'center' : 'space-between',
+            padding: !mobileMenuOpen && sidebarCollapsed ? '0 0 12px' : '0 8px 12px',
+          }}>
+            {(mobileMenuOpen || !sidebarCollapsed) && (
+              <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0, color: dark ? 'rgba(251,255,255,0.6)' : '#44474d' }}>
+                {portalLabel}
+              </p>
+            )}
+            {!mobileMenuOpen && (
+              <button
+                type="button"
+                onClick={toggleSidebarCollapsed}
+                title={sidebarCollapsed ? 'Déplier le menu' : 'Réduire en icônes'}
+                aria-label={sidebarCollapsed ? 'Déplier le menu' : 'Réduire en icônes'}
+                className="hidden lg:flex items-center justify-center"
+                style={{
+                  width: 30, height: 30, borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: dark ? 'rgba(255,255,255,0.06)' : 'rgba(16,15,13,0.05)',
+                  color: dark ? '#fbffff' : '#44474d',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                  {sidebarCollapsed ? 'chevron_right' : 'chevron_left'}
+                </span>
+              </button>
+            )}
+          </div>
 
           {/* Navigation links — Menu / Sous-menu */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <nav style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {navSections.map((section, idx) => (
               <div key={section.group || idx}>
-                <p style={{
-                  fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em',
-                  color: dark ? 'rgba(251,255,255,0.55)' : '#5e5a55',
-                  margin: '0 0 6px 12px',
-                }}>
-                  {section.group}
-                </p>
+                {(!sidebarCollapsed || mobileMenuOpen) && navSections.length > 1 && (
+                  <p style={{
+                    fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em',
+                    color: dark ? 'rgba(251,255,255,0.55)' : '#5e5a55',
+                    margin: '0 0 6px 12px',
+                  }}>
+                    {section.group}
+                  </p>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {(section.items || []).map((item) => (
                     <NavLink
@@ -1448,6 +1649,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       isActive={isNavActive(item.to)}
                       onClick={() => setMobileMenuOpen(false)}
                       dark={dark}
+                      collapsed={!mobileMenuOpen && sidebarCollapsed}
                     />
                   ))}
                 </div>
@@ -1458,16 +1660,18 @@ export default function PortalLayout({ children, profile, onLogout }) {
           {/* Logout button at bottom of sidebar */}
           <div style={{
             marginTop: 'auto',
-            paddingTop: 20,
+            paddingTop: 16,
             borderTop: dark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(16,15,13,0.08)',
           }}>
             <button
               onClick={() => { setMobileMenuOpen(false); handleLogout(); }}
+              title={!mobileMenuOpen && sidebarCollapsed ? 'Déconnexion' : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 12,
-                padding: '11px 14px',
+                justifyContent: !mobileMenuOpen && sidebarCollapsed ? 'center' : 'flex-start',
+                gap: !mobileMenuOpen && sidebarCollapsed ? 0 : 12,
+                padding: !mobileMenuOpen && sidebarCollapsed ? '10px 0' : '11px 14px',
                 borderRadius: 12,
                 fontWeight: 600,
                 fontSize: 14,
@@ -1493,7 +1697,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
               }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 20, flexShrink: 0, color: '#ba1a1a' }}>logout</span>
-              <span style={{ color: '#ba1a1a' }}>Déconnexion</span>
+              {(mobileMenuOpen || !sidebarCollapsed) && <span style={{ color: '#ba1a1a' }}>Déconnexion</span>}
             </button>
           </div>
         </aside>

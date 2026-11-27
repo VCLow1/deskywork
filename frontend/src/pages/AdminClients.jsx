@@ -16,7 +16,9 @@ export default function AdminClients({ session }) {
     [userId, email, metadata]
   );
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState('membres');
+  const [tab, setTab] = useState('personnes');
+  const [personneFilter, setPersonneFilter] = useState('all'); // 'all' | 'membre' | 'invite' | 'prospect'
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
@@ -24,6 +26,7 @@ export default function AdminClients({ session }) {
 
   const [members, setMembers] = useState([]);
   const [guests, setGuests] = useState([]);
+  const [personnes, setPersonnes] = useState([]);
   const [entreprises, setEntreprises] = useState([]);
   const [docContents, setDocContents] = useState([]);
   const [docSignatures, setDocSignatures] = useState([]);
@@ -37,6 +40,7 @@ export default function AdminClients({ session }) {
     email: '',
     telephone: '',
     type_membre: 'particulier',
+    type_personne: 'membre',
   });
   const [createdTempPwd, setCreatedTempPwd] = useState('');
 
@@ -67,9 +71,12 @@ export default function AdminClients({ session }) {
     setLoading(true);
     setError('');
     try {
-      const data = await tenantAdminApi.getClientsOverview();
+      const data = await tenantAdminApi.getClientsOverview(
+        includeArchived ? { include_archived: 'true' } : {}
+      );
       setMembers(data.members || []);
       setGuests(data.guests || []);
+      setPersonnes(data.personnes || []);
       setEntreprises(data.entreprises || []);
       const contents = data.documents?.contenus || [];
       setDocContents(contents);
@@ -89,7 +96,7 @@ export default function AdminClients({ session }) {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [includeArchived]);
 
   useEffect(() => {
     const found = docContents.find((c) => (c.type_doc || c.type) === docType && c.actif !== false)
@@ -127,6 +134,39 @@ export default function AdminClients({ session }) {
     );
   }, [entreprises, search]);
 
+  const filteredPersonnes = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return personnes.filter((p) => {
+      if (!includeArchived && p.archived_at) return false;
+      if (personneFilter !== 'all' && p.type_personne !== personneFilter) return false;
+      if (!s) return true;
+      return `${p.prenom || ''} ${p.nom || ''} ${p.email || ''} ${p.telephone || ''}`.toLowerCase().includes(s);
+    });
+  }, [personnes, personneFilter, search, includeArchived]);
+
+  const handleArchivePersonne = async (p) => {
+    if (!window.confirm(`Archiver la fiche "${p.prenom || ''} ${p.nom || ''}" ? Elle sera conservée dans l'historique.`)) return;
+    setError('');
+    try {
+      await tenantAdminApi.archivePersonne(p.id);
+      setMsg('Fiche archivée.');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleRestorePersonne = async (p) => {
+    setError('');
+    try {
+      await tenantAdminApi.restorePersonne(p.id);
+      setMsg('Fiche restaurée.');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleCreateMember = async (e) => {
     e.preventDefault();
     setError('');
@@ -144,10 +184,16 @@ export default function AdminClients({ session }) {
         ...createForm,
         telephone: createForm.telephone?.trim() ? normalizeTunisianPhone(createForm.telephone) : '',
       };
-      const res = await tenantAdminApi.createMember(payload);
-      if (res.temporary_password) setCreatedTempPwd(res.temporary_password);
-      setMsg(res.message || 'Membre créé avec succès.');
-      setCreateForm({ nom: '', prenom: '', email: '', telephone: '', type_membre: 'particulier' });
+      if (createForm.type_personne === 'prospect' || createForm.type_personne === 'invite') {
+        await tenantAdminApi.createPersonne(payload);
+        setMsg(`${createForm.type_personne === 'prospect' ? 'Prospect' : 'Invité'} ajouté avec succès.`);
+        setShowCreate(false);
+      } else {
+        const res = await tenantAdminApi.createMember(payload);
+        if (res.temporary_password) setCreatedTempPwd(res.temporary_password);
+        setMsg(res.message || 'Membre créé avec succès.');
+      }
+      setCreateForm({ nom: '', prenom: '', email: '', telephone: '', type_membre: 'particulier', type_personne: 'membre' });
       if (searchParams.get('new')) setSearchParams({});
       await loadData();
     } catch (err) {
@@ -258,20 +304,27 @@ export default function AdminClients({ session }) {
   return (
     <PortalLayout profile={profile}>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Membres & Clients</h1>
+        <div className="text-left">
+          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Membres</h1>
           <p className="text-sm text-on-surface-variant">
-            Annuaire complet des membres, invités, comptes Entreprises et documents contractuels.
+            Table unifiée des personnes (Membres, Invités, Prospects), Entreprises et documents contractuels.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => { setCreatedTempPwd(''); setShowCreate(true); }}
-          className="px-4 py-2.5 rounded-xl bg-[#f95d00] text-white font-semibold text-sm hover:bg-[#e55500] flex items-center gap-2 shadow-xs"
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>person_add</span>
-          Nouveau membre
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-outline-variant/25 bg-surface-container-lowest text-xs font-semibold cursor-pointer">
+            <input type="checkbox" checked={includeArchived} onChange={(e) => setIncludeArchived(e.target.checked)} className="accent-[#f95d00]" />
+            Afficher les archivés
+          </label>
+          <button
+            type="button"
+            onClick={() => { setCreatedTempPwd(''); setCreateForm((p) => ({ ...p, type_personne: 'membre' })); setShowCreate(true); }}
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="px-4 py-2.5 rounded-xl font-semibold text-sm hover:opacity-95 flex items-center gap-2 shadow-xs"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>person_add</span>
+            Nouvelle personne
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -288,11 +341,10 @@ export default function AdminClients({ session }) {
       )}
 
       {/* Onglets + Barre de recherche */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex flex-wrap gap-2">
           {[
-            { id: 'membres', label: `Membres (${members.length})`, icon: 'group' },
-            { id: 'guests', label: `Invités (${guests.length})`, icon: 'person_outline' },
+            { id: 'personnes', label: `Personnes (${personnes.length})`, icon: 'group' },
             { id: 'entreprises', label: `Entreprises (${entreprises.length})`, icon: 'business' },
             { id: 'documents', label: 'Documents & Contrats', icon: 'description' },
           ].map((t) => (
@@ -324,17 +376,42 @@ export default function AdminClients({ session }) {
         )}
       </div>
 
+      {tab === 'personnes' && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {[
+            { id: 'all', label: 'Tous' },
+            { id: 'membre', label: 'Membres' },
+            { id: 'invite', label: 'Invités' },
+            { id: 'prospect', label: 'Prospects' },
+          ].map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setPersonneFilter(f.id)}
+              style={personneFilter === f.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                personneFilter === f.id
+                  ? 'shadow-2xs'
+                  : 'bg-surface-container-lowest border border-outline-variant/20 text-on-surface-variant hover:text-primary'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="bg-surface-container-lowest rounded-3xl p-8 text-center text-sm text-on-surface-variant">
-          Chargement des clients…
+          Chargement des fiches…
         </div>
-      ) : tab === 'membres' ? (
+      ) : tab === 'personnes' ? (
         <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-outline-variant/15 text-xs uppercase tracking-wider text-on-surface-variant">
-                <th className="py-3.5 px-4">Membre</th>
-                <th className="py-3.5 px-4">Type</th>
+                <th className="py-3.5 px-4">Personne</th>
+                <th className="py-3.5 px-4">Catégorie</th>
                 <th className="py-3.5 px-4">Statut</th>
                 <th className="py-3.5 px-4">Activité</th>
                 <th className="py-3.5 px-4">Solde</th>
@@ -342,35 +419,41 @@ export default function AdminClients({ session }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10">
-              {filteredMembers.length === 0 ? (
+              {filteredPersonnes.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-10 text-center text-on-surface-variant">
-                    Aucun membre trouvé.
+                    Aucune fiche trouvée.
                   </td>
                 </tr>
               ) : (
-                filteredMembers.map((m) => (
-                  <tr key={m.id} className="hover:bg-surface-container-low/40">
+                filteredPersonnes.map((m) => (
+                  <tr key={`${m.source}-${m.id}`} className={`hover:bg-surface-container-low/40 ${m.archived_at ? 'opacity-60 bg-slate-50/70' : ''}`}>
                     <td className="py-3 px-4">
                       <p className="font-semibold text-primary">{m.prenom} {m.nom}</p>
-                      <p className="text-xs text-on-surface-variant">{m.email} {m.telephone ? `· ${m.telephone}` : ''}</p>
+                      <p className="text-xs text-on-surface-variant">{m.email || '—'} {m.telephone ? `· ${m.telephone}` : ''}</p>
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                        m.type_membre === 'entreprise' ? 'bg-orange-100 text-orange-800' : 'bg-slate-100 text-slate-700'
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        m.type_personne === 'membre'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : m.type_personne === 'invite'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-orange-100 text-[#c2410c]'
                       }`}>
-                        {m.type_membre === 'entreprise' ? 'Entreprise' : 'Particulier'}
+                        {m.type_personne === 'invite' ? 'Invité' : m.type_personne === 'prospect' ? 'Prospect' : 'Membre'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                        m.statut_compte === 'suspendu'
-                          ? 'bg-red-100 text-red-700'
-                          : m.statut_compte === 'en_attente'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-emerald-100 text-emerald-700'
+                        m.archived_at
+                          ? 'bg-slate-200 text-slate-700'
+                          : m.statut_compte === 'suspendu'
+                            ? 'bg-red-100 text-red-700'
+                            : m.statut_compte === 'en_attente'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-700'
                       }`}>
-                        {m.statut_compte || 'actif'}
+                        {m.archived_at ? 'Archivé' : (m.statut_compte || 'actif')}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-xs text-on-surface-variant">
@@ -378,45 +461,64 @@ export default function AdminClients({ session }) {
                       <p className="text-xs">{m.abonnement_actif ? `Abo : ${m.abonnement_actif.type}` : 'Sans abonnement'}</p>
                     </td>
                     <td className="py-3 px-4 text-xs">
-                      <p className="font-semibold text-emerald-700">Payé : {formatDT(m.total_paye)}</p>
-                      {m.total_du > 0 && <p className="font-bold text-red-600">Dû : {formatDT(m.total_du)}</p>}
+                      <p className="font-semibold text-emerald-700">Payé : <Money amount={m.total_paye || 0} /></p>
+                      {(m.total_du || 0) > 0 && <p className="font-bold text-red-600">Dû : <Money amount={m.total_du} /></p>}
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setQrMember(m)}
-                          title="QR Code Check-in"
-                          className="p-1.5 rounded-lg hover:bg-surface-container-low text-on-surface-variant"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>qr_code_2</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenHistory(m)}
-                          title="Historique"
-                          className="p-1.5 rounded-lg hover:bg-surface-container-low text-on-surface-variant"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>history</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditMember({ ...m })}
-                          title="Modifier"
-                          className="p-1.5 rounded-lg hover:bg-surface-container-low text-primary"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>edit</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleSuspend(m)}
-                          title={m.statut_compte === 'suspendu' ? 'Réactiver' : 'Suspendre'}
-                          className={`p-1.5 rounded-lg hover:bg-surface-container-low ${m.statut_compte === 'suspendu' ? 'text-emerald-600' : 'text-red-600'}`}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                            {m.statut_compte === 'suspendu' ? 'check_circle' : 'block'}
-                          </span>
-                        </button>
+                        {m.archived_at ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRestorePersonne(m)}
+                            className="px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50"
+                          >
+                            Restaurer
+                          </button>
+                        ) : (
+                          <>
+                            {m.source === 'profile' && (
+                              <>
+                                <button type="button" onClick={() => setQrMember(m)} title="QR Code Check-in" className="p-1.5 rounded-lg hover:bg-surface-container-low text-on-surface-variant">
+                                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>qr_code_2</span>
+                                </button>
+                                <button type="button" onClick={() => handleOpenHistory(m)} title="Historique" className="p-1.5 rounded-lg hover:bg-surface-container-low text-on-surface-variant">
+                                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>history</span>
+                                </button>
+                                <button type="button" onClick={() => setEditMember({ ...m })} title="Modifier" className="p-1.5 rounded-lg hover:bg-surface-container-low text-primary">
+                                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSuspend(m)}
+                                  title={m.statut_compte === 'suspendu' ? 'Réactiver' : 'Suspendre'}
+                                  className={`p-1.5 rounded-lg hover:bg-surface-container-low ${m.statut_compte === 'suspendu' ? 'text-emerald-600' : 'text-red-600'}`}
+                                >
+                                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                                    {m.statut_compte === 'suspendu' ? 'check_circle' : 'block'}
+                                  </span>
+                                </button>
+                              </>
+                            )}
+                            {m.source === 'guest' && (
+                              <button
+                                type="button"
+                                onClick={() => handleConvertGuest(m)}
+                                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                                className="px-2.5 py-1 rounded-lg text-xs font-bold"
+                              >
+                                Convertir en Membre
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleArchivePersonne(m)}
+                              title="Archiver"
+                              className="px-2.5 py-1 rounded-lg border border-outline-variant/30 text-on-surface-variant text-xs font-semibold hover:bg-surface-container-low"
+                            >
+                              Archiver
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -666,6 +768,18 @@ export default function AdminClients({ session }) {
               </div>
             ) : (
               <form onSubmit={handleCreateMember} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Catégorie de fiche</label>
+                  <select
+                    value={createForm.type_personne}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, type_personne: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white"
+                  >
+                    <option value="membre">Membre (avec accès portail)</option>
+                    <option value="prospect">Prospect (sans compte d'accès)</option>
+                    <option value="invite">Invité ponctuel (sans compte d'accès)</option>
+                  </select>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold mb-1">Prénom</label>

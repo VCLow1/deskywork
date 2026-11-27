@@ -7,7 +7,7 @@ const ctrl = require('../controllers/paymentsController');
 
 // CDC v3.0 — D1 : paiement 100 % sur place en v1. Toutes les passerelles en ligne
 // (Stripe, Flouci, CB) sont désactivées ; l'API répond 410 Gone.
-router.use('/stripe', (_req, res) => res.status(410).json({
+router.all('/stripe/{*path}', (_req, res) => res.status(410).json({
   error: "Le paiement en ligne n'est pas disponible. Le règlement s'effectue sur place (espèces, chèque ou virement).",
   code: 'ONLINE_PAYMENT_DISABLED',
 }));
@@ -24,6 +24,7 @@ router.get('/montant-du/me', authenticate, ctrl.getMontantDu);
 router.get('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getMontantDu);
 router.post('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createMontantDu);
 router.post('/payments/:id/collect', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.collectPayment);
+router.post('/payments/:id/refund', authenticate, requireRoles('super_admin', 'admin'), ctrl.refundPayment);
 
 // Routes paiement administration (Super Admin, Admin, Staff)
 router.post('/payments', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createPayment);

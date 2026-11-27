@@ -1,10 +1,12 @@
-// controllers/espacesController.js — MODULE B + ADMIN : Espaces & Tenant config
+// controllers/espacesController.js — MODULE B + ADMIN : Espaces & Tenant config (LOT 2)
 const { supabaseAdmin } = require('../config/supabase');
 const { applyTenantFilter } = require('../middleware/guards');
 const { getBookingAvailability, FORMATION_ROOM_UNAVAILABLE } = require('../models/helpers');
+const { logActivity, hasFutureUntreatedReservations } = require('../models/activityLogger');
 
 async function listEspaces(req, res) {
   try {
+    const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
     let query = supabaseAdmin
       .from('espaces')
       .select('*')
@@ -14,7 +16,22 @@ async function listEspaces(req, res) {
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ espaces: data });
+
+    let archivedIds = new Set();
+    const tid = req.tenantId || req.query.tenant_id;
+    if (tid) {
+      const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', tid).maybeSingle();
+      if (Array.isArray(tRow?.settings?.archived_espaces)) {
+        archivedIds = new Set(tRow.settings.archived_espaces);
+      }
+    }
+
+    const list = (data || []).map((e) => ({
+      ...e,
+      archived_at: e.archived_at || (archivedIds.has(e.id) ? (e.updated_at || e.created_at) : null),
+    }));
+    const espaces = includeArchived ? list : list.filter((e) => !e.archived_at);
+    res.json({ espaces });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -204,9 +221,40 @@ async function deleteAdminEspace(req, res) {
 
     if (fetchErr || !existing) return res.status(404).json({ error: 'Espace introuvable.' });
 
-    const { error } = await supabaseAdmin.from('espaces').delete().eq('id', req.params.id);
+    const check = await hasFutureUntreatedReservations({ supabaseAdmin, tenantId: req.tenantId, espaceId: req.params.id });
+    if (check.blocked) {
+      return res.status(409).json({
+        error: `Impossible d'archiver "${existing.nom}" : ${check.count} réservation(s) future(s) non traitée(s) y sont liées.`,
+        future_count: check.count,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    let { error } = await supabaseAdmin
+      .from('espaces')
+      .update({ archived_at: nowIso, archived_by: req.user?.id || null, actif: false, statut: 'inactif' })
+      .eq('id', req.params.id);
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ error } = await supabaseAdmin.from('espaces').update({ actif: false, statut: 'inactif' }).eq('id', req.params.id));
+    }
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ message: `Espace "${existing.nom}" supprimé.` });
+
+    const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+    const curSettings = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+    const archIds = Array.from(new Set([...(Array.isArray(curSettings.archived_espaces) ? curSettings.archived_espaces : []), req.params.id]));
+    await supabaseAdmin.from('tenants').update({ settings: { ...curSettings, archived_espaces: archIds } }).eq('id', req.tenantId);
+
+    await logActivity({
+      supabaseAdmin,
+      tenantId: req.tenantId,
+      user: req.user,
+      action: 'archivage',
+      entiteType: 'espace',
+      entiteId: req.params.id,
+      details: `Archivage de l'espace "${existing.nom}"`,
+    });
+
+    res.json({ message: `Espace "${existing.nom}" archivé.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

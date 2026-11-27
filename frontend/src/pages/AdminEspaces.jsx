@@ -6,7 +6,10 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import FloorPlanEditor from '../components/floorplan/FloorPlanEditor';
-import { formatDT } from '../utils/format';
+import AdminPricing from './AdminPricing';
+import { formatDT, formatDateTimeDMY } from '../utils/format';
+import Money from '../components/common/Money';
+import { DEFAULT_TVA_PCT, computeTTC } from '../utils/pricingMath';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -77,14 +80,34 @@ const EMPTY_FORM = {
 
 const inputCls = 'w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/30 bg-white text-sm text-primary outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15 transition-all placeholder:text-on-surface-variant/50';
 
+const HUB_TABS = [
+  { id: 'espaces', label: 'Espaces', icon: 'meeting_room' },
+  { id: 'plan', label: 'Plan 2D', icon: 'map' },
+  { id: 'ressources', label: 'Ressources', icon: 'inventory_2' },
+  { id: 'services', label: 'Services', icon: 'room_service' },
+  { id: 'domiciliation', label: 'Domiciliation', icon: 'corporate_fare' },
+  { id: 'tarifs', label: 'Tarifs et formules', icon: 'sell' },
+  { id: 'promos', label: 'Codes promo', icon: 'confirmation_number' },
+  { id: 'incidents', label: 'Maintenance et incidents', icon: 'build' },
+];
+
 export default function AdminEspaces({ session }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') === 'plan' ? 'plan' : 'list';
+  const rawTab = searchParams.get('tab') || 'espaces';
+  const activeTab = HUB_TABS.some((t) => t.id === rawTab) ? rawTab : (rawTab === 'list' ? 'espaces' : 'espaces');
   const { userId, email, metadata } = useSessionUser(session);
   const [profile, setProfile] = useState(() =>
     userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null
   );
   const [espaces, setEspaces] = useState([]);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [ressources, setRessources] = useState([]);
+  const [services, setServices] = useState([]);
+  const [incidents, setIncidents] = useState([]);
+  const [domForm, setDomForm] = useState({ actif: false, tarif_mensuel: 0, tarif_annuel: 0, description: '' });
+  const [resForm, setResForm] = useState({ nom: '', categorie: 'equipement', quantite: 1 });
+  const [svcForm, setSvcForm] = useState({ nom: '', prix_ht: '', tva_pct: DEFAULT_TVA_PCT, unite: 'unité' });
+  const [incForm, setIncForm] = useState({ titre: '', espace_id: '', priorite: 'normale', description: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -101,13 +124,31 @@ export default function AdminEspaces({ session }) {
 
   useEffect(() => {
     if (userId) loadData();
-  }, [userId]);
+  }, [userId, includeArchived]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const res = await tenantAdminApi.getEspaces();
+      const archParam = includeArchived ? { include_archived: 'true' } : {};
+      const [res, tRes, resList, svcList, incList] = await Promise.all([
+        tenantAdminApi.getEspaces(archParam),
+        tenantAdminApi.getTenant().catch(() => null),
+        tenantAdminApi.getRessources(archParam).catch(() => ({ items: [] })),
+        tenantAdminApi.getServices(archParam).catch(() => ({ items: [] })),
+        tenantAdminApi.getIncidents(archParam).catch(() => ({ items: [] })),
+      ]);
       setEspaces(res.espaces || []);
+      setRessources(resList.items || []);
+      setServices(svcList.items || []);
+      setIncidents(incList.items || []);
+      if (tRes?.tenant?.settings?.domiciliation) {
+        setDomForm({
+          actif: Boolean(tRes.tenant.settings.domiciliation.actif),
+          tarif_mensuel: Number(tRes.tenant.settings.domiciliation.tarif_mensuel || 0),
+          tarif_annuel: Number(tRes.tenant.settings.domiciliation.tarif_annuel || 0),
+          description: tRes.tenant.settings.domiciliation.description || '',
+        });
+      }
     } catch (e) { showError(e.message); }
     finally { setLoading(false); }
   };
@@ -137,9 +178,6 @@ export default function AdminEspaces({ session }) {
         description: form.description ? form.description.trim() : '',
         statut: form.statut || 'actif',
         horaires: form.horaires ? form.horaires.trim() : '08:00 - 20:00',
-        tarif_horaire: parseFloat(form.tarif_horaire) || 0,
-        tarif_journalier: parseFloat(form.tarif_journalier) || 0,
-        tarif_mensuel: parseFloat(form.tarif_mensuel) || 0,
         equipements: Array.isArray(form.equipements) ? form.equipements : [],
         photo_url: form.photo_url || '',
       };
@@ -178,11 +216,19 @@ export default function AdminEspaces({ session }) {
   };
 
   const handleDelete = async (espace) => {
-    if (!confirm(`Supprimer l'espace "${espace.nom}" ? Cette action supprimera aussi toutes les données associées.`)) return;
+    if (!window.confirm(`Archiver l'espace "${espace.nom}" ? Il restera conservé dans l'historique.`)) return;
     try {
-      await tenantAdminApi.deleteEspace(espace.id);
-      setEspaces(prev => prev.filter(item => item.id !== espace.id));
-      showToast(`Espace "${espace.nom}" supprimé.`);
+      await tenantAdminApi.archiveEspace(espace.id);
+      showToast(`Espace "${espace.nom}" archivé.`);
+      await loadData();
+    } catch (e) { showError(e.message); }
+  };
+
+  const handleRestoreEspace = async (espace) => {
+    try {
+      await tenantAdminApi.restoreEspace(espace.id);
+      showToast(`Espace "${espace.nom}" restauré.`);
+      await loadData();
     } catch (e) { showError(e.message); }
   };
 
@@ -218,41 +264,24 @@ export default function AdminEspaces({ session }) {
 
       <div className="max-w-7xl mx-auto">
 
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
-          <div>
-            <h1 className="font-sora font-bold text-[#100f0d] text-2xl sm:text-3xl">Mes Espaces</h1>
-            <p className="text-on-surface-variant text-sm mt-1">Gérez les espaces de votre coworking · {espaces.length} espace{espaces.length > 1 ? 's' : ''}</p>
+        {/* Header Hub Espaces et offres */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+          <div className="text-left">
+            <h1 className="font-sora font-bold text-[#100f0d] text-2xl sm:text-3xl">Espaces et offres</h1>
+            <p className="text-on-surface-variant text-sm mt-1">
+              Espaces, plan 2D, ressources, services additionnels, domiciliation, tarifs HT/TTC, codes promo et maintenance.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="inline-flex rounded-2xl border border-outline-variant/25 bg-white p-1 shadow-xs">
-              <button
-                type="button"
-                onClick={() => setSearchParams({})}
-                style={activeTab === 'list' ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'list' ? 'shadow-xs' : 'text-on-surface-variant hover:text-[#100f0d]'
-                }`}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>view_list</span>
-                Liste des espaces
-              </button>
-              <button
-                type="button"
-                onClick={() => setSearchParams({ tab: 'plan' })}
-                style={activeTab === 'plan' ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'plan' ? 'shadow-xs' : 'text-on-surface-variant hover:text-[#100f0d]'
-                }`}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>map</span>
-                Plan interactif
-              </button>
-            </div>
-            {activeTab === 'list' && (
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-outline-variant/25 bg-white text-xs font-semibold cursor-pointer">
+              <input type="checkbox" checked={includeArchived} onChange={(e) => setIncludeArchived(e.target.checked)} className="accent-[#f95d00]" />
+              Afficher les archivés
+            </label>
+            {activeTab === 'espaces' && (
               <button
                 onClick={() => { setShowForm(v => !v); setEditId(null); setForm({ ...EMPTY_FORM }); }}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-secondary text-white rounded-2xl font-bold text-sm hover:bg-secondary/90 transition-all shadow-sm"
+                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl font-bold text-sm hover:opacity-95 transition-all shadow-sm"
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{showForm && !editId ? 'close' : 'add'}</span>
                 {showForm && !editId ? 'Annuler' : 'Nouvel espace'}
@@ -261,8 +290,240 @@ export default function AdminEspaces({ session }) {
           </div>
         </div>
 
+        {/* 7+ sous-onglets du Hub Espaces et offres */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          {HUB_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setSearchParams(t.id === 'espaces' ? {} : { tab: t.id })}
+              style={activeTab === t.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+                activeTab === t.id
+                  ? 'shadow-xs'
+                  : 'bg-white border border-outline-variant/20 text-on-surface-variant hover:text-[#100f0d]'
+              }`}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+
         {activeTab === 'plan' ? (
           <FloorPlanEditor espaces={espaces} showToast={showToast} showError={showError} />
+        ) : activeTab === 'tarifs' ? (
+          <AdminPricing session={session} embedded initialTab="espaces_tarifs" />
+        ) : activeTab === 'promos' ? (
+          <AdminPricing session={session} embedded initialTab="promo" />
+        ) : activeTab === 'domiciliation' ? (
+          <div className="bg-white rounded-3xl border border-outline-variant/20 p-6 max-w-2xl space-y-4">
+            <h2 className="font-sora font-bold text-lg text-primary">Offre de domiciliation d'entreprise</h2>
+            <label className="flex items-center gap-2.5 text-sm font-semibold cursor-pointer">
+              <input type="checkbox" checked={domForm.actif} onChange={(e) => setDomForm((f) => ({ ...f, actif: e.target.checked }))} className="w-4 h-4 accent-[#f95d00]" />
+              Proposer la domiciliation commerciale aux entreprises
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Tarif mensuel HT (DT)</label>
+                <input type="number" min="0" step="0.001" value={domForm.tarif_mensuel} onChange={(e) => setDomForm((f) => ({ ...f, tarif_mensuel: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Tarif annuel HT (DT)</label>
+                <input type="number" min="0" step="0.001" value={domForm.tarif_annuel} onChange={(e) => setDomForm((f) => ({ ...f, tarif_annuel: e.target.value }))} className={inputCls} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Services inclus (réception courrier, justificatif…)</label>
+              <textarea rows={3} value={domForm.description} onChange={(e) => setDomForm((f) => ({ ...f, description: e.target.value }))} className={inputCls} />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await tenantAdminApi.updateTenant({ domiciliation: domForm });
+                    showToast('Offre de domiciliation enregistrée.');
+                  } catch (err) { showError(err.message); }
+                }}
+                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold"
+              >
+                Enregistrer la domiciliation
+              </button>
+            </div>
+          </div>
+        ) : activeTab === 'ressources' ? (
+          <div className="space-y-4">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await tenantAdminApi.createRessource({ ...resForm, quantite: Number(resForm.quantite || 1) });
+                  setResForm({ nom: '', categorie: 'equipement', quantite: 1 });
+                  showToast('Ressource ajoutée.');
+                  await loadData();
+                } catch (err) { showError(err.message); }
+              }}
+              className="bg-white rounded-2xl p-4 border border-outline-variant/20 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+            >
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Nom de la ressource *</label>
+                <input required value={resForm.nom} onChange={(e) => setResForm((f) => ({ ...f, nom: e.target.value }))} placeholder="Ex : Vidéoprojecteur Epson" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Catégorie</label>
+                <input value={resForm.categorie} onChange={(e) => setResForm((f) => ({ ...f, categorie: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Quantité</label>
+                <input type="number" min="1" value={resForm.quantite} onChange={(e) => setResForm((f) => ({ ...f, quantite: e.target.value }))} className={inputCls} />
+              </div>
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="py-2.5 px-4 rounded-xl text-sm font-bold">Ajouter</button>
+            </form>
+            <div className="bg-white rounded-2xl border border-outline-variant/15 overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead><tr className="border-b text-xs uppercase text-on-surface-variant"><th className="py-3 px-4">Nom</th><th className="py-3 px-4">Catégorie</th><th className="py-3 px-4">Qté</th><th className="py-3 px-4 text-right">Actions</th></tr></thead>
+                <tbody className="divide-y">
+                  {ressources.length === 0 ? <tr><td colSpan={4} className="py-6 text-center text-on-surface-variant">Aucune ressource enregistrée.</td></tr> : ressources.map((r) => (
+                    <tr key={r.id} className={r.archived_at ? 'opacity-60' : ''}>
+                      <td className="py-3 px-4 font-semibold">{r.nom}</td>
+                      <td className="py-3 px-4">{r.categorie || '—'}</td>
+                      <td className="py-3 px-4">{r.quantite || 1}</td>
+                      <td className="py-3 px-4 text-right">
+                        {r.archived_at ? (
+                          <button type="button" onClick={async () => { await tenantAdminApi.restoreRessource(r.id); await loadData(); }} className="text-emerald-700 text-xs font-bold">Restaurer</button>
+                        ) : (
+                          <button type="button" onClick={async () => { if (window.confirm('Archiver cette ressource ?')) { await tenantAdminApi.archiveRessource(r.id); await loadData(); } }} className="text-on-surface-variant text-xs font-bold">Archiver</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : activeTab === 'services' ? (
+          <div className="space-y-4">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  const ht = Number(svcForm.prix_ht || 0);
+                  const tva = Number(svcForm.tva_pct ?? DEFAULT_TVA_PCT);
+                  await tenantAdminApi.createService({
+                    nom: svcForm.nom.trim(),
+                    prix_ht: ht,
+                    tva_pct: tva,
+                    prix_ttc: computeTTC(ht, tva),
+                    unite: svcForm.unite,
+                  });
+                  setSvcForm({ nom: '', prix_ht: '', tva_pct: DEFAULT_TVA_PCT, unite: 'unité' });
+                  showToast('Service additionnel créé.');
+                  await loadData();
+                } catch (err) { showError(err.message); }
+              }}
+              className="bg-white rounded-2xl p-4 border border-outline-variant/20 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end"
+            >
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Nom du service *</label>
+                <input required value={svcForm.nom} onChange={(e) => setSvcForm((f) => ({ ...f, nom: e.target.value }))} placeholder="Ex : Pause café / Imprimerie" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Prix HT (DT) *</label>
+                <input type="number" step="0.001" min="0" required value={svcForm.prix_ht} onChange={(e) => setSvcForm((f) => ({ ...f, prix_ht: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">TVA %</label>
+                <input type="number" step="0.5" min="0" value={svcForm.tva_pct} onChange={(e) => setSvcForm((f) => ({ ...f, tva_pct: e.target.value }))} className={inputCls} />
+              </div>
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="py-2.5 px-4 rounded-xl text-sm font-bold">Ajouter</button>
+            </form>
+            <div className="bg-white rounded-2xl border border-outline-variant/15 overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead><tr className="border-b text-xs uppercase text-on-surface-variant"><th className="py-3 px-4">Service</th><th className="py-3 px-4">Prix HT</th><th className="py-3 px-4">Prix TTC</th><th className="py-3 px-4 text-right">Actions</th></tr></thead>
+                <tbody className="divide-y">
+                  {services.length === 0 ? <tr><td colSpan={4} className="py-6 text-center text-on-surface-variant">Aucun service enregistré.</td></tr> : services.map((s) => (
+                    <tr key={s.id} className={s.archived_at ? 'opacity-60' : ''}>
+                      <td className="py-3 px-4 font-semibold">{s.nom}</td>
+                      <td className="py-3 px-4"><Money amount={s.prix_ht} showTaxType="HT" /></td>
+                      <td className="py-3 px-4 font-bold text-[#f95d00]"><Money amount={s.prix_ttc ?? computeTTC(s.prix_ht, s.tva_pct)} showTaxType="TTC" /></td>
+                      <td className="py-3 px-4 text-right">
+                        {s.archived_at ? (
+                          <button type="button" onClick={async () => { await tenantAdminApi.restoreService(s.id); await loadData(); }} className="text-emerald-700 text-xs font-bold">Restaurer</button>
+                        ) : (
+                          <button type="button" onClick={async () => { if (window.confirm('Archiver ce service ?')) { await tenantAdminApi.archiveService(s.id); await loadData(); } }} className="text-on-surface-variant text-xs font-bold">Archiver</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : activeTab === 'incidents' ? (
+          <div className="space-y-4">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await tenantAdminApi.createIncident({ ...incForm, statut: 'ouvert' });
+                  setIncForm({ titre: '', espace_id: '', priorite: 'normale', description: '' });
+                  showToast('Incident de maintenance enregistré.');
+                  await loadData();
+                } catch (err) { showError(err.message); }
+              }}
+              className="bg-white rounded-2xl p-4 border border-outline-variant/20 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+            >
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Titre incident *</label>
+                <input required value={incForm.titre} onChange={(e) => setIncForm((f) => ({ ...f, titre: e.target.value }))} placeholder="Ex : Climatisation en panne" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Espace concerné</label>
+                <select value={incForm.espace_id} onChange={(e) => setIncForm((f) => ({ ...f, espace_id: e.target.value }))} className={inputCls}>
+                  <option value="">Général</option>
+                  {espaces.map((es) => <option key={es.id} value={es.id}>{es.nom}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant mb-1">Priorité</label>
+                <select value={incForm.priorite} onChange={(e) => setIncForm((f) => ({ ...f, priorite: e.target.value }))} className={inputCls}>
+                  <option value="basse">Basse</option>
+                  <option value="normale">Normale</option>
+                  <option value="haute">Haute</option>
+                  <option value="critique">Critique</option>
+                </select>
+              </div>
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="py-2.5 px-4 rounded-xl text-sm font-bold">Déclarer</button>
+            </form>
+            <div className="bg-white rounded-2xl border border-outline-variant/15 overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead><tr className="border-b text-xs uppercase text-on-surface-variant"><th className="py-3 px-4">Incident</th><th className="py-3 px-4">Priorité</th><th className="py-3 px-4">Statut</th><th className="py-3 px-4 text-right">Actions</th></tr></thead>
+                <tbody className="divide-y">
+                  {incidents.length === 0 ? <tr><td colSpan={4} className="py-6 text-center text-on-surface-variant">Aucun incident signalé.</td></tr> : incidents.map((inc) => (
+                    <tr key={inc.id} className={inc.archived_at ? 'opacity-60' : ''}>
+                      <td className="py-3 px-4"><p className="font-semibold">{inc.titre}</p><p className="text-xs text-on-surface-variant">{formatDateTimeDMY(inc.created_at)}</p></td>
+                      <td className="py-3 px-4 capitalize font-semibold">{inc.priorite || 'normale'}</td>
+                      <td className="py-3 px-4 capitalize font-bold">{inc.archived_at ? 'Archivé' : (inc.statut || 'ouvert')}</td>
+                      <td className="py-3 px-4 text-right space-x-2">
+                        {inc.archived_at ? (
+                          <button type="button" onClick={async () => { await tenantAdminApi.restoreIncident(inc.id); await loadData(); }} className="text-emerald-700 text-xs font-bold">Restaurer</button>
+                        ) : (
+                          <>
+                            {inc.statut !== 'resolu' && (
+                              <button type="button" onClick={async () => { await tenantAdminApi.updateIncident(inc.id, { statut: 'resolu' }); await loadData(); }} className="text-emerald-700 text-xs font-bold">Marquer résolu</button>
+                            )}
+                            <button type="button" onClick={async () => { if (window.confirm('Archiver cet incident ?')) { await tenantAdminApi.archiveIncident(inc.id); await loadData(); } }} className="text-on-surface-variant text-xs font-bold">Archiver</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
         <>
 
@@ -332,38 +593,22 @@ export default function AdminEspaces({ session }) {
                 />
               </div>
 
-              {/* Tarifs (DT à 3 décimales) */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif horaire (DT HT)</label>
-                <input type="number" min="0" step="0.001" value={form.tarif_horaire}
-                  onChange={e => setForm(f => ({ ...f, tarif_horaire: e.target.value }))}
-                  placeholder="Ex : 15.000"
-                  className={inputCls} />
-                <p className="text-xs text-on-surface-variant mt-1">
-                  Format : {formatDT(form.tarif_horaire || 0)}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif journalier (DT HT)</label>
-                <input type="number" min="0" step="0.001" value={form.tarif_journalier}
-                  onChange={e => setForm(f => ({ ...f, tarif_journalier: e.target.value }))}
-                  placeholder="Ex : 75.000"
-                  className={inputCls} />
-                <p className="text-xs text-on-surface-variant mt-1">
-                  Format : {formatDT(form.tarif_journalier || 0)}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Tarif mensuel (DT HT)</label>
-                <input type="number" min="0" step="0.001" value={form.tarif_mensuel}
-                  onChange={e => setForm(f => ({ ...f, tarif_mensuel: e.target.value }))}
-                  placeholder="Ex : 450.000"
-                  className={inputCls} />
-                <p className="text-xs text-on-surface-variant mt-1">
-                  Format : {formatDT(form.tarif_mensuel || 0)}
-                </p>
+              {/* Tarification centralisée dans Tarifs et formules (LOT 2) */}
+              <div className="sm:col-span-2 lg:col-span-3 p-4 rounded-2xl border border-[#f95d00]/25 bg-orange-50/40 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase text-[#c2410c]">Tarifs HT / TTC centralisés</p>
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    Les tarifs horaire, journalier et mensuel de cet espace se configurent exclusivement dans l'onglet « Tarifs et formules ».
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchParams({ tab: 'tarifs' })}
+                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold shadow-2xs"
+                >
+                  Configurer les tarifs
+                </button>
               </div>
 
               {/* Équipements (Amenities) */}
@@ -590,21 +835,33 @@ export default function AdminEspaces({ session }) {
                       )}
 
                       <div className="flex items-center gap-2 pt-3 border-t border-outline-variant/10">
-                        <button
-                          onClick={() => handleEdit(espace)}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-secondary hover:bg-secondary/8 transition-colors"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
-                          Modifier
-                        </button>
-                        <div className="w-px h-5 bg-outline-variant/20" />
-                        <button
-                          onClick={() => handleDelete(espace)}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-colors"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                          Supprimer
-                        </button>
+                        {espace.archived_at ? (
+                          <button
+                            onClick={() => handleRestoreEspace(espace)}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>restore_from_trash</span>
+                            Restaurer
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleEdit(espace)}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-[#f95d00] hover:bg-orange-50 transition-colors"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                              Modifier
+                            </button>
+                            <div className="w-px h-5 bg-outline-variant/20" />
+                            <button
+                              onClick={() => handleDelete(espace)}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-on-surface-variant hover:bg-slate-100 transition-colors"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>archive</span>
+                              Archiver
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

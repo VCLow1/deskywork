@@ -16,6 +16,8 @@ export const paymentApi = {
     apiFetch('/api/montant-du', { method: 'POST', body: JSON.stringify(payload) }),
   collect: (id, payload) =>
     apiFetch(`/api/payments/${id}/collect`, { method: 'POST', body: JSON.stringify(payload) }),
+  refund: (id, payload) =>
+    apiFetch(`/api/payments/${id}/refund`, { method: 'POST', body: JSON.stringify(payload) }),
   getMemberPayments: (memberId) => apiFetch(`/api/payments/member/${memberId}`),
   create: (payload) =>
     apiFetch('/api/payments', { method: 'POST', body: JSON.stringify(payload) }),

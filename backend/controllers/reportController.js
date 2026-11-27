@@ -1,7 +1,4 @@
-// controllers/reportController.js — MODULE : Rapport intelligent (moteur analytique embarqué)
-// Génère un rapport dynamique basé sur les données réelles de la plateforme, selon une période sélectionnée.
-// Analyse : indicateurs, revenus, occupation, membres, réservations, paiements en retard, formations,
-// anomalies / points à surveiller et recommandations.
+// controllers/reportController.js — MODULE : Rapport intelligent & Analyses unifiées (LOT 2)
 const { supabaseAdmin } = require('../config/supabase');
 const {
   getPeriodWindow,
@@ -11,6 +8,39 @@ const {
   buildBuckets,
   inBucket,
 } = require('./kpisController');
+const { roundMillime } = require('../models/pricingMath');
+const {
+  isStaffRole,
+  isValidOfficialBooking,
+  computeNetCollectedCA,
+  parseOpeningHoursPerDay,
+  computeAvailableOpenHours,
+  computeOfficialActiveMembers,
+} = require('../models/kpisCalculator');
+
+async function fetchRefundedPayments(tid) {
+  let q = supabaseAdmin
+    .from('paiements')
+    .select('id, user_id, reservation_id, montant, montant_rembourse, refunded_at, date_paiement, updated_at, mode, reservations(espace_id, espaces(nom, type))')
+    .eq('statut', 'refunded');
+  if (tid) q = q.eq('tenant_id', tid);
+  const res = await q;
+  if (!res.error) return res.data || [];
+  let fb = supabaseAdmin
+    .from('paiements')
+    .select('id, user_id, reservation_id, montant, date_paiement, updated_at, mode, reservations(espace_id, espaces(nom, type))')
+    .eq('statut', 'refunded');
+  if (tid) fb = fb.eq('tenant_id', tid);
+  const fbRes = await fb;
+  return fbRes.data || [];
+}
+
+function inRefundRange(row, fromIso, toIso) {
+  const ts = row?.refunded_at || row?.updated_at || row?.date_paiement;
+  if (!ts) return false;
+  const t = new Date(ts).getTime();
+  return t >= new Date(fromIso).getTime() && t <= new Date(toIso).getTime();
+}
 
 // ─── Helpers de présentation ────────────────────────────────────────────────
 function round2(n) {
@@ -80,40 +110,60 @@ async function getAdminReport(req, res) {
     const label = periodLabel(win);
     const now = new Date();
 
-    // ── Espaces ──────────────────────────────────────────────────────────
-    let espQ = supabaseAdmin.from('espaces').select('id, nom, type');
-    if (tid) espQ = espQ.eq('tenant_id', tid);
-    const { data: espaces } = await espQ;
-    const espList = espaces || [];
+    // ── Tenant (module formations & archivage) ───────────────────────────
+    const tenantRes = tid
+      ? await supabaseAdmin.from('tenants').select('id, settings, activite').eq('id', tid).maybeSingle()
+      : { data: null };
+    const tenantRow = tenantRes?.data || null;
+    const moduleFormationsActif = tenantRow?.settings?.module_formations_actif === undefined
+      ? true
+      : Boolean(tenantRow.settings.module_formations_actif);
+    const archivedSpaceIds = new Set(Array.isArray(tenantRow?.settings?.archived_espaces) ? tenantRow.settings.archived_espaces : []);
 
-    // ── Réservations (période) ───────────────────────────────────────────
+    // ── Espaces ──────────────────────────────────────────────────────────
+    let espQ = supabaseAdmin.from('espaces').select('id, nom, type, horaires, statut');
+    if (tid) espQ = espQ.eq('tenant_id', tid);
+    const { data: espacesRaw } = await espQ;
+    const espList = (espacesRaw || []).filter((e) => !e.archived_at && !archivedSpaceIds.has(e.id));
+
+    // ── Réservations (période — exclut annulées/refusées/expirées) ────────
     let resQ = supabaseAdmin
       .from('reservations')
       .select('espace_id, date_debut, date_fin, statut')
-      .in('statut', ['confirmed', 'pending'])
       .gte('date_debut', win.from)
       .lte('date_debut', win.to);
     if (tid) resQ = resQ.eq('tenant_id', tid);
-    const { data: resPeriod } = await resQ;
+    const { data: resPeriodRaw } = await resQ;
+    const resPeriod = (resPeriodRaw || []).filter(isValidOfficialBooking);
 
-    const periodMs = Math.max(1, win.ms);
+    const periodDays = Math.max(1, Math.ceil(Math.max(1, win.ms) / 86400000));
+    let totalBookedHours = 0;
     const occBySpace = espList.map((e) => {
-      const rs = (resPeriod || []).filter((r) => r.espace_id === e.id);
-      const ms = rs.reduce((s, r) => s + Math.max(0, new Date(r.date_fin).getTime() - new Date(r.date_debut).getTime()), 0);
-      return { key: e.id, nom: e.nom, type: e.type, taux: ms > 0 ? Math.min(100, Math.round((ms / periodMs) * 100)) : 0, nb: rs.length };
+      const rs = resPeriod.filter((r) => r.espace_id === e.id);
+      const bookedHours = rs.reduce((s, r) => s + Math.max(0, (new Date(r.date_fin).getTime() - new Date(r.date_debut).getTime()) / 3600000), 0);
+      totalBookedHours += bookedHours;
+      const openHours = parseOpeningHoursPerDay(e.horaires) * periodDays;
+      return {
+        key: e.id,
+        nom: e.nom,
+        type: e.type,
+        taux: openHours > 0 ? Math.min(100, Math.round((bookedHours / openHours) * 100)) : 0,
+        nb: rs.length,
+      };
     });
-    const occMoyen = espList.length > 0 ? mean(occBySpace, (o) => o.taux) : 0;
+    const totalOpenHours = computeAvailableOpenHours(espList, win);
+    const occMoyen = totalOpenHours > 0 ? Math.min(100, Math.round((totalBookedHours / totalOpenHours) * 100)) : 0;
     const topOcc = maxBy(occBySpace, (o) => o.taux);
     const espacesVides = occBySpace.filter((o) => o.nb === 0);
     const espacesSatures = occBySpace.filter((o) => o.taux >= 95);
 
     const bookings = {
-      count: (resPeriod || []).length,
-      confirmed: (resPeriod || []).filter((r) => r.statut === 'confirmed').length,
-      pending: (resPeriod || []).filter((r) => r.statut === 'pending').length,
+      count: resPeriod.length,
+      confirmed: resPeriod.filter((r) => r.statut === 'confirmed').length,
+      pending: resPeriod.filter((r) => r.statut === 'pending').length,
     };
 
-    // ── CA (période + précédente) + série ────────────────────────────────
+    // ── CA net encaissé (paiements encaissés - remboursements période) ─────
     let paieQ = supabaseAdmin
       .from('paiements').select('montant, date_paiement')
       .eq('statut', 'paid')
@@ -128,37 +178,38 @@ async function getAdminReport(req, res) {
     if (tid) paiePQ = paiePQ.eq('tenant_id', tid);
     const { data: paiePrev } = await paiePQ;
 
-    const ca = round2(sumMt(paiePeriod));
-    const caPrev = round2(sumMt(paiePrev));
+    const refundedAll = await fetchRefundedPayments(tid);
+    const refundedCur = refundedAll.filter((r) => inRefundRange(r, win.from, win.to));
+    const refundedPrev = refundedAll.filter((r) => inRefundRange(r, prev.from, prev.to));
+
+    const ca = computeNetCollectedCA(paiePeriod, refundedCur);
+    const caPrev = computeNetCollectedCA(paiePrev, refundedPrev);
     const caEvo = pctChange(ca, caPrev);
     const transactions = (paiePeriod || []).length;
 
     const buckets = buildBuckets(win);
     const serieRevenus = buckets.map((b) => {
       const arr = (paiePeriod || []).filter((p) => p.date_paiement && inBucket(new Date(p.date_paiement), b));
-      return { label: b.label, ca: round2(arr.reduce((s, p) => s + parseFloat(p.montant || 0), 0)) };
+      const refArr = refundedCur.filter((r) => inRefundRange(r, b.start.toISOString(), b.end.toISOString()));
+      return { label: b.label, ca: computeNetCollectedCA(arr, refArr) };
     });
 
-    // ── Membres (actifs + nouveaux) ──────────────────────────────────────
-    let actQ = supabaseAdmin
-      .from('profiles').select('*', { count: 'exact', head: true })
-      .eq('role', 'member').eq('statut_compte', 'actif');
-    if (tid) actQ = actQ.eq('tenant_id', tid);
-    const { count: membresActifs } = await actQ;
+    // ── Membres actifs (abonnements actifs/à renouveler, hors staff) ─────
+    let profQ = supabaseAdmin.from('profiles').select('id, role, statut_compte, created_at');
+    if (tid) profQ = profQ.eq('tenant_id', tid);
+    let aboAllQ = supabaseAdmin.from('abonnements').select('id, user_id, statut, date_fin');
+    if (tid) aboAllQ = aboAllQ.eq('tenant_id', tid);
+    const [{ data: profilesAll }, { data: abonnementsAll }] = await Promise.all([profQ, aboAllQ]);
+    const nonStaffProfiles = (profilesAll || []).filter((p) => !isStaffRole(p.role) && !p.archived_at);
+    const membresActifs = computeOfficialActiveMembers({ abonnements: abonnementsAll || [], profiles: profilesAll || [] });
 
-    let nvQ = supabaseAdmin
-      .from('profiles').select('*', { count: 'exact', head: true })
-      .eq('role', 'member')
-      .gte('created_at', win.from).lte('created_at', win.to);
-    if (tid) nvQ = nvQ.eq('tenant_id', tid);
-    const { count: nouveauxMembres } = await nvQ;
-
-    let nvPQ = supabaseAdmin
-      .from('profiles').select('*', { count: 'exact', head: true })
-      .eq('role', 'member')
-      .gte('created_at', prev.from).lte('created_at', prev.to);
-    if (tid) nvPQ = nvPQ.eq('tenant_id', tid);
-    const { count: nouveauxMembresPrev } = await nvPQ;
+    const inCreatedRange = (p, fIso, tIso) => {
+      if (!p?.created_at) return false;
+      const t = new Date(p.created_at).getTime();
+      return t >= new Date(fIso).getTime() && t <= new Date(tIso).getTime();
+    };
+    const nouveauxMembres = nonStaffProfiles.filter((p) => inCreatedRange(p, win.from, win.to)).length;
+    const nouveauxMembresPrev = nonStaffProfiles.filter((p) => inCreatedRange(p, prev.from, prev.to)).length;
     const membresEvo = pctChange(nouveauxMembres, nouveauxMembresPrev);
 
     // ── Paiements en attente / en retard ─────────────────────────────────
@@ -313,6 +364,7 @@ async function getAdminReport(req, res) {
 
     res.json({
       type: 'admin',
+      module_formations_actif: moduleFormationsActif,
       periode: { key: win.period, from: win.from, to: win.to, label },
       generatedAt: now.toISOString(),
       verdict,
@@ -325,39 +377,41 @@ async function getAdminReport(req, res) {
         { label: 'Nouveaux membres', value: String(nouveauxMembres), evolution: evolutionText(nouveauxMembres, nouveauxMembresPrev) },
         { label: 'Réservations', value: String(bookings.count), evolution: `${bookings.confirmed} confirmée(s) · ${bookings.pending} en attente` },
         { label: 'Paiements en retard', value: String(paiementsEnRetard.retardCount), evolution: fmtDT(paiementsEnRetard.retardMontant) },
-        { label: 'Formations', value: String(formList.length), evolution: `${participants} participant(s) · ${fillFormations}% de remplissage` },
+        ...(moduleFormationsActif
+          ? [{ label: 'Formations', value: String(formList.length), evolution: `${participants} participant(s) · ${fillFormations}% de remplissage` }]
+          : []),
       ],
       sections: [
         {
-          key: 'revenus', titre: 'Évolution des revenus', icone: 'trending_up', accent: '#2fbe8f',
+          key: 'revenus', titre: 'Évolution des revenus', icone: 'trending_up', accent: '#16a34a',
           stats: {
-            stat1: { label: 'CA', value: fmtDT(ca) },
-            stat2: { label: 'Évolution', value: `${caEvo > 0 ? '+' : ''}${caEvo}%` },
+            stat1: { label: 'CA net', value: fmtDT(ca) },
+            stat2: { label: 'Évolution', value: caEvo === null ? (ca > 0 ? 'Nouveau' : '-') : `${caEvo > 0 ? '+' : ''}${caEvo}%` },
             stat3: { label: 'Transactions', value: String(transactions) },
           },
-          analyse: `CA de ${fmtDT(ca)} sur la période, contre ${fmtDT(caPrev)} la période précédente. Le panier moyen est de ${transactions > 0 ? fmtDT(round2(ca / transactions)) : '0 DT'} par transaction.`,
+          analyse: `CA net de ${fmtDT(ca)} sur la période, contre ${fmtDT(caPrev)} la période précédente. Le panier moyen est de ${transactions > 0 ? fmtDT(round2(ca / transactions)) : '0,000 DT'} par transaction.`,
           serie: serieRevenus,
         },
         {
-          key: 'occupation', titre: 'Taux d\u0027occupation', icone: 'domain', accent: '#0ea5e9',
+          key: 'occupation', titre: 'Taux d\u0027occupation', icone: 'domain', accent: '#f95d00',
           stats: {
             stat1: { label: 'Taux moyen', value: `${occMoyen}%` },
             stat2: { label: 'Espaces', value: String(espList.length) },
             stat3: { label: 'Meilleur espace', value: topOcc ? `${topOcc.nom} (${topOcc.taux}%)` : '—' },
           },
-          analyse: `Occupation moyenne de ${occMoyen}% sur la capacité disponible. ${espacesVides.length > 0 ? `${espacesVides.length} espace(s) sans réservation sur la période.` : 'L\'ensemble des espaces a été utilisé au moins une fois.'}${espacesSatures.length > 0 ? ` ${espacesSatures.length} espace(s) proche(s) de la saturation.` : ''}`,
+          analyse: `Occupation moyenne de ${occMoyen}% sur les heures ouvrées disponibles. ${espacesVides.length > 0 ? `${espacesVides.length} espace(s) sans réservation sur la période.` : 'L\'ensemble des espaces a été utilisé au moins une fois.'}${espacesSatures.length > 0 ? ` ${espacesSatures.length} espace(s) proche(s) de la saturation.` : ''}`,
         },
         {
           key: 'membres', titre: 'Évolution du nombre de membres', icone: 'group', accent: '#f95d00',
           stats: {
             stat1: { label: 'Nouveaux', value: String(nouveauxMembres) },
-            stat2: { label: 'Évolution', value: `${membresEvo > 0 ? '+' : ''}${membresEvo}%` },
+            stat2: { label: 'Évolution', value: membresEvo === null ? (nouveauxMembres > 0 ? 'Nouveau' : '-') : `${membresEvo > 0 ? '+' : ''}${membresEvo}%` },
             stat3: { label: 'Membres actifs', value: String(membresActifs) },
           },
-          analyse: `${nouveauxMembres} inscription(s) de membre sur la période (${nouveauxMembresPrev} la période précédente). ${membresActifs} membre(s) actif(s) au total aujourd'hui.`,
+          analyse: `${nouveauxMembres} inscription(s) sur la période (${nouveauxMembresPrev} la période précédente). ${membresActifs} détenteur(s) d'abonnement actif au total.`,
         },
         {
-          key: 'reservations', titre: 'Réservations', icone: 'event_available', accent: '#8b5cf6',
+          key: 'reservations', titre: 'Réservations', icone: 'event_available', accent: '#f95d00',
           stats: {
             stat1: { label: 'Réservations', value: String(bookings.count) },
             stat2: { label: 'Confirmées', value: String(bookings.confirmed) },
@@ -366,7 +420,7 @@ async function getAdminReport(req, res) {
           analyse: `${bookings.count} réservation(s) enregistrée(s) sur la période, dont ${bookings.confirmed} confirmée(s) et ${bookings.pending} en attente de validation.`,
         },
         {
-          key: 'paiements', titre: 'Paiements en retard', icone: 'pending_actions', accent: '#ba1a1a',
+          key: 'paiements', titre: 'Paiements en retard', icone: 'pending_actions', accent: '#dc2626',
           stats: {
             stat1: { label: 'En attente', value: String(paiementsEnRetard.count) },
             stat2: { label: 'En retard (>7j)', value: String(paiementsEnRetard.retardCount) },
@@ -374,18 +428,18 @@ async function getAdminReport(req, res) {
           },
           analyse: `${paiementsEnRetard.count} paiement(s) en attente pour ${fmtDT(paiementsEnRetard.montant)}. ${paiementsEnRetard.retardCount > 0 ? `Parmi eux, ${paiementsEnRetard.retardCount} dépasse(nt) le délai de 7 jours (${fmtDT(paiementsEnRetard.retardMontant)}).` : 'Aucun paiement ne dépasse le délai de 7 jours.'}`,
         },
-        {
-          key: 'formations', titre: 'Formations', icone: 'school', accent: '#8b5cf6',
+        ...(moduleFormationsActif ? [{
+          key: 'formations', titre: 'Formations', icone: 'school', accent: '#d97706',
           stats: {
             stat1: { label: 'Formations', value: String(formList.length) },
             stat2: { label: 'Participants', value: String(participants) },
             stat3: { label: 'Remplissage', value: `${fillFormations}%` },
           },
           analyse: `${formList.length} formation(s) programmée(s) sur la période pour ${participants} participant(s)${topFormation ? ` — meilleure affluence : "${topFormation.titre}" (${topFormation.nb_inscrits}/${topFormation.capacite_max})` : ''}. Revenu formation estimé : ${fmtDT(revenuFormations)}.`,
-        },
+        }] : []),
       ],
-      anomalies,
-      recommandations,
+      anomalies: moduleFormationsActif ? anomalies : anomalies.filter((a) => !['school', 'group_off'].includes(a.icone)),
+      recommandations: moduleFormationsActif ? recommandations : recommandations.filter((r) => r.categorie !== 'Formations'),
     });
   } catch (err) {
     console.error('Erreur rapport admin:', err);
@@ -688,7 +742,7 @@ async function getSuperAdminReport(req, res) {
 }
 
 // ===========================================================================
-//  CDC v3.0 — RAPPORTS DETAILLES FILTRABLES + EXPORT PDF
+//  RAPPORTS DÉTAILLÉS FILTRABLES + EXPORT PDF (LOT 2 FORMULES UNIFIÉES)
 // ===========================================================================
 async function buildDetailedReportData(req) {
   try {
@@ -712,20 +766,20 @@ async function buildDetailedReportData(req) {
       }
     }
 
-    let espQ = supabaseAdmin.from('espaces').select('id, nom, type, capacite, tarif_horaire').order('nom');
+    let espQ = supabaseAdmin.from('espaces').select('id, nom, type, capacite, tarif_horaire, horaires, statut').order('nom');
     if (tid) espQ = espQ.eq('tenant_id', tid);
 
     let tenantQ = tid
-      ? supabaseAdmin.from('tenants').select('id, nom, ville, email').eq('id', tid).maybeSingle()
+      ? supabaseAdmin.from('tenants').select('id, nom, ville, email, settings, activite').eq('id', tid).maybeSingle()
       : Promise.resolve({ data: null });
 
     let payPaidQ = supabaseAdmin
       .from('paiements')
-      .select('id, user_id, reservation_id, montant, mode, statut, numero_recu, date_paiement, created_at, reference_externe, profiles(nom, prenom, email), reservations(espace_id, espaces(nom, type))')
+      .select('id, user_id, reservation_id, montant, mode, statut, numero_recu, date_paiement, created_at, reference_externe, profiles(nom, prenom, email, role), reservations(espace_id, espaces(nom, type))')
       .eq('statut', 'paid')
-      .gte('created_at', win.from)
-      .lte('created_at', win.to)
-      .order('created_at', { ascending: false });
+      .gte('date_paiement', win.from)
+      .lte('date_paiement', win.to)
+      .order('date_paiement', { ascending: false });
     if (tid) payPaidQ = payPaidQ.eq('tenant_id', tid);
 
     let payPendingQ = supabaseAdmin
@@ -754,9 +808,11 @@ async function buildDetailedReportData(req) {
 
     let memQ = supabaseAdmin
       .from('profiles')
-      .select('id, nom, prenom, email, telephone, type_membre, statut_compte, created_at')
-      .in('role', ['member', 'guest']);
+      .select('id, nom, prenom, email, telephone, role, type_membre, statut_compte, created_at');
     if (tid) memQ = memQ.eq('tenant_id', tid);
+
+    let aboQ = supabaseAdmin.from('abonnements').select('id, user_id, statut, date_fin');
+    if (tid) aboQ = aboQ.eq('tenant_id', tid);
 
     let formQ = supabaseAdmin
       .from('formations')
@@ -768,63 +824,85 @@ async function buildDetailedReportData(req) {
       tenantRes,
       espRes,
       paidRes,
+      refundedAll,
       pendingRes,
       resRes,
       sessRes,
       memRes,
+      aboRes,
       formRes,
     ] = await Promise.all([
       Promise.resolve(tenantQ).catch(() => ({ data: null })),
       Promise.resolve(espQ).catch(() => ({ data: [] })),
       Promise.resolve(payPaidQ).catch(() => ({ data: [] })),
+      fetchRefundedPayments(tid).catch(() => []),
       Promise.resolve(payPendingQ).catch(() => ({ data: [] })),
       Promise.resolve(resQ).catch(() => ({ data: [] })),
       Promise.resolve(sessQ).catch(() => ({ data: [] })),
       Promise.resolve(memQ).catch(() => ({ data: [] })),
+      Promise.resolve(aboQ).catch(() => ({ data: [] })),
       Promise.resolve(formQ).catch(() => ({ data: [] })),
     ]);
 
     const tenant = tenantRes?.data || null;
-    const espaces = Array.isArray(espRes?.data) ? espRes.data : [];
+    const moduleFormationsActif = tenant?.settings?.module_formations_actif === undefined
+      ? true
+      : Boolean(tenant.settings.module_formations_actif);
+    const archivedSpaceIds = new Set(Array.isArray(tenant?.settings?.archived_espaces) ? tenant.settings.archived_espaces : []);
+    const espaces = (Array.isArray(espRes?.data) ? espRes.data : []).filter((e) => !e.archived_at && !archivedSpaceIds.has(e.id));
     const paidRows = Array.isArray(paidRes?.data) ? paidRes.data : [];
+    const refundedRows = (refundedAll || []).filter((r) => inRefundRange(r, win.from, win.to));
     const pendingRows = Array.isArray(pendingRes?.data) ? pendingRes.data : [];
     const resRows = Array.isArray(resRes?.data) ? resRes.data : [];
+    const validResRows = resRows.filter(isValidOfficialBooking);
     const sessRows = Array.isArray(sessRes?.data) ? sessRes.data : [];
-    const memRows = Array.isArray(memRes?.data) ? memRes.data : [];
-    const formRows = Array.isArray(formRes?.data) ? formRes.data : [];
+    const allProfiles = Array.isArray(memRes?.data) ? memRes.data : [];
+    const memRows = allProfiles.filter((m) => !isStaffRole(m.role) && !m.archived_at);
+    const aboRows = Array.isArray(aboRes?.data) ? aboRes.data : [];
+    const formRows = moduleFormationsActif && Array.isArray(formRes?.data) ? formRes.data : [];
 
     const filteredPaid = espaceId
       ? paidRows.filter((p) => p.reservations?.espace_id === espaceId)
       : paidRows;
+    const filteredRefunded = espaceId
+      ? refundedRows.filter((p) => p.reservations?.espace_id === espaceId)
+      : refundedRows;
 
     const filteredPending = espaceId
       ? pendingRows.filter((p) => p.reservations?.espace_id === espaceId)
       : pendingRows;
 
-    const totalCA = Number(filteredPaid.reduce((s, p) => s + parseFloat(p.montant || 0), 0).toFixed(3));
+    const totalCA = computeNetCollectedCA(filteredPaid, filteredRefunded);
+    const totalRefunds = roundMillime(filteredRefunded.reduce((s, r) => s + Number(r.montant_rembourse ?? r.montant ?? 0), 0));
     const caByMode = {};
     filteredPaid.forEach((p) => {
       const m = p.mode || 'cash';
-      caByMode[m] = Number(((caByMode[m] || 0) + parseFloat(p.montant || 0)).toFixed(3));
+      caByMode[m] = roundMillime((caByMode[m] || 0) + parseFloat(p.montant || 0));
     });
 
     const espList = espaceId ? espaces.filter((e) => e.id === espaceId) : espaces;
-    const periodHours = Math.max(1, win.ms / 3600000);
+    const periodDays = Math.max(1, Math.ceil(Math.max(1, win.ms) / 86400000));
+    let sumBookedHours = 0;
     const occupation = espList.map((e) => {
-      const rList = resRows.filter((r) => r.espace_id === e.id && r.statut !== 'cancelled');
+      const rList = validResRows.filter((r) => r.espace_id === e.id);
       const bookedHours = rList.reduce((sum, r) => sum + Math.max(0, (new Date(r.date_fin) - new Date(r.date_debut)) / 3600000), 0);
-      const caEsp = filteredPaid.filter((p) => p.reservations?.espace_id === e.id).reduce((s, p) => s + parseFloat(p.montant || 0), 0);
+      sumBookedHours += bookedHours;
+      const openHours = parseOpeningHoursPerDay(e.horaires) * periodDays;
+      const paidEsp = filteredPaid.filter((p) => p.reservations?.espace_id === e.id);
+      const refEsp = filteredRefunded.filter((p) => p.reservations?.espace_id === e.id);
+      const caEsp = computeNetCollectedCA(paidEsp, refEsp);
       return {
         id: e.id,
         nom: e.nom,
         type: e.type,
         reservations: rList.length,
         heures_reservees: Math.round(bookedHours * 10) / 10,
-        taux_occupation: Math.min(100, Math.round((bookedHours / periodHours) * 100)),
-        ca: Number(caEsp.toFixed(3)),
+        taux_occupation: openHours > 0 ? Math.min(100, Math.round((bookedHours / openHours) * 100)) : 0,
+        ca: caEsp,
       };
     });
-    const avgOccupation = occupation.length > 0 ? Math.round(occupation.reduce((s, o) => s + o.taux_occupation, 0) / occupation.length) : 0;
+    const totalOpenHours = computeAvailableOpenHours(espList, win);
+    const avgOccupation = totalOpenHours > 0 ? Math.min(100, Math.round((sumBookedHours / totalOpenHours) * 100)) : 0;
 
     const sessList = espaceId
       ? sessRows.filter((s) => s.reservations?.espace_id === espaceId)
@@ -834,8 +912,9 @@ async function buildDetailedReportData(req) {
 
     const membersList = memRows;
     const newMembers = membersList.filter((m) => new Date(m.created_at) >= new Date(win.from) && new Date(m.created_at) <= new Date(win.to));
+    const activeSubHolders = computeOfficialActiveMembers({ abonnements: aboRows, profiles: allProfiles });
 
-    const totalImpayes = Number(filteredPending.reduce((s, p) => s + parseFloat(p.montant || 0), 0).toFixed(3));
+    const totalImpayes = roundMillime(filteredPending.reduce((s, p) => s + parseFloat(p.montant || 0), 0));
 
     const formations = formRows.map((f) => {
       const inscr = (f.inscriptions_formations || []).filter((i) => i.statut !== 'annulee');
@@ -850,25 +929,32 @@ async function buildDetailedReportData(req) {
         payes: inscr.length,
         capacite: cap,
         taux_remplissage: cap > 0 ? Math.min(100, Math.round((inscr.length / cap) * 100)) : 0,
-        ca_estime: Number((inscr.length * parseFloat(f.prix || 0)).toFixed(3)),
+        ca_estime: roundMillime(inscr.length * parseFloat(f.prix || 0)),
       };
     });
 
     return {
       tenant: tenant || { nom: 'Établissement DeskyWork' },
+      module_formations_actif: moduleFormationsActif,
       periode: { key: win.period, from: win.from, to: win.to, label: periodLabel(win) },
       espace_id: espaceId,
       espaces,
       ca: {
         total: totalCA,
+        remboursements: totalRefunds,
         transactions: filteredPaid.length,
-        panier_moyen: filteredPaid.length > 0 ? Number((totalCA / filteredPaid.length).toFixed(3)) : 0,
+        panier_moyen: filteredPaid.length > 0 ? roundMillime(totalCA / filteredPaid.length) : 0,
         par_mode: caByMode,
         liste: filteredPaid,
       },
+      remboursements: {
+        total: totalRefunds,
+        count: filteredRefunded.length,
+        liste: filteredRefunded,
+      },
       occupation: {
         taux_moyen: avgOccupation,
-        total_reservations: resRows.length,
+        total_reservations: validResRows.length,
         par_espace: occupation,
       },
       presence: {
@@ -881,7 +967,8 @@ async function buildDetailedReportData(req) {
       },
       membres: {
         total: membersList.length,
-        actifs: membersList.filter((m) => m.statut_compte !== 'suspendu').length,
+        actifs: activeSubHolders,
+        comptes_actifs: membersList.filter((m) => m.statut_compte !== 'suspendu').length,
         entreprises: membersList.filter((m) => m.type_membre === 'entreprise').length,
         nouveaux_periode: newMembers.length,
         liste: membersList,

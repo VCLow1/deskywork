@@ -13,6 +13,8 @@ router.post('/subscriptions/self', authenticate, ctrl.subscribeSelf);
 // Routes administration
 router.post('/subscriptions', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createSubscription);
 router.patch('/subscriptions/:id', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.updateSubscription);
+router.post('/subscriptions/:id/archive', authenticate, requireRoles('super_admin', 'admin'), ctrl.archiveSubscription);
+router.post('/subscriptions/:id/restore', authenticate, requireRoles('super_admin', 'admin'), ctrl.restoreSubscription);
 router.get('/subscriptions', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.listSubscriptions);
 
 module.exports = router;

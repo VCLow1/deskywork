@@ -42,7 +42,7 @@ const resolvePackInfo = (pack) => {
   return { key: 'essentiel', name: 'Essentiel', price: '90,000' };
 };
 
-export default function AdminSubscription({ session }) {
+export default function AdminSubscription({ session, embedded = false }) {
   const { userId, email, metadata } = useSessionUser(session);
   const profile = useMemo(
     () => (userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null),
@@ -89,14 +89,16 @@ export default function AdminSubscription({ session }) {
   const activeRank = PACK_RANK[activePack?.key || 'essentiel'] || 1;
   const invoices = data?.invoices || [];
 
-  return (
-    <PortalLayout profile={profile}>
-      <div className="mb-6">
-        <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Mon Abonnement DeskyWork</h1>
-        <p className="text-sm text-on-surface-variant">
-          Suivez votre pack SaaS actif, vos jauges d'utilisation et vos factures DeskyWork.
-        </p>
-      </div>
+  const content = (
+    <div>
+      {!embedded && (
+        <div className="mb-6">
+          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Mon Abonnement DeskyWork</h1>
+          <p className="text-sm text-on-surface-variant">
+            Suivez votre pack SaaS actif, vos jauges d'utilisation et vos factures DeskyWork.
+          </p>
+        </div>
+      )}
 
       {error && <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
       {msg && <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">{msg}</div>}
@@ -257,6 +259,8 @@ export default function AdminSubscription({ session }) {
           </div>
         </div>
       )}
-    </PortalLayout>
+    </div>
   );
+
+  return embedded ? content : <PortalLayout profile={profile}>{content}</PortalLayout>;
 }

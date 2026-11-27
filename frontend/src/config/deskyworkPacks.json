@@ -1,0 +1,77 @@
+{
+  "default_tva_pct": 19,
+  "currency": "DT",
+  "packs": {
+    "essentiel": {
+      "key": "essentiel",
+      "rank": 1,
+      "name": "Essentiel",
+      "prix_ht": 90,
+      "tva_pct": 19,
+      "max_espaces": 10,
+      "max_membres": 100,
+      "max_staff": 1,
+      "features_flags": {
+        "marketplace_analytics": false,
+        "multi_sites": false,
+        "api_integrations": false,
+        "advanced_reports": false
+      },
+      "features": [
+        "Jusqu'à 10 espaces / ressources",
+        "Jusqu'à 100 membres actifs",
+        "1 compte Staff / Réceptionniste",
+        "Agenda, Check-in Code QR & Plan 2D",
+        "Paiements sur place & Reçus PDF",
+        "Support e-mail DeskyWork"
+      ]
+    },
+    "standard": {
+      "key": "standard",
+      "rank": 2,
+      "name": "Standard",
+      "prix_ht": 150,
+      "tva_pct": 19,
+      "max_espaces": 30,
+      "max_membres": 500,
+      "max_staff": 3,
+      "features_flags": {
+        "marketplace_analytics": false,
+        "multi_sites": false,
+        "api_integrations": false,
+        "advanced_reports": true
+      },
+      "features": [
+        "Tout Essentiel inclus",
+        "Jusqu'à 30 espaces / ressources",
+        "Jusqu'à 500 membres actifs",
+        "Jusqu'à 3 comptes Staff / Réceptionniste",
+        "Rapports avancés & exports Excel / PDF",
+        "Codes promo, abonnements membres & devis/factures"
+      ]
+    },
+    "premium": {
+      "key": "premium",
+      "rank": 3,
+      "name": "Premium",
+      "prix_ht": 220,
+      "tva_pct": 19,
+      "max_espaces": null,
+      "max_membres": null,
+      "max_staff": 10,
+      "features_flags": {
+        "marketplace_analytics": true,
+        "multi_sites": true,
+        "api_integrations": true,
+        "advanced_reports": true
+      },
+      "features": [
+        "Tout Standard inclus",
+        "Espaces & membres illimités",
+        "Jusqu'à 10 comptes Staff / Réceptionniste",
+        "Visibilité Marketplace (vues, clics, conversions)",
+        "Intégrations API, Webhooks & Mise en avant prioritaire"
+      ]
+    }
+  }
+}

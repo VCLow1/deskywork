@@ -6,7 +6,7 @@ import { tenantAdminApi } from '../services/api';
 import { supabase } from '../supabaseClient';
 import { formatDateTimeDMY } from '../utils/format';
 
-export default function AdminMarketplaceStats({ session }) {
+export default function AdminMarketplaceStats({ session, embedded = false }) {
   const { userId, email, metadata } = useSessionUser(session);
   const profile = userId
     ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata }
@@ -54,15 +54,16 @@ export default function AdminMarketplaceStats({ session }) {
   );
   const isLocked = !isPartner && Boolean(mpStats?.locked);
 
-  return (
-    <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+  const content = (
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">
-                Visibilité Marketplace
-              </h1>
+              {!embedded && (
+                <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">
+                  Visibilité Marketplace
+                </h1>
+              )}
               {isPartner ? (
                 <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/30">
                   <span className="material-symbols-outlined" style={{ fontSize: 15 }}>verified</span>
@@ -113,7 +114,7 @@ export default function AdminMarketplaceStats({ session }) {
             ))}
           </div>
         ) : isLocked ? (
-          <div className="bg-surface-container-lowest rounded-3xl p-6 sm:p-8 border border-outline-variant/15 shadow-xs space-y-5">
+          <div className="bg-surface-container-lowest rounded-3xl p-6 sm:p-8 border border-outline-variant/15 shadow-xs space-y-5 relative overflow-hidden">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-[#f95d00]/12 text-[#f95d00] flex items-center justify-center shrink-0">
@@ -125,34 +126,40 @@ export default function AdminMarketplaceStats({ session }) {
                   </h2>
                   <p className="text-sm text-on-surface-variant mt-1 max-w-2xl">
                     Votre pack actuel (<strong className="capitalize">{mpStats.current_pack || 'essentiel'}</strong>) inclut la présence sur la Marketplace DeskyWork.
-                    Passez au pack <strong>Premium (220 DT/mois)</strong> pour débloquer l'analyse complète d'audience et de conversion.
+                    Passez au pack <strong>Premium (220,000 DT/mois)</strong> pour débloquer l'analyse complète d'audience et de conversion.
                   </p>
                 </div>
               </div>
               <Link
-                to="/admin/subscription"
-                className="px-5 py-2.5 rounded-xl bg-[#f95d00] text-white text-sm font-bold hover:bg-[#e55500] transition-colors shrink-0"
+                to="/admin/settings?tab=abonnement"
+                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold hover:opacity-95 transition shrink-0"
               >
-                Débloquer avec Premium
+                Passer au pack Premium
               </Link>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
-              {[
-                { icon: 'visibility', title: 'Vues de la fiche', desc: 'Nombre de visiteurs ayant consulté votre établissement' },
-                { icon: 'ads_click', title: 'Clics réservation', desc: 'Intentions de réservation enregistrées depuis la fiche' },
-                { icon: 'event_available', title: 'Réservations (30j)', desc: 'Volume de réservations générées via la Marketplace' },
-                { icon: 'trending_up', title: 'Taux de conversion', desc: 'Performance globale vues → réservations confirmées' },
-              ].map((feat) => (
-                <div key={feat.title} className="p-4 rounded-2xl bg-surface-container-low/60 border border-outline-variant/10 opacity-75">
-                  <div className="flex items-center gap-2 text-on-surface-variant mb-1.5">
-                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{feat.icon}</span>
-                    <span className="text-xs font-bold uppercase tracking-wider">{feat.title}</span>
+            {/* Aperçu flouté LOT 2 */}
+            <div className="relative rounded-2xl border border-outline-variant/15 p-4 bg-surface-container-low/40 select-none">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 blur-[6px] pointer-events-none opacity-80">
+                {[
+                  { icon: 'visibility', title: 'Vues de la fiche', val: '1 428' },
+                  { icon: 'ads_click', title: 'Clics réservation', val: '312' },
+                  { icon: 'event_available', title: 'Réservations (30j)', val: '49' },
+                  { icon: 'trending_up', title: 'Taux de conversion', val: '3,4 %' },
+                ].map((feat) => (
+                  <div key={feat.title} className="p-4 rounded-2xl bg-white border border-outline-variant/15">
+                    <div className="flex items-center gap-2 text-on-surface-variant mb-1.5">
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{feat.icon}</span>
+                      <span className="text-xs font-bold uppercase tracking-wider">{feat.title}</span>
+                    </div>
+                    <p className="font-sora font-bold text-2xl text-primary">{feat.val}</p>
                   </div>
-                  <p className="font-sora font-bold text-xl text-on-surface-variant/60">—</p>
-                  <p className="text-xs text-on-surface-variant mt-1">{feat.desc}</p>
-                </div>
-              ))}
+                ))}
+              </div>
+              <div className="mt-3 text-center text-xs font-semibold text-on-surface-variant">
+                Aperçu verrouillé — Activez le pack Premium pour consulter vos statistiques en direct.
+              </div>
             </div>
           </div>
         ) : (
@@ -248,8 +255,9 @@ export default function AdminMarketplaceStats({ session }) {
                   </li>
                 </ul>
                 <Link
-                  to="/admin/profile-coworking"
-                  className="inline-flex items-center gap-1.5 mt-2 px-4 py-2 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500]"
+                  to="/admin/settings?tab=etablissement"
+                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                  className="inline-flex items-center gap-1.5 mt-2 px-4 py-2 rounded-xl text-xs font-bold hover:opacity-95"
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>tune</span>
                   Compléter mon profil & galerie
@@ -259,6 +267,11 @@ export default function AdminMarketplaceStats({ session }) {
           </>
         )}
       </div>
+  );
+
+  return embedded ? content : (
+    <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+      {content}
     </PortalLayout>
   );
 }

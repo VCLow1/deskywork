@@ -24,6 +24,7 @@ router.get('/montant-du/me', authenticate, ctrl.getMontantDu);
 router.get('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getMontantDu);
 router.post('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createMontantDu);
 router.post('/payments/:id/collect', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.collectPayment);
+router.post('/payments/:id/refund', authenticate, requireRoles('super_admin', 'admin'), ctrl.refundPayment);
 
 // Routes paiement administration (Super Admin, Admin, Staff)
 router.post('/payments', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createPayment);

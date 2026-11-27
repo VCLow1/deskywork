@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { formationApi, bookingApi } from '../services/api';
+import { formationApi, bookingApi, tenantAdminApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import { formatDateDMY, formatTime24h } from '../utils/format';
@@ -134,13 +135,23 @@ function Dialog({ open, onClose, title, children, footer, maxWidth = 'max-w-xl' 
    MAIN COMPONENT
 ═══════════════════════════════════════════════════════════════════════════ */
 export default function AdminFormations({ session }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialUrlTab = (() => {
+    const t = searchParams.get('tab');
+    if (t === 'inscrits') return 'inscrits';
+    if (t === 'formateurs') return 'formateurs';
+    if (t === 'versements') return 'remunerations';
+    return 'formations';
+  })();
   /* ─── State ─── */
   const [profile, setProfile] = useState(null);
+  const [moduleActif, setModuleActif] = useState(true);
   const [formations, setFormations] = useState([]);
   const [formateurs, setFormateurs] = useState([]);
   const [salles, setSalles] = useState([]);
   const [remunerations, setRemunerations] = useState([]);
-  const [activeTab, setActiveTab] = useState('formations');
+  const [inscritsAll, setInscritsAll] = useState([]);
+  const [activeTab, setActiveTab] = useState(initialUrlTab);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -193,20 +204,30 @@ export default function AdminFormations({ session }) {
   const refreshData = async () => {
     try {
       setError('');
-      const [fList, tList, sList, rList] = await Promise.all([
+      const [fList, tList, sList, rList, tRes, insRes] = await Promise.all([
         formationApi.getAll(),
         formationApi.getFormateurs(),
         bookingApi.getEspaces(),
         supabase.from('remuneration_formateurs')
           .select('*, profiles!formateur_id(nom, prenom), formations(titre)')
           .order('created_at', { ascending: false }),
+        tenantAdminApi.getTenant().catch(() => null),
+        supabase.from('inscriptions_formations')
+          .select('id, formation_id, statut, statut_paiement, created_at, profiles:user_id(nom, prenom, email, telephone), formations(titre, date_debut)')
+          .order('created_at', { ascending: false }),
       ]);
+      if (tRes?.tenant?.settings?.module_formations_actif === false) {
+        setModuleActif(false);
+      } else {
+        setModuleActif(true);
+      }
       setFormations(fList.formations || []);
       setFormateurs(tList.formateurs || []);
       setSalles((sList.espaces || []).filter(e =>
         ['training_room', 'meeting_room', 'event_space', 'salle', 'open_space'].includes(e.type)
       ));
       setRemunerations(rList.data || []);
+      setInscritsAll(insRes?.data || []);
     } catch (e) { setError('Erreur chargement : ' + e.message); }
     finally { setLoading(false); }
   };
@@ -437,6 +458,30 @@ export default function AdminFormations({ session }) {
     </div>
   );
 
+  if (!moduleActif) {
+    return (
+      <PortalLayout profile={profile} onLogout={() => supabase.auth.signOut()}>
+        <div className="bg-surface-container-lowest rounded-3xl p-8 border border-outline-variant/20 max-w-2xl mx-auto text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-orange-50 text-[#f95d00] flex items-center justify-center mx-auto">
+            <span className="material-symbols-outlined" style={{ fontSize: 30 }}>school</span>
+          </div>
+          <h1 className="font-sora font-bold text-2xl text-primary">Module Formations désactivé</h1>
+          <p className="text-sm text-on-surface-variant">
+            Ce module est actuellement désactivé pour votre établissement. Réactivez-le à tout moment dans les paramètres de l'établissement.
+          </p>
+          <Link
+            to="/admin/settings?tab=etablissement"
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-xs"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>settings</span>
+            Activer dans Paramètres
+          </Link>
+        </div>
+      </PortalLayout>
+    );
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════
      RENDER
   ═══════════════════════════════════════════════════════════════════════ */
@@ -491,16 +536,20 @@ export default function AdminFormations({ session }) {
           ))}
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex gap-1 mb-6 bg-surface-container-low rounded-2xl p-1.5 w-full sm:w-fit">
+        {/* ── Tabs Hub Formations : Sessions | Inscrits | Formateurs | Versements ── */}
+        <div className="flex flex-wrap gap-1 mb-6 bg-surface-container-low rounded-2xl p-1.5 w-full sm:w-fit">
           {[
-            { key: 'formations', label: 'Formations', count: formations.length, icon: 'event_note' },
-            { key: 'formateurs', label: 'Formateurs', count: formateurs.length, icon: 'person' },
-            { key: 'remunerations', label: 'Rémunérations', count: remunerations.length, icon: 'payments' },
-          ].map(({ key, label, count, icon }) => (
+            { key: 'formations', urlKey: 'sessions', label: 'Sessions', count: formations.length, icon: 'event_note' },
+            { key: 'inscrits', urlKey: 'inscrits', label: 'Inscrits', count: inscritsAll.length || totalInscrits, icon: 'how_to_reg' },
+            { key: 'formateurs', urlKey: 'formateurs', label: 'Formateurs', count: formateurs.length, icon: 'person' },
+            { key: 'remunerations', urlKey: 'versements', label: 'Versements', count: remunerations.length, icon: 'payments' },
+          ].map(({ key, urlKey, label, count, icon }) => (
             <button
               key={key}
-              onClick={() => setActiveTab(key)}
+              onClick={() => {
+                setActiveTab(key);
+                setSearchParams(key === 'formations' ? {} : { tab: urlKey });
+              }}
               style={activeTab === key ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all ${activeTab === key
                 ? 'shadow-sm'
@@ -816,6 +865,53 @@ export default function AdminFormations({ session }) {
                 />
               </>
             )}
+          </div>
+        )}
+
+        {/* ════════════════════════════ TAB: INSCRITS ════════════════════════════ */}
+        {activeTab === 'inscrits' && (
+          <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 overflow-x-auto shadow-sm">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-outline-variant/15 text-xs uppercase text-on-surface-variant bg-surface-container-low/50">
+                  <th className="py-3 px-4">Apprenant</th>
+                  <th className="py-3 px-4">Formation</th>
+                  <th className="py-3 px-4">Date session</th>
+                  <th className="py-3 px-4">Statut inscription</th>
+                  <th className="py-3 px-4">Paiement</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {inscritsAll.length === 0 ? (
+                  <tr><td colSpan={5} className="py-10 text-center text-on-surface-variant">Aucun apprenant inscrit pour le moment.</td></tr>
+                ) : inscritsAll.map((ins) => (
+                  <tr key={ins.id}>
+                    <td className="py-3 px-4">
+                      <p className="font-semibold text-primary">
+                        {ins.profiles ? `${ins.profiles.prenom || ''} ${ins.profiles.nom || ''}`.trim() : 'Apprenant'}
+                      </p>
+                      <p className="text-xs text-on-surface-variant">{ins.profiles?.email || '—'}</p>
+                    </td>
+                    <td className="py-3 px-4 font-semibold">{ins.formations?.titre || '—'}</td>
+                    <td className="py-3 px-4 text-xs text-on-surface-variant">
+                      {ins.formations?.date_debut ? formatDateDMY(ins.formations.date_debut) : '—'}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 capitalize">
+                        {ins.statut || 'confirmee'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold capitalize ${
+                        ins.statut_paiement === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {ins.statut_paiement === 'paye' ? 'Payé' : 'En attente'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
