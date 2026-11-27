@@ -1,22 +1,87 @@
-// controllers/subscriptionsController.js — MODULE A : Abonnements
+// controllers/subscriptionsController.js — MODULE A : Abonnements & Demandes en attente de paiement
 const { supabaseAdmin } = require('../config/supabase');
 const { SUBSCRIPTION_DURATIONS, MEMBER_TYPE_TO_PLAN } = require('../config/constants');
-const { todayISO, addDays, findActiveTarif, findValidPromoCode, applyPromoDiscount } = require('../models/helpers');
+const { todayISO, addDays, findActiveTarif, findValidPromoCode, applyPromoDiscount, insertWithColumnFallback } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
+const { DEFAULT_TVA_PCT, roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
+const { allocateDocumentNumber } = require('../models/numbering');
+const { logActivity } = require('../models/activityLogger');
+
+async function loadSubscriptionMetaForTenants(tenantIds = []) {
+  const uniqueIds = Array.from(new Set(tenantIds.filter(Boolean)));
+  const subMetaMap = {};
+  const archSet = new Set();
+  if (uniqueIds.length === 0) return { subMetaMap, archSet };
+  try {
+    const { data: rows } = await supabaseAdmin.from('tenants').select('id, settings').in('id', uniqueIds);
+    for (const r of rows || []) {
+      const s = r?.settings && typeof r.settings === 'object' ? r.settings : {};
+      if (s.subscription_meta && typeof s.subscription_meta === 'object') {
+        Object.assign(subMetaMap, s.subscription_meta);
+      }
+      if (Array.isArray(s.archived_subscriptions)) {
+        for (const id of s.archived_subscriptions) archSet.add(id);
+      }
+    }
+  } catch (_) {}
+  return { subMetaMap, archSet };
+}
+
+function enrichSubscriptionRow(a, subMetaMap = {}, unitesMap = new Map(), archSet = new Set()) {
+  const meta = subMetaMap[a.id] || {};
+  const uniteId = a.unite_id || meta.unite_id || null;
+  const quotaType = a.quota_type || meta.quota_type || 'illimite';
+  const quotaTotal = a.quota_total != null ? Number(a.quota_total) : (meta.quota_total != null ? Number(meta.quota_total) : null);
+  const quotaConsomme = Number(a.quota_consomme ?? meta.quota_consomme ?? 0) || 0;
+  const quotaRestant = quotaTotal != null ? Math.max(0, Math.round((quotaTotal - quotaConsomme) * 100) / 100) : null;
+  const quotaPct = quotaTotal && quotaTotal > 0 ? Math.min(100, Math.round((quotaConsomme / quotaTotal) * 100)) : 0;
+  const unite = uniteId ? unitesMap.get(uniteId) || null : null;
+  const effectiveStatut = meta.logical_status && a.statut === 'suspended' ? meta.logical_status : a.statut;
+
+  return {
+    ...a,
+    statut: effectiveStatut,
+    pending_payment: effectiveStatut === 'en_attente_paiement' || Boolean(meta.pending_payment),
+    paiement_id: a.paiement_id || meta.paiement_id || null,
+    montant_ht: a.montant_ht != null ? roundMillime(a.montant_ht) : (meta.montant_ht != null ? roundMillime(meta.montant_ht) : null),
+    montant_ttc: a.montant_ttc != null ? roundMillime(a.montant_ttc) : (meta.montant_ttc != null ? roundMillime(meta.montant_ttc) : null),
+    tva_pct: a.tva_pct ?? meta.tva_pct ?? DEFAULT_TVA_PCT,
+    code_promo: a.code_promo || meta.code_promo || null,
+    is_renewal: Boolean(meta.is_renewal),
+    renew_from_subscription_id: meta.renew_from_subscription_id || null,
+    motif_refus: a.motif_refus || meta.motif_refus || null,
+    motif_resiliation: a.motif_resiliation || meta.motif_resiliation || null,
+    unite_id: uniteId,
+    unite,
+    quota_type: quotaType,
+    quota_total: quotaTotal,
+    quota_consomme: quotaConsomme,
+    quota_restant: quotaRestant,
+    quota_pct: quotaPct,
+    motif_suspension: a.motif_suspension || meta.motif_suspension || null,
+    archived_at: a.archived_at || (archSet.has(a.id) ? (a.updated_at || a.created_at) : null),
+  };
+}
 
 async function getMySubscriptions(req, res) {
   try {
-    const { data, error } = await req.db
+    const { data, error } = await supabaseAdmin
       .from('abonnements')
       .select('*')
       .eq('user_id', req.user.id)
-      .order('date_debut', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (error) {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ subscriptions: data });
+    const tenantIds = (data || []).map((s) => s.tenant_id || req.tenantId).filter(Boolean);
+    const { subMetaMap, archSet } = await loadSubscriptionMetaForTenants(tenantIds);
+    const enriched = (data || [])
+      .map((row) => enrichSubscriptionRow(row, subMetaMap, new Map(), archSet))
+      .filter((row) => !row.archived_at);
+
+    res.json({ subscriptions: enriched });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -26,22 +91,27 @@ async function getMyActiveSubscription(req, res) {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await req.db
+    const { data, error } = await supabaseAdmin
       .from('abonnements')
       .select('*')
       .eq('user_id', req.user.id)
-      .eq('statut', 'active')
+      .in('statut', ['active', 'actif', 'a_renouveler'])
       .lte('date_debut', today)
       .gte('date_fin', today)
       .order('date_fin', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(5);
 
     if (error) {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ subscription: data });
+    const rows = data || [];
+    const { subMetaMap, archSet } = await loadSubscriptionMetaForTenants(rows.map((r) => r.tenant_id || req.tenantId));
+    const enriched = rows
+      .map((r) => enrichSubscriptionRow(r, subMetaMap, new Map(), archSet))
+      .filter((r) => !r.archived_at && ['active', 'actif', 'a_renouveler'].includes(r.statut));
+
+    res.json({ subscription: enriched[0] || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -111,7 +181,6 @@ async function createSubscription(req, res) {
       console.warn('Tarification non disponible:', pricingErr.message);
     }
 
-    const { insertWithColumnFallback } = require('../models/helpers');
     const normalizedQuotaType = ['heures', 'jours', 'illimite'].includes(quota_type) ? quota_type : 'illimite';
     const numericQuotaTotal = normalizedQuotaType === 'illimite' || quota_total == null || quota_total === ''
       ? null
@@ -132,7 +201,7 @@ async function createSubscription(req, res) {
       quota_consomme: 0,
     };
 
-    const { data, error } = await insertWithColumnFallback('abonnements', baseInsert);
+    const { data, error } = await insertWithColumnFallback(supabaseAdmin, 'abonnements', baseInsert);
 
     if (error) {
       return res.status(400).json({ error: error.message });
@@ -217,8 +286,8 @@ async function createSubscription(req, res) {
 
 async function subscribeSelf(req, res) {
   try {
-    const { type, code_promo, renouvellement_auto } = req.body;
-    const type_espace = req.body.type_espace || null;
+    const { type, code_promo, renouvellement_auto, is_renewal = false } = req.body || {};
+    const type_espace = req.body?.type_espace || null;
     const userId = req.user.id;
 
     if (!type) {
@@ -229,37 +298,56 @@ async function subscribeSelf(req, res) {
       return res.status(400).json({ error: "Type d'abonnement invalide." });
     }
 
-    const today = todayISO();
-    const { data: existing } = await supabaseAdmin
-      .from('abonnements')
-      .select('id, type, date_fin')
-      .eq('user_id', userId)
-      .eq('statut', 'active')
-      .gte('date_fin', today)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      return res.status(400).json({ error: 'Vous avez déjà un abonnement actif. Il expire le ' + existing[0].date_fin + '.' });
-    }
-
-    const date_debut = today;
-    let date_fin;
     if (type === 'bureau_prive') {
-      return res.status(400).json({ error: 'Le bureau privé doit être configuré par un admin.' });
+      return res.status(400).json({ error: 'Le bureau privé sur contrat doit être configuré avec l’établissement.' });
     }
-    date_fin = addDays(date_debut, SUBSCRIPTION_DURATIONS[type] - 1);
+
+    const today = todayISO();
+    const { data: mySubs } = await supabaseAdmin
+      .from('abonnements')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
     const { data: memberProfile } = await supabaseAdmin
-      .from('profiles').select('type_membre').eq('id', userId).single();
+      .from('profiles')
+      .select('id, nom, prenom, email, type_membre, tenant_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const effectiveTenantId = req.tenantId || memberProfile?.tenant_id || null;
+    const { subMetaMap, archSet } = await loadSubscriptionMetaForTenants([effectiveTenantId]);
+    const enrichedSubs = (mySubs || [])
+      .map((s) => enrichSubscriptionRow(s, subMetaMap, new Map(), archSet))
+      .filter((s) => !s.archived_at);
+
+    const existingPending = enrichedSubs.find((s) => s.statut === 'en_attente_paiement');
+    if (existingPending) {
+      return res.status(400).json({
+        error: 'Vous avez déjà une demande d’abonnement en attente de paiement à l’accueil.',
+      });
+    }
+
+    const existingActive = enrichedSubs.find(
+      (s) => ['active', 'actif', 'a_renouveler'].includes(s.statut) && s.date_fin >= today
+    );
+    if (existingActive && !is_renewal) {
+      return res.status(400).json({
+        error: `Vous avez déjà un abonnement actif jusqu'au ${existingActive.date_fin}. Utilisez l'action Renouveler pour anticiper le prochain cycle.`,
+      });
+    }
+
+    const date_debut = existingActive && is_renewal ? addDays(existingActive.date_fin, 1) : today;
+    const date_fin = addDays(date_debut, SUBSCRIPTION_DURATIONS[type] - 1);
 
     const plan = MEMBER_TYPE_TO_PLAN[memberProfile?.type_membre] || 'standard';
     let tarifInfo = null;
     let promoInfo = null;
 
     try {
-      tarifInfo = await findActiveTarif(type, plan, req.tenantId, type_espace);
-      if (code_promo && tarifInfo) {
-        promoInfo = await findValidPromoCode(code_promo, req.tenantId);
+      tarifInfo = await findActiveTarif(type, plan, effectiveTenantId, type_espace);
+      if (code_promo) {
+        promoInfo = await findValidPromoCode(code_promo, effectiveTenantId);
         if (!promoInfo) {
           return res.status(400).json({ error: 'Code promo invalide ou expiré.' });
         }
@@ -268,66 +356,447 @@ async function subscribeSelf(req, res) {
       console.warn('Tarification non disponible:', e.message);
     }
 
-    const { data, error } = await supabaseAdmin
-      .from('abonnements')
-      .insert({
+    const tvaPct = Number(tarifInfo?.tva_pct ?? DEFAULT_TVA_PCT);
+    const baseHT = roundMillime(tarifInfo?.prix_ht ?? tarifInfo?.prix ?? 0);
+    const { prixFinal: finalHT, reduction: redHT } = applyPromoDiscount(baseHT, promoInfo);
+    const finalTTC = computeTTC(finalHT, tvaPct);
+    const quotaType = tarifInfo?.quota_type || 'illimite';
+    const quotaTotal = quotaType !== 'illimite' && tarifInfo?.quota_total != null ? Number(tarifInfo.quota_total) : null;
+
+    // Création de la demande au statut "en_attente_paiement" (activation dès encaissement par l'Admin)
+    const insertPayload = {
+      tenant_id: effectiveTenantId,
+      user_id: userId,
+      type,
+      date_debut,
+      date_fin,
+      renouvellement_auto: Boolean(renouvellement_auto),
+      statut: 'en_attente_paiement',
+      type_espace: tarifInfo?.type_espace || type_espace || null,
+      quota_type: quotaType,
+      quota_total: quotaTotal,
+      quota_consomme: 0,
+      montant_ht: roundMillime(finalHT),
+      montant_ttc: finalTTC,
+      tva_pct: tvaPct,
+      code_promo: promoInfo?.code || null,
+    };
+
+    let usedFallbackStatut = false;
+    let { data, error } = await insertWithColumnFallback(supabaseAdmin, 'abonnements', insertPayload);
+    if (error && /check constraint|abonnements_statut|violates check/i.test(error.message || '')) {
+      usedFallbackStatut = true;
+      ({ data, error } = await insertWithColumnFallback(supabaseAdmin, 'abonnements', {
+        ...insertPayload,
+        statut: 'suspended',
+      }));
+    }
+
+    if (error || !data) {
+      return res.status(400).json({ error: error?.message || "Impossible d'enregistrer votre demande." });
+    }
+
+    // Créer immédiatement le montant dû (statut pending) lié à cette demande
+    let paymentRow = null;
+    if (finalTTC > 0) {
+      const { data: pCreated } = await insertWithColumnFallback(supabaseAdmin, 'paiements', {
         user_id: userId,
-        type,
-        date_debut,
-        date_fin,
-        renouvellement_auto: Boolean(renouvellement_auto),
-        statut: 'active',
-        type_espace: tarifInfo?.type_espace || type_espace || null,
-      })
-      .select()
-      .single();
+        abonnement_id: data.id,
+        tenant_id: effectiveTenantId,
+        montant: finalTTC,
+        total_du: finalTTC,
+        montant_paye: 0,
+        reste_a_payer: finalTTC,
+        mode: 'cash',
+        statut: 'pending',
+        reference_externe: `DEMANDE-ABONNEMENT-${type.toUpperCase()}`,
+      });
+      paymentRow = pCreated || null;
 
-    if (error) return res.status(400).json({ error: error.message });
-
-    let pricingResult = null;
-    if (tarifInfo) {
-      const { prixFinal, reduction } = applyPromoDiscount(Number(tarifInfo.prix), promoInfo);
-      pricingResult = {
-        type_abonnement: type,
-        plan_tarifaire: plan,
-        prix_initial: Number(tarifInfo.prix),
-        prix_final: prixFinal,
-        reduction,
-        tva_pct: Number(tarifInfo.tva_pct),
-        code_promo: promoInfo?.code || null,
-        type_espace: tarifInfo.type_espace || null,
-      };
-
-      try {
-        await supabaseAdmin.from('historique_tarifs').insert({
-          user_id: userId,
-          abonnement_id: data.id,
-          type_abonnement: type,
-          plan_tarifaire: plan,
-          prix_initial: Number(tarifInfo.prix),
-          prix_final: prixFinal,
-          code_promo_id: promoInfo?.id || null,
-        });
-      } catch (e) {
-        console.warn('historique_tarifs insert skipped in subscribeSelf:', e.message);
-      }
-
-      if (promoInfo && promoInfo.id) {
-        try {
-          await supabaseAdmin
-            .from('codes_promo')
-            .update({ utilisations_count: (promoInfo.utilisations_count || 0) + 1 })
-            .eq('id', promoInfo.id);
-        } catch (e) {
-          console.warn('codes_promo update skipped in subscribeSelf:', e.message);
-        }
+      if (paymentRow?.id) {
+        await supabaseAdmin
+          .from('abonnements')
+          .update({ paiement_id: paymentRow.id })
+          .eq('id', data.id)
+          .catch(() => {});
       }
     }
 
-    const { emitToStaff } = require('../services/socketService');
-    emitToStaff('subscription:created', { user_id: userId, type, plan, pricing: pricingResult });
+    if (effectiveTenantId) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', effectiveTenantId).maybeSingle();
+        const curSettings = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+        const subMeta = (curSettings.subscription_meta && typeof curSettings.subscription_meta === 'object')
+          ? { ...curSettings.subscription_meta }
+          : {};
+        subMeta[data.id] = {
+          ...(subMeta[data.id] || {}),
+          logical_status: 'en_attente_paiement',
+          pending_payment: true,
+          used_fallback_statut: usedFallbackStatut,
+          paiement_id: paymentRow?.id || null,
+          montant_ht: roundMillime(finalHT),
+          montant_ttc: finalTTC,
+          tva_pct: tvaPct,
+          code_promo: promoInfo?.code || null,
+          quota_type: quotaType,
+          quota_total: quotaTotal,
+          quota_consomme: 0,
+          is_renewal: Boolean(is_renewal && existingActive),
+          renew_from_subscription_id: existingActive?.id || null,
+        };
+        await supabaseAdmin
+          .from('tenants')
+          .update({ settings: { ...curSettings, subscription_meta: subMeta } })
+          .eq('id', effectiveTenantId);
+      } catch (_) {}
+    }
 
-    res.status(201).json({ subscription: data, pricing: pricingResult });
+    const pricingResult = {
+      type_abonnement: type,
+      prix_initial: computeTTC(baseHT, tvaPct),
+      prix_initial_ht: baseHT,
+      prix_final_ht: roundMillime(finalHT),
+      prix_final: finalTTC,
+      reduction_ht: roundMillime(redHT),
+      reduction: roundMillime(computeTTC(baseHT, tvaPct) - finalTTC),
+      tva_pct: tvaPct,
+      code_promo: promoInfo?.code || null,
+      type_espace: tarifInfo?.type_espace || null,
+    };
+
+    try {
+      await supabaseAdmin.from('historique_tarifs').insert({
+        user_id: userId,
+        abonnement_id: data.id,
+        type_abonnement: type,
+        plan_tarifaire: plan,
+        prix_initial: computeTTC(baseHT, tvaPct),
+        prix_final: finalTTC,
+        code_promo_id: promoInfo?.id || null,
+      });
+    } catch (_) {}
+
+    if (promoInfo?.id) {
+      await supabaseAdmin
+        .from('codes_promo')
+        .update({ utilisations_count: (promoInfo.utilisations_count || 0) + 1 })
+        .eq('id', promoInfo.id)
+        .catch(() => {});
+    }
+
+    // Notifier les admins/staff de l'établissement pour la file "Demandes d'abonnement"
+    if (effectiveTenantId) {
+      try {
+        const { data: staffRows } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('tenant_id', effectiveTenantId)
+          .in('role', ['admin', 'staff']);
+        const clientNom = memberProfile ? `${memberProfile.prenom || ''} ${memberProfile.nom || ''}`.trim() : 'Un membre';
+        for (const st of staffRows || []) {
+          await supabaseAdmin.from('notifications').insert({
+            user_id: st.id,
+            type: 'abonnement_demande',
+            canal: 'Dashboard',
+            message: `Nouvelle demande d'abonnement (${type}) de ${clientNom} — en attente d'encaissement (${finalTTC.toFixed(3)} DT). [Lien: /admin/abonnements?tab=demandes]`,
+          }).catch(() => {});
+        }
+      } catch (_) {}
+    }
+
+    const { emitToStaff } = require('../services/socketService');
+    emitToStaff('subscription:request', { subscription_id: data.id, user_id: userId, type, pricing: pricingResult });
+
+    res.status(201).json({
+      subscription: { ...data, statut: 'en_attente_paiement', pending_payment: true, montant_ht: roundMillime(finalHT), montant_ttc: finalTTC, tva_pct: tvaPct, paiement_id: paymentRow?.id || null },
+      payment: paymentRow,
+      pricing: pricingResult,
+      message: "Votre demande d'abonnement est enregistrée au statut « En attente de paiement ». Réglez à l'accueil pour l'activer immédiatement.",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/subscriptions/:id/approve-payment — Admin encaisse et active la demande d'abonnement
+async function approveSubscriptionPayment(req, res) {
+  try {
+    const { id } = req.params;
+    const { mode = 'cash' } = req.body || {};
+    if (!['cash', 'bank_transfer', 'check'].includes(mode)) {
+      return res.status(400).json({ error: 'Mode invalide (cash, bank_transfer, check).' });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('abonnements')
+      .select('*, profiles(id, nom, prenom, email)')
+      .eq('id', id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: "Demande d'abonnement introuvable." });
+
+    const tid = req.tenantId || sub.tenant_id;
+    const { subMetaMap } = await loadSubscriptionMetaForTenants([tid]);
+    const meta = subMetaMap[id] || {};
+    const nowIso = new Date().toISOString();
+    const today = todayISO();
+
+    // Si ce n'est pas un renouvellement futur, recaler date_debut/date_fin à la date d'activation effective
+    let nextDebut = sub.date_debut;
+    let nextFin = sub.date_fin;
+    if (!meta.is_renewal && SUBSCRIPTION_DURATIONS[sub.type] && sub.date_debut < today) {
+      nextDebut = today;
+      nextFin = addDays(today, SUBSCRIPTION_DURATIONS[sub.type] - 1);
+    }
+
+    const { data: updatedSub, error: updErr } = await supabaseAdmin
+      .from('abonnements')
+      .update({
+        statut: 'active',
+        date_debut: nextDebut,
+        date_fin: nextFin,
+        updated_at: nowIso,
+      })
+      .eq('id', id)
+      .select('*, profiles(id, nom, prenom, email)')
+      .single();
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    // Encaisser le paiement pending lié avec numéro continu REC-AAAA-NNNNNN
+    let { data: pendingPay } = await supabaseAdmin
+      .from('paiements')
+      .select('*')
+      .eq('abonnement_id', id)
+      .in('statut', ['pending', 'partial'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let collectedPay = null;
+    if (pendingPay) {
+      const numeroRecu = pendingPay.numero_recu || await allocateDocumentNumber(supabaseAdmin, tid || pendingPay.tenant_id, 'receipt');
+      const totalAmt = roundMillime(pendingPay.total_du ?? meta.montant_ttc ?? pendingPay.montant ?? 0);
+      const { data: paidRow } = await supabaseAdmin
+        .from('paiements')
+        .update({
+          statut: 'paid',
+          mode,
+          date_paiement: nowIso,
+          numero_recu: numeroRecu,
+          total_du: totalAmt,
+          montant_paye: totalAmt,
+          reste_a_payer: 0,
+        })
+        .eq('id', pendingPay.id)
+        .select('*')
+        .maybeSingle()
+        .catch(async () =>
+          supabaseAdmin
+            .from('paiements')
+            .update({ statut: 'paid', mode, date_paiement: nowIso, numero_recu: numeroRecu })
+            .eq('id', pendingPay.id)
+            .select('*')
+            .maybeSingle()
+        );
+      collectedPay = paidRow || { ...pendingPay, statut: 'paid', numero_recu: numeroRecu };
+    }
+
+    if (tid) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', tid).maybeSingle();
+        const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+        const nextMetaMap = { ...(cur.subscription_meta || {}) };
+        if (nextMetaMap[id]) {
+          nextMetaMap[id] = {
+            ...nextMetaMap[id],
+            logical_status: 'active',
+            pending_payment: false,
+          };
+          await supabaseAdmin.from('tenants').update({ settings: { ...cur, subscription_meta: nextMetaMap } }).eq('id', tid);
+        }
+      } catch (_) {}
+    }
+
+    await supabaseAdmin.from('notifications').insert({
+      user_id: sub.user_id,
+      type: 'abonnement_active',
+      canal: 'Dashboard',
+      message: `Votre abonnement (${sub.type}) est activé !${collectedPay?.numero_recu ? ` Reçu ${collectedPay.numero_recu}.` : ''} [Lien: /dashboard/abonnement]`,
+    }).catch(() => {});
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'activation_abonnement',
+      entityType: 'abonnement',
+      entityId: id,
+      entityLabel: `Activation ${sub.type}${collectedPay?.numero_recu ? ` (${collectedPay.numero_recu})` : ''}`,
+      afterData: { statut: 'active', mode, numero_recu: collectedPay?.numero_recu || null },
+    });
+
+    res.json({
+      subscription: updatedSub,
+      payment: collectedPay,
+      message: `Abonnement activé${collectedPay?.numero_recu ? ` et encaissé (${collectedPay.numero_recu})` : ''}.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/subscriptions/:id/reject-request — Admin refuse une demande en attente de paiement
+async function rejectSubscriptionRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const motif = String(req.body?.motif || '').trim();
+    if (motif.length < 3) {
+      return res.status(400).json({ error: 'Un motif explicite (minimum 3 caractères) est obligatoire.' });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('abonnements')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: 'Demande introuvable.' });
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('abonnements')
+      .update({ statut: 'resilie', motif_resiliation: motif })
+      .eq('id', id)
+      .select('*')
+      .single()
+      .catch(async () =>
+        supabaseAdmin.from('abonnements').update({ statut: 'resilie' }).eq('id', id).select('*').single()
+      );
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    await supabaseAdmin
+      .from('paiements')
+      .update({ statut: 'failed' })
+      .eq('abonnement_id', id)
+      .in('statut', ['pending', 'partial'])
+      .catch(() => {});
+
+    const tid = req.tenantId || sub.tenant_id;
+    if (tid) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', tid).maybeSingle();
+        const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+        const nextMeta = { ...(cur.subscription_meta || {}) };
+        nextMeta[id] = { ...(nextMeta[id] || {}), logical_status: 'refuse', pending_payment: false, motif_refus: motif };
+        await supabaseAdmin.from('tenants').update({ settings: { ...cur, subscription_meta: nextMeta } }).eq('id', tid);
+      } catch (_) {}
+    }
+
+    await supabaseAdmin.from('notifications').insert({
+      user_id: sub.user_id,
+      type: 'abonnement_refuse',
+      canal: 'Dashboard',
+      message: `Votre demande d'abonnement (${sub.type}) n'a pas été retenue. Motif : ${motif}. [Lien: /dashboard/abonnement]`,
+    }).catch(() => {});
+
+    res.json({ subscription: updated, message: 'Demande refusée.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/subscriptions/:id/cancel-request — Membre annule sa demande en attente de paiement
+async function cancelMySubscriptionRequest(req, res) {
+  try {
+    const { id } = req.params;
+    const { data: sub } = await supabaseAdmin.from('abonnements').select('*').eq('id', id).single();
+    if (!sub || sub.user_id !== req.user.id) {
+      return res.status(404).json({ error: 'Demande introuvable.' });
+    }
+    const { subMetaMap } = await loadSubscriptionMetaForTenants([sub.tenant_id]);
+    const enriched = enrichSubscriptionRow(sub, subMetaMap);
+    if (enriched.statut !== 'en_attente_paiement') {
+      return res.status(400).json({ error: 'Seule une demande en attente de paiement peut être annulée ici.' });
+    }
+
+    await supabaseAdmin.from('abonnements').update({ statut: 'resilie' }).eq('id', id).catch(() => {});
+    await supabaseAdmin
+      .from('paiements')
+      .update({ statut: 'cancelled' })
+      .eq('abonnement_id', id)
+      .eq('statut', 'pending')
+      .catch(() => supabaseAdmin.from('paiements').update({ statut: 'failed' }).eq('abonnement_id', id).eq('statut', 'pending').catch(() => {}));
+
+    if (sub.tenant_id) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', sub.tenant_id).maybeSingle();
+        const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+        const nextMeta = { ...(cur.subscription_meta || {}) };
+        nextMeta[id] = { ...(nextMeta[id] || {}), logical_status: 'resilie', pending_payment: false };
+        await supabaseAdmin.from('tenants').update({ settings: { ...cur, subscription_meta: nextMeta } }).eq('id', sub.tenant_id);
+      } catch (_) {}
+    }
+
+    res.json({ success: true, message: "Demande d'abonnement annulée." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/subscriptions/:id/resiliate — Membre résilie son abonnement actif
+async function resiliateMySubscription(req, res) {
+  try {
+    const { id } = req.params;
+    const motif = String(req.body?.motif || '').trim() || 'Résiliation demandée par le membre';
+    const { data: sub } = await supabaseAdmin.from('abonnements').select('*').eq('id', id).single();
+    if (!sub || sub.user_id !== req.user.id) {
+      return res.status(404).json({ error: 'Abonnement introuvable.' });
+    }
+    if (!['active', 'actif', 'a_renouveler'].includes(sub.statut)) {
+      return res.status(400).json({ error: 'Cet abonnement ne peut pas être résilié.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    let { data: updated, error } = await supabaseAdmin
+      .from('abonnements')
+      .update({
+        statut: 'resilie',
+        renouvellement_auto: false,
+        motif_resiliation: motif,
+        demande_resiliation_at: nowIso,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ data: updated, error } = await supabaseAdmin
+        .from('abonnements')
+        .update({ statut: 'resilie', renouvellement_auto: false })
+        .eq('id', id)
+        .select('*')
+        .single());
+    }
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (sub.tenant_id) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', sub.tenant_id).maybeSingle();
+        const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+        const nextMeta = { ...(cur.subscription_meta || {}) };
+        nextMeta[id] = { ...(nextMeta[id] || {}), logical_status: 'resilie', motif_resiliation: motif };
+        await supabaseAdmin.from('tenants').update({ settings: { ...cur, subscription_meta: nextMeta } }).eq('id', sub.tenant_id);
+      } catch (_) {}
+    }
+
+    await logActivity({
+      tenantId: sub.tenant_id,
+      req,
+      action: 'resiliation_abonnement',
+      entityType: 'abonnement',
+      entityId: id,
+      entityLabel: `Résiliation membre (${sub.type})`,
+      afterData: { statut: 'resilie', motif_resiliation: motif },
+    });
+
+    res.json({ subscription: updated, message: 'Votre abonnement a bien été résilié.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -506,29 +975,7 @@ async function listSubscriptions(req, res) {
       } catch (_) {}
     }
 
-    const list = (data || []).map((a) => {
-      const meta = subMetaMap[a.id] || {};
-      const uniteId = a.unite_id || meta.unite_id || null;
-      const quotaType = a.quota_type || meta.quota_type || 'illimite';
-      const quotaTotal = a.quota_total != null ? Number(a.quota_total) : (meta.quota_total != null ? Number(meta.quota_total) : null);
-      const quotaConsomme = Number(a.quota_consomme ?? meta.quota_consomme ?? 0) || 0;
-      const quotaRestant = quotaTotal != null ? Math.max(0, Math.round((quotaTotal - quotaConsomme) * 100) / 100) : null;
-      const quotaPct = quotaTotal && quotaTotal > 0 ? Math.min(100, Math.round((quotaConsomme / quotaTotal) * 100)) : 0;
-      const unite = uniteId ? unitesMap.get(uniteId) || null : null;
-
-      return {
-        ...a,
-        unite_id: uniteId,
-        unite,
-        quota_type: quotaType,
-        quota_total: quotaTotal,
-        quota_consomme: quotaConsomme,
-        quota_restant: quotaRestant,
-        quota_pct: quotaPct,
-        motif_suspension: a.motif_suspension || meta.motif_suspension || null,
-        archived_at: a.archived_at || (archIds.has(a.id) ? (a.updated_at || a.created_at) : null),
-      };
-    });
+    const list = (data || []).map((a) => enrichSubscriptionRow(a, subMetaMap, unitesMap, archIds));
 
     res.json({ subscriptions: includeArchived ? list : list.filter((a) => !a.archived_at) });
   } catch (err) {
@@ -641,6 +1088,10 @@ module.exports = {
   getMyActiveSubscription,
   createSubscription,
   subscribeSelf,
+  approveSubscriptionPayment,
+  rejectSubscriptionRequest,
+  cancelMySubscriptionRequest,
+  resiliateMySubscription,
   updateSubscription,
   listSubscriptions,
   getSubscriptionConsumptions,

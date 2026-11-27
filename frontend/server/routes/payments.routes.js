@@ -13,7 +13,10 @@ router.all('/stripe/{*path}', (_req, res) => res.status(410).json({
   code: 'ONLINE_PAYMENT_DISABLED',
 }));
 
-// Téléchargement du reçu PDF
+// Téléchargement du reçu PDF & export ZIP / factures membre
+router.get('/payments/me/receipts-zip', authenticate, ctrl.downloadMemberReceiptsZip);
+router.get('/payments/me/invoices', authenticate, ctrl.getMemberInvoices);
+router.get('/payments/me/invoices/:id/pdf', authenticate, ctrl.downloadMemberInvoicePdf);
 router.get('/payments/:id/receipt', authenticate, ctrl.getPaymentReceipt);
 
 // Routes paiement membre

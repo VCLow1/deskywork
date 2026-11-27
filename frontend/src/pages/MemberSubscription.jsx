@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { memberApi, pricingApi, subscriptionApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
+import Money from '../components/common/Money';
+import { formatDateDMY } from '../utils/format';
 
 const SUBSCRIPTION_LABELS = {
   day_pass: 'Pass journée',
@@ -22,12 +24,6 @@ const SUBSCRIPTION_ICONS = {
   bureau_prive: 'meeting_room',
 };
 
-const PLAN_LABELS = {
-  standard: 'Standard',
-  etudiant: 'Étudiant',
-  entreprise: 'Entreprise',
-};
-
 const ESPACE_TYPE_LABELS = {
   open_space: 'Open space',
   private_office: 'Bureau privé',
@@ -38,522 +34,571 @@ const ESPACE_TYPE_LABELS = {
   dedicated_desk: 'Poste fixe',
 };
 
+function computeLocalPromoPreview(baseAmount, promo) {
+  if (!promo?.valid) return baseAmount;
+  const base = Number(baseAmount) || 0;
+  if (promo.type_reduction === 'percent') {
+    return Math.max(0, Math.round((base * (1 - Number(promo.valeur || 0) / 100)) * 1000) / 1000);
+  }
+  return Math.max(0, Math.round((base - Number(promo.valeur || 0)) * 1000) / 1000);
+}
+
 export default function MemberSubscription({ session }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [tarifs, setTarifs] = useState([]);
-  const [planTarifaire, setPlanTarifaire] = useState('standard');
   const [activeSub, setActiveSub] = useState(null);
+  const [pendingRequest, setPendingRequest] = useState(null);
   const [history, setHistory] = useState([]);
+
+  // Champ global unique "Code promo"
   const [promoCode, setPromoCode] = useState('');
   const [promoResult, setPromoResult] = useState(null);
-  const [selectedType, setSelectedType] = useState(null);
+  const [validatingPromo, setValidatingPromo] = useState(false);
+  const [promoError, setPromoError] = useState('');
+
   const [loading, setLoading] = useState(true);
-  const [validating, setValidating] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
+  const [cancellingReq, setCancellingReq] = useState(false);
+  const [resiliating, setResiliating] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
   const [confirmModal, setConfirmModal] = useState(null);
   const [modalError, setModalError] = useState('');
-
-  useEffect(() => {
-    if (session) loadData();
-  }, [session]);
+  const [showResiliateModal, setShowResiliateModal] = useState(false);
+  const [resiliateMotif, setResiliateMotif] = useState('');
 
   const loadData = async () => {
     setLoading(true);
     setError('');
-    setSuccess('');
-
     try {
-      const [{ profile: prof }, pricing, activeRes] = await Promise.all([
+      const [profRes, pricingRes, activeRes, mineRes, histRes] = await Promise.all([
         memberApi.getMe(),
         pricingApi.getPlans(),
         subscriptionApi.getActive().catch(() => ({ subscription: null })),
+        subscriptionApi.getMine().catch(() => ({ subscriptions: [] })),
+        pricingApi.getMyHistory().catch(() => ({ history: [] })),
       ]);
-      setProfile(prof);
-      setPlanTarifaire(pricing.plan_tarifaire);
-      setTarifs(pricing.tarifs || []);
+      setProfile(profRes.profile);
+      setTarifs(pricingRes.tarifs || []);
       setActiveSub(activeRes.subscription || null);
+      const mine = mineRes.subscriptions || [];
+      setPendingRequest(mine.find((s) => s.statut === 'en_attente_paiement') || null);
+      setHistory(histRes.history || []);
     } catch (e) {
-      if (e.message.includes('Session expirée')) {
+      if (String(e.message || '').includes('Session expirée')) {
         await supabase.auth.signOut();
         navigate('/login');
         return;
       }
-      setError(e.message);
-    }
-
-    try {
-      const hist = await pricingApi.getMyHistory();
-      setHistory(hist.history || []);
-    } catch {
-      setHistory([]);
+      setError(e.message || 'Impossible de charger les abonnements.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleValidatePromo = useCallback(async (typeAbonnement) => {
+  useEffect(() => { if (session) loadData(); }, [session]);
+
+  const handleApplyGlobalPromo = async (e) => {
+    e?.preventDefault?.();
     if (!promoCode.trim()) {
-      setError('Saisissez un code promo.');
+      setPromoError('Saisissez un code promo.');
       return;
     }
-    setValidating(true);
-    setError('');
+    setValidatingPromo(true);
+    setPromoError('');
     setPromoResult(null);
-    setSelectedType(typeAbonnement);
     try {
+      const sampleTarif = tarifs[0];
       const result = await pricingApi.validatePromo({
         code: promoCode.trim(),
-        type_abonnement: typeAbonnement,
-        plan_tarifaire: planTarifaire,
+        montant_ht: sampleTarif ? Number(sampleTarif.prix_ht ?? sampleTarif.prix ?? 100) : 100,
       });
       setPromoResult(result);
-    } catch (e) {
-      if (e.message.includes('Session expirée')) {
-        await supabase.auth.signOut();
-        navigate('/login');
-        return;
-      }
-      setError(e.message);
+    } catch (err) {
+      setPromoError(err.message || 'Code promo invalide ou expiré.');
     } finally {
-      setValidating(false);
+      setValidatingPromo(false);
     }
-  }, [promoCode, planTarifaire, navigate]);
+  };
 
-  const handleSubscribe = async (type) => {
+  const handleClearPromo = () => {
+    setPromoCode('');
+    setPromoResult(null);
+    setPromoError('');
+  };
+
+  const handleSubscribe = async ({ type, isRenewal = false }) => {
     setSubscribing(true);
     setModalError('');
     setError('');
     setSuccess('');
     try {
-      const result = await subscriptionApi.selfSubscribe({
+      const res = await subscriptionApi.selfSubscribe({
         type,
         code_promo: promoResult?.valid ? promoCode.trim() : undefined,
         renouvellement_auto: false,
+        is_renewal: isRenewal,
       });
-      setSuccess('Abonnement créé avec succès !');
       setConfirmModal(null);
-      setPromoResult(null);
-      setSelectedType(null);
+      setSuccess(
+        res.message || "Demande enregistrée au statut « En attente de paiement ». Règlement sur place à l'accueil pour activer votre formule."
+      );
       await loadData();
-    } catch (e) {
-      if (e.message.includes('Session expirée')) {
-        await supabase.auth.signOut();
-        navigate('/login');
-        return;
-      }
-      setModalError(e.message);
-      setError(e.message);
+    } catch (err) {
+      setModalError(err.message);
     } finally {
       setSubscribing(false);
     }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate('/');
+  const handleCancelPendingRequest = async () => {
+    if (!pendingRequest) return;
+    setCancellingReq(true);
+    setError('');
+    try {
+      await subscriptionApi.cancelRequest(pendingRequest.id);
+      setSuccess("Votre demande d'abonnement a été annulée.");
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCancellingReq(false);
+    }
   };
 
-  const getTarifDisplayPrice = (tarif) => {
-    if (promoResult?.valid && selectedType === tarif.type_abonnement) {
-      return promoResult.prix_final;
+  const handleConfirmResiliate = async (e) => {
+    e.preventDefault();
+    if (!activeSub) return;
+    setResiliating(true);
+    setError('');
+    try {
+      await subscriptionApi.resiliate(activeSub.id, { motif: resiliateMotif.trim() });
+      setShowResiliateModal(false);
+      setResiliateMotif('');
+      setSuccess('Votre abonnement a bien été résilié.');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResiliating(false);
     }
-    return Number(tarif.prix);
   };
+
+  const openRenewModal = () => {
+    if (!activeSub) return;
+    const matchedTarif = tarifs.find((t) => t.type_abonnement === activeSub.type) || tarifs[0];
+    if (!matchedTarif) return;
+    const baseHT = Number(matchedTarif.prix_ht ?? 0);
+    const tva = Number(matchedTarif.tva_pct ?? 19);
+    const finalHT = computeLocalPromoPreview(baseHT, promoResult);
+    const finalTTC = Math.round(finalHT * (1 + tva / 100) * 1000) / 1000;
+    setModalError('');
+    setConfirmModal({
+      type: matchedTarif.type_abonnement,
+      label: SUBSCRIPTION_LABELS[matchedTarif.type_abonnement] || matchedTarif.label,
+      prixHT: finalHT,
+      prixTTC: finalTTC,
+      tvaPct: tva,
+      isRenewal: true,
+    });
+  };
+
+  const activeQuotaPct = useMemo(() => {
+    if (!activeSub || !activeSub.quota_total || activeSub.quota_type === 'illimite') return 0;
+    return Math.min(100, Math.round((Number(activeSub.quota_consomme || 0) / Number(activeSub.quota_total)) * 100));
+  }, [activeSub]);
+
+  const activeDaysLeft = useMemo(() => {
+    if (!activeSub?.date_fin) return 0;
+    return Math.max(0, Math.ceil((new Date(activeSub.date_fin).getTime() - Date.now()) / 86400000));
+  }, [activeSub]);
+
+  const handleLogout = async () => { await supabase.auth.signOut(); navigate('/'); };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F4F6F9]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-secondary" />
-      </div>
+      <PortalLayout profile={profile} onLogout={handleLogout}>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-10 w-10 border-4 border-[#f95d00] border-t-transparent" />
+        </div>
+      </PortalLayout>
     );
   }
 
   return (
     <PortalLayout profile={profile} onLogout={handleLogout}>
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1
-            className="text-2xl font-bold text-primary mb-1"
-            style={{ fontFamily: 'Sora, sans-serif' }}
-          >
-            Abonnements & tarifs
-          </h1>
-          <p className="text-on-surface-variant text-sm">
-            Plan {PLAN_LABELS[planTarifaire] || planTarifaire}
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-sora text-2xl font-bold text-primary dark:text-white">Mon abonnement</h1>
+          <p className="text-sm text-on-surface-variant mt-1">
+            Consultez votre formule en cours, suivez votre consommation ou souscrivez à une nouvelle offre.
           </p>
         </div>
 
-        {/* Alert messages */}
         {error && (
-          <div className="mb-6 p-4 bg-[#FFF0ED] border border-[#FF6F59]/20 text-[#FF6F59] text-sm rounded-2xl flex items-center gap-3">
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>error</span>
+          <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>error</span>
             {error}
           </div>
         )}
         {success && (
-          <div className="mb-6 p-4 bg-[#E8FBF3] border border-[#2FBE8F]/20 text-[#1a7a5a] text-sm rounded-2xl flex items-center gap-3">
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>
+          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-2">
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
             {success}
           </div>
         )}
 
-        {/* Active Subscription Card */}
-        {activeSub && (
-          <div
-            className="mb-8 rounded-3xl overflow-hidden"
-            style={{ background: 'linear-gradient(135deg, #100f0d, #f95d00)', boxShadow: '0 8px 32px rgba(249,93,0,0.2)' }}
-          >
-            <div className="p-6 sm:p-8 text-white">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="material-symbols-outlined" style={{ fontSize: 20, opacity: 0.7 }}>verified</span>
-                <span className="text-xs font-semibold uppercase tracking-wider opacity-70">Abonnement actif</span>
+        {/* Demande en attente de paiement */}
+        {pendingRequest && (
+          <div className="rounded-3xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-amber-200/70 text-amber-900 text-xs font-bold">
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>hourglass_top</span>
+                En attente de paiement
               </div>
-              <h2 className="text-2xl font-bold mb-3" style={{ fontFamily: 'Sora, sans-serif' }}>
-                {SUBSCRIPTION_LABELS[activeSub.type] || activeSub.type}
+              <h2 className="font-sora font-bold text-lg text-primary dark:text-white">
+                {SUBSCRIPTION_LABELS[pendingRequest.type] || pendingRequest.type}
               </h2>
-              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-                <div>
-                  <p className="text-xs opacity-60 mb-0.5">Début</p>
-                  <p className="text-sm font-semibold">{new Date(activeSub.date_debut).toLocaleDateString('fr-FR')}</p>
-                </div>
-                <div>
-                  <p className="text-xs opacity-60 mb-0.5">Fin</p>
-                  <p className="text-sm font-semibold">{new Date(activeSub.date_fin).toLocaleDateString('fr-FR')}</p>
-                </div>
-                <div>
-                  <p className="text-xs opacity-60 mb-0.5">Statut</p>
-                  <p className="text-sm font-semibold flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-[#2FBE8F]" />
-                    Actif
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs opacity-60 mb-0.5">Jours restants</p>
-                  <p className="text-sm font-semibold">
-                    {Math.max(0, Math.ceil((new Date(activeSub.date_fin) - new Date()) / (1000 * 60 * 60 * 24)))} jours
-                  </p>
-                </div>
-              </div>
+              <p className="text-xs text-amber-900 dark:text-amber-200">
+                Période prévue : {formatDateDMY(pendingRequest.date_debut)} → {formatDateDMY(pendingRequest.date_fin)}
+                {pendingRequest.montant_ttc > 0 && (
+                  <> · Montant à régler à l&apos;accueil : <strong><Money amount={pendingRequest.montant_ttc} showTaxType="TTC" /></strong></>
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <Link
+                to="/member/payments"
+                className="px-4 py-2 rounded-xl bg-[#100f0d] text-white text-xs font-bold"
+              >
+                Voir mes paiements
+              </Link>
+              <button
+                type="button"
+                onClick={handleCancelPendingRequest}
+                disabled={cancellingReq}
+                className="px-4 py-2 rounded-xl border border-rose-300 text-rose-700 text-xs font-bold hover:bg-rose-50 disabled:opacity-50"
+              >
+                {cancellingReq ? 'Annulation…' : 'Annuler la demande'}
+              </button>
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left — Plans */}
-          <div className="lg:col-span-8 space-y-6">
-            {/* Promo Code Input */}
-            <div className="bg-white rounded-3xl p-6 border border-outline-variant/10" style={{ boxShadow: '0 2px 8px rgba(16,35,63,0.04)' }}>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>local_offer</span>
-                <h2 className="text-sm font-bold text-primary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                  Code promo
-                </h2>
-              </div>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={promoCode}
-                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoResult(null); }}
-                  placeholder="Ex: WELCOME10"
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-outline-variant/20 text-sm focus:outline-none focus:border-secondary/40 transition-colors uppercase"
-                />
-                <button
-                  onClick={() => selectedType && handleValidatePromo(selectedType)}
-                  disabled={validating || !promoCode.trim() || !selectedType}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-secondary border border-secondary/20 hover:bg-secondary/5 transition-all disabled:opacity-40"
-                >
-                  {validating ? '...' : 'Vérifier'}
-                </button>
-              </div>
-              {promoResult?.valid && (
-                <div className="mt-4 p-4 bg-[#E8FBF3] border border-[#2FBE8F]/20 rounded-xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="material-symbols-outlined text-[#2FBE8F]" style={{ fontSize: 18 }}>check_circle</span>
-                    <span className="text-sm font-bold text-[#1a7a5a]">
-                      Code {promoResult.code} appliqué !
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className="text-on-surface-variant line-through">{promoResult.prix_initial.toFixed(3)} DT</span>
-                    <span className="text-on-surface-variant">→</span>
-                    <span className="font-bold text-[#1a7a5a]">{promoResult.prix_final.toFixed(3)} DT</span>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#2FBE8F]/15 text-[#1a7a5a]">
-                      −{promoResult.reduction.toFixed(3)} DT
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Plans Grid */}
-            <div className="bg-white rounded-3xl p-6 border border-outline-variant/10" style={{ boxShadow: '0 2px 8px rgba(16,35,63,0.04)' }}>
-              <h2 className="text-sm font-bold text-primary mb-5" style={{ fontFamily: 'Sora, sans-serif' }}>
-                Choisir un abonnement
-              </h2>
-              {tarifs.length === 0 ? (
-                <p className="text-sm text-on-surface-variant">
-                  Tarifs non configurés. Exécutez la migration{' '}
-                  <code className="text-xs bg-surface-container-high px-1 rounded">s2_dev1_tarifs_promo.sql</code>{' '}
-                  dans Supabase.
-                </p>
-              ) : (
-                <div className="grid sm:grid-cols-2 gap-4">
-                  {tarifs.map((tarif) => {
-                    const displayPrice = getTarifDisplayPrice(tarif);
-                    const hasDiscount = promoResult?.valid && selectedType === tarif.type_abonnement;
-                    const isDisabled = activeSub && activeSub.statut === 'active';
-
-                    return (
-                      <div
-                        key={tarif.id}
-                        className={`relative rounded-2xl border-2 p-5 transition-all duration-200 ${
-                          isDisabled
-                            ? 'border-outline-variant/10 bg-surface-variant/10 opacity-60'
-                            : 'border-outline-variant/15 hover:border-secondary/30 hover:-translate-y-0.5'
-                        }`}
-                        style={!isDisabled ? { boxShadow: '0 2px 8px rgba(16,35,63,0.04)' } : {}}
-                      >
-                        <div className="flex items-start gap-3 mb-3">
-                          <span
-                            className="flex items-center justify-center w-10 h-10 rounded-xl shrink-0"
-                            style={{ background: 'rgba(249,93,0,0.08)' }}
-                          >
-                            <span className="material-symbols-outlined text-secondary" style={{ fontSize: 22 }}>
-                              {SUBSCRIPTION_ICONS[tarif.type_abonnement] || 'card_membership'}
-                            </span>
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="text-sm font-bold text-primary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                              {SUBSCRIPTION_LABELS[tarif.type_abonnement] || tarif.label}
-                            </h3>
-                            {tarif.type_espace && (
-                              <span className="inline-flex mt-1 items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-                                style={{ background: 'rgba(249,93,0,0.1)', color: '#b34a00' }}
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 12 }}>meeting_room</span>
-                                {ESPACE_TYPE_LABELS[tarif.type_espace] || tarif.type_espace}
-                              </span>
-                            )}
-                            {tarif.duree_jours && (
-                              <span className="text-xs text-on-surface-variant/60">{tarif.duree_jours} jours</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mb-4">
-                          {hasDiscount && (
-                            <p className="text-xs text-on-surface-variant/50 line-through mb-0.5">
-                              {Number(tarif.prix).toFixed(3)} DT TTC
-                            </p>
-                          )}
-                          <p className="text-xl font-bold text-secondary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                            {displayPrice.toFixed(3)} DT
-                            <span className="text-xs font-normal text-on-surface-variant ml-1">TTC</span>
-                          </p>
-                          <p className="text-xs text-on-surface-variant/50 mt-0.5">TVA {tarif.tva_pct}%</p>
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          {!promoCode.trim() ? (
-                            <button
-                              onClick={() => {
-                                setSelectedType(tarif.type_abonnement);
-                                document.querySelector('#promo-input-ref')?.focus();
-                              }}
-                              disabled={isDisabled}
-                              className="w-full py-2.5 rounded-xl text-sm font-semibold border border-secondary/20 text-secondary hover:bg-secondary/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              Appliquer un code promo
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleValidatePromo(tarif.type_abonnement)}
-                              disabled={validating || isDisabled}
-                              className="w-full py-2.5 rounded-xl text-sm font-semibold border border-secondary/20 text-secondary hover:bg-secondary/5 transition-all disabled:opacity-40"
-                            >
-                              {validating && selectedType === tarif.type_abonnement ? 'Vérification...' : 'Vérifier le code'}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => { setConfirmModal({ type: tarif.type_abonnement, label: SUBSCRIPTION_LABELS[tarif.type_abonnement], price: displayPrice }); setModalError(''); }}
-                            disabled={isDisabled}
-                            className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98]"
-                            style={!isDisabled ? { background: 'linear-gradient(135deg, #f95d00, #ff7a28)', boxShadow: '0 4px 12px rgba(249,93,0,0.2)' } : { background: '#ccc' }}
-                          >
-                            Souscrire maintenant
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* History */}
-            {history.length > 0 && (
-              <div className="bg-white rounded-3xl p-6 border border-outline-variant/10" style={{ boxShadow: '0 2px 8px rgba(16,35,63,0.04)' }}>
-                <h2 className="text-sm font-bold text-primary mb-4" style={{ fontFamily: 'Sora, sans-serif' }}>
-                  Historique des abonnements
-                </h2>
-                <div className="space-y-3">
-                  {history.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between p-4 rounded-xl bg-surface-variant/15"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className="flex items-center justify-center w-9 h-9 rounded-lg"
-                          style={{ background: 'rgba(249,93,0,0.08)' }}
-                        >
-                          <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>
-                            {SUBSCRIPTION_ICONS[item.type_abonnement] || 'card_membership'}
-                          </span>
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-primary">
-                            {SUBSCRIPTION_LABELS[item.type_abonnement] || item.type_abonnement}
-                          </p>
-                          <p className="text-xs text-on-surface-variant/60">
-                            {new Date(item.created_at).toLocaleDateString('fr-FR')}
-                            {item.codes_promo?.code ? ` · Code ${item.codes_promo.code}` : ''}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        {item.prix_initial !== item.prix_final && (
-                          <p className="text-xs text-on-surface-variant/50 line-through">
-                            {Number(item.prix_initial).toFixed(3)} DT
-                          </p>
-                        )}
-                        <p className="text-sm font-bold text-secondary">{Number(item.prix_final).toFixed(3)} DT</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Right Sidebar */}
-          <div className="lg:col-span-4 space-y-4">
-            <div className="bg-surface-variant/15 rounded-2xl p-5 border border-outline-variant/10">
-              <div className="flex gap-3 items-start">
-                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>info</span>
-                <div>
-                  <p className="text-sm font-semibold text-primary mb-1" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    Comment ça marche ?
-                  </p>
-                  <ol className="text-xs text-on-surface-variant/70 space-y-1.5 list-decimal list-inside">
-                    <li>Saisissez un code promo (optionnel)</li>
-                    <li>Cliquez « Vérifier le code » pour voir le prix réduit</li>
-                    <li>Cliquez « Souscrire maintenant »</li>
-                    <li>Le règlement s&apos;effectue sur place à l&apos;accueil (espèces, chèque ou virement)</li>
-                  </ol>
-                </div>
-              </div>
-            </div>
-
-            {activeSub && (
-              <div className="bg-white rounded-2xl p-5 border border-outline-variant/10" style={{ boxShadow: '0 2px 8px rgba(16,35,63,0.04)' }}>
-                <p className="text-xs text-on-surface-variant/60 mb-2">
-                  Vous avez déjà un abonnement actif.
-                </p>
-                <p className="text-sm font-semibold text-primary">
-                  {SUBSCRIPTION_LABELS[activeSub.type]} — expire le {new Date(activeSub.date_fin).toLocaleDateString('fr-FR')}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Confirm Modal */}
-        {confirmModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-            <div
-              className="bg-white rounded-3xl p-6 sm:p-8 w-full max-w-md"
-              style={{ boxShadow: '0 24px 64px rgba(0,13,35,0.2)' }}
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <span
-                  className="flex items-center justify-center w-11 h-11 rounded-full"
-                  style={{ background: 'rgba(249,93,0,0.08)' }}
-                >
-                  <span className="material-symbols-outlined text-secondary" style={{ fontSize: 22 }}>card_membership</span>
-                </span>
-                <div>
-                  <h3 className="text-lg font-bold text-primary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    Confirmer la souscription
-                  </h3>
-                  <p className="text-xs text-on-surface-variant/60">{confirmModal.label}</p>
-                </div>
-              </div>
-
-              <div className="bg-surface-variant/15 rounded-xl p-4 mb-5">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm text-on-surface-variant">Abonnement</span>
-                  <span className="text-sm font-semibold text-primary">{confirmModal.label}</span>
-                </div>
-                {promoResult?.valid && selectedType === confirmModal.type && (
-                  <>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm text-on-surface-variant">Réduction</span>
-                      <span className="text-sm font-semibold text-[#2FBE8F]">−{promoResult.reduction.toFixed(3)} DT</span>
-                    </div>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-on-surface-variant/50 line-through">{promoResult.prix_initial.toFixed(3)} DT</span>
-                      <span />
-                    </div>
-                  </>
-                )}
-                <div className="border-t border-outline-variant/15 pt-2 mt-2 flex justify-between items-center">
-                  <span className="text-sm font-bold text-primary">Total</span>
-                  <span className="text-lg font-bold text-secondary" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    {confirmModal.price.toFixed(3)} DT
+        {/* Abonnement actif en tête (jauge, dates, Renouveler / Résilier) */}
+        {activeSub && (
+          <div className="rounded-3xl p-6 sm:p-7 text-white relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #100f0d, #2c1810)', boxShadow: '0 10px 30px rgba(16,15,13,0.22)' }}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+              <div className="space-y-3 flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-3 py-1 rounded-full bg-[#f95d00] text-white text-xs font-bold uppercase tracking-wider">
+                    {activeSub.statut === 'a_renouveler' ? 'À renouveler' : 'Abonnement actif'}
+                  </span>
+                  <span className="text-xs text-[#d6d3d1]">
+                    {activeDaysLeft} jour{activeDaysLeft > 1 ? 's' : ''} restant{activeDaysLeft > 1 ? 's' : ''}
                   </span>
                 </div>
+                <h2 className="font-sora text-2xl font-bold">
+                  {SUBSCRIPTION_LABELS[activeSub.type] || activeSub.type}
+                </h2>
+                <p className="text-xs sm:text-sm text-[#d6d3d1]">
+                  Valable du <strong>{formatDateDMY(activeSub.date_debut)}</strong> au <strong>{formatDateDMY(activeSub.date_fin)}</strong>
+                  {activeSub.unite?.code ? ` · Bureau ${activeSub.unite.code}` : ''}
+                </p>
+
+                {/* Jauge de consommation */}
+                <div className="pt-1 max-w-md space-y-1.5">
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span className="text-[#d6d3d1]">Consommation incluse</span>
+                    <span>
+                      {activeSub.quota_total > 0 && activeSub.quota_type !== 'illimite'
+                        ? `${activeSub.quota_consomme || 0} / ${activeSub.quota_total} ${activeSub.quota_type === 'jours' ? 'j' : 'h'} (${activeQuotaPct}%)`
+                        : 'Accès illimité'}
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/15 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${activeSub.quota_total > 0 && activeSub.quota_type !== 'illimite' ? activeQuotaPct : 100}%`,
+                        backgroundColor: activeQuotaPct >= 90 ? '#f59e0b' : '#f95d00',
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
 
-              {modalError && (
-                <div className="mb-4 p-3 bg-[#FFF0ED] border border-[#FF6F59]/20 text-[#FF6F59] text-xs rounded-xl flex items-center gap-2">
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>error</span>
-                  {modalError}
-                </div>
-              )}
-
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-2.5 shrink-0">
                 <button
-                  onClick={() => setConfirmModal(null)}
-                  disabled={subscribing}
-                  className="flex-1 py-3 rounded-xl text-sm font-semibold border border-outline-variant/20 text-on-surface-variant hover:bg-surface-variant/20 transition-all"
+                  type="button"
+                  onClick={openRenewModal}
+                  disabled={Boolean(pendingRequest)}
+                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                  className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold hover:opacity-95 disabled:opacity-50"
                 >
-                  Annuler
+                  Renouveler
                 </button>
                 <button
-                  onClick={() => handleSubscribe(confirmModal.type)}
-                  disabled={subscribing}
-                  className="flex-1 py-3 rounded-xl text-sm font-bold text-white transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg, #f95d00, #ff7a28)', boxShadow: '0 4px 12px rgba(249,93,0,0.2)' }}
+                  type="button"
+                  onClick={() => setShowResiliateModal(true)}
+                  className="px-4 py-2.5 rounded-xl border border-white/25 text-white text-xs sm:text-sm font-bold hover:bg-white/10"
                 >
-                  {subscribing ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="material-symbols-outlined animate-spin" style={{ fontSize: 16 }}>progress_activity</span>
-                      Création...
-                    </span>
-                  ) : (
-                    'Confirmer'
-                  )}
+                  Résilier
                 </button>
               </div>
             </div>
           </div>
         )}
+
+        {/* Champ global unique "Code promo" */}
+        <form onSubmit={handleApplyGlobalPromo} className="bg-white dark:bg-[#1a1917] rounded-3xl p-5 border border-outline-variant/15 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>local_offer</span>
+            <span className="font-sora text-sm font-bold text-primary dark:text-white">Code promo</span>
+          </div>
+          <input
+            type="text"
+            value={promoCode}
+            onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoResult(null); setPromoError(''); }}
+            placeholder="Saisissez un code promo (optionnel)"
+            className="flex-1 px-4 py-2.5 rounded-xl border border-outline-variant/25 text-sm uppercase bg-white dark:bg-[#141311] text-primary dark:text-white focus:outline-none focus:border-[#f95d00]"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={validatingPromo || !promoCode.trim()}
+              style={{ backgroundColor: '#100f0d', color: '#ffffff' }}
+              className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold disabled:opacity-40"
+            >
+              {validatingPromo ? 'Vérification…' : 'Appliquer'}
+            </button>
+            {promoResult?.valid && (
+              <button type="button" onClick={handleClearPromo} className="px-3 py-2.5 rounded-xl text-xs font-semibold border border-outline-variant/25">
+                Retirer
+              </button>
+            )}
+          </div>
+        </form>
+
+        {promoError && (
+          <p className="text-xs font-semibold text-rose-700 px-2">{promoError}</p>
+        )}
+        {promoResult?.valid && (
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-semibold flex items-center gap-2">
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+            Code {promoResult.code} actif : remise de{' '}
+            {promoResult.type_reduction === 'percent' ? `${promoResult.valeur}%` : <Money amount={promoResult.valeur} />} appliquée aux offres ci-dessous.
+          </div>
+        )}
+
+        {/* Offres disponibles — 1 carte unique dédupliquée par formule */}
+        <section className="space-y-4">
+          <h2 className="font-sora text-lg font-bold text-primary dark:text-white">Offres disponibles</h2>
+
+          {tarifs.length === 0 ? (
+            <div className="bg-white dark:bg-[#1a1917] rounded-2xl p-8 text-center text-sm text-on-surface-variant border border-outline-variant/15">
+              Aucune formule disponible pour le moment. Contactez votre établissement.
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {tarifs.map((tarif) => {
+                const baseHT = Number(tarif.prix_ht ?? tarif.prix ?? 0);
+                const tvaPct = Number(tarif.tva_pct ?? 19);
+                const baseTTC = Number(tarif.prix_ttc ?? Math.round(baseHT * (1 + tvaPct / 100) * 1000) / 1000);
+                const finalHT = computeLocalPromoPreview(baseHT, promoResult);
+                const finalTTC = Math.round(finalHT * (1 + tvaPct / 100) * 1000) / 1000;
+                const hasDiscount = promoResult?.valid && finalTTC < baseTTC;
+                const blockedByActiveOrPending = Boolean(pendingRequest) || (Boolean(activeSub) && activeSub.statut === 'active');
+
+                return (
+                  <div
+                    key={tarif.id || `${tarif.type_abonnement}-${tarif.type_espace || 'all'}`}
+                    className="bg-white dark:bg-[#1a1917] rounded-3xl border border-outline-variant/20 p-5 flex flex-col justify-between gap-4 shadow-xs"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3">
+                        <span className="w-11 h-11 rounded-xl flex items-center justify-center bg-[#f95d00]/10 text-[#f95d00] shrink-0">
+                          <span className="material-symbols-outlined" style={{ fontSize: 22 }}>
+                            {SUBSCRIPTION_ICONS[tarif.type_abonnement] || 'card_membership'}
+                          </span>
+                        </span>
+                        <div className="min-w-0">
+                          <h3 className="font-sora font-bold text-base text-primary dark:text-white">
+                            {SUBSCRIPTION_LABELS[tarif.type_abonnement] || tarif.label}
+                          </h3>
+                          {tarif.type_espace && (
+                            <span className="inline-flex mt-1 items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-[#ffedd8] text-[#9a3412]">
+                              {ESPACE_TYPE_LABELS[tarif.type_espace] || tarif.type_espace}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {tarif.description && (
+                        <p className="text-xs text-on-surface-variant leading-relaxed">{tarif.description}</p>
+                      )}
+
+                      {Array.isArray(tarif.avantages) && tarif.avantages.length > 0 && (
+                        <ul className="space-y-1.5 text-xs text-primary dark:text-slate-200">
+                          {tarif.avantages.map((av, idx) => (
+                            <li key={idx} className="flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-emerald-600 shrink-0" style={{ fontSize: 15 }}>check_circle</span>
+                              <span>{av}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-outline-variant/15 space-y-3">
+                      <div>
+                        {hasDiscount && (
+                          <p className="text-xs text-on-surface-variant line-through">
+                            <Money amount={baseTTC} showTaxType="TTC" />
+                          </p>
+                        )}
+                        <p className="font-sora text-xl font-extrabold text-[#f95d00]">
+                          <Money amount={finalTTC} zeroLabel="Gratuit" showTaxType="TTC" />
+                        </p>
+                        <p className="text-xs text-on-surface-variant">
+                          Soit <Money amount={finalHT} zeroLabel="Gratuit" showTaxType="HT" /> · TVA {tvaPct}%
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setModalError('');
+                          setConfirmModal({
+                            type: tarif.type_abonnement,
+                            label: SUBSCRIPTION_LABELS[tarif.type_abonnement] || tarif.label,
+                            prixHT: finalHT,
+                            prixTTC: finalTTC,
+                            tvaPct,
+                            isRenewal: false,
+                          });
+                        }}
+                        disabled={blockedByActiveOrPending}
+                        style={!blockedByActiveOrPending ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+                        className="w-full py-2.5 rounded-xl text-sm font-bold transition disabled:opacity-40 disabled:bg-slate-200 disabled:text-slate-500 cursor-pointer"
+                      >
+                        {pendingRequest ? 'Demande en cours' : activeSub ? 'Abonnement actif' : 'Souscrire'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Historique éventuel */}
+        {history.length > 0 && (
+          <section className="bg-white dark:bg-[#1a1917] rounded-3xl p-5 sm:p-6 border border-outline-variant/15">
+            <h2 className="font-sora text-base font-bold text-primary dark:text-white mb-4">Historique tarifaire</h2>
+            <div className="space-y-2.5">
+              {history.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-low/40">
+                  <div>
+                    <p className="text-sm font-semibold text-primary dark:text-white">
+                      {SUBSCRIPTION_LABELS[item.type_abonnement] || item.type_abonnement}
+                    </p>
+                    <p className="text-xs text-on-surface-variant">
+                      {formatDateDMY(item.created_at)}{item.codes_promo?.code ? ` · Code ${item.codes_promo.code}` : ''}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-[#f95d00]"><Money amount={item.prix_final} /></p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
+
+      {/* Modale confirmation souscription / renouvellement */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmModal(null)}>
+          <div className="bg-white dark:bg-[#1a1917] rounded-3xl p-6 max-w-md w-full border border-outline-variant/20 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-sora text-lg font-bold text-primary dark:text-white">
+              {confirmModal.isRenewal ? "Renouveler l'abonnement" : "Confirmer la demande d'abonnement"}
+            </h3>
+            <div className="rounded-2xl bg-surface-container-low/50 p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-on-surface-variant">Formule</span>
+                <span className="font-bold text-primary dark:text-white">{confirmModal.label}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-on-surface-variant">Montant HT</span>
+                <span><Money amount={confirmModal.prixHT} showTaxType="HT" /></span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-on-surface-variant">TVA ({confirmModal.tvaPct}%)</span>
+                <span><Money amount={Math.max(0, confirmModal.prixTTC - confirmModal.prixHT)} /></span>
+              </div>
+              <div className="flex justify-between border-t border-outline-variant/15 pt-2 font-bold">
+                <span>Total TTC</span>
+                <span className="text-[#f95d00]"><Money amount={confirmModal.prixTTC} showTaxType="TTC" /></span>
+              </div>
+            </div>
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              Votre demande sera enregistrée au statut <strong>En attente de paiement</strong>. Elle sera activée dès l&apos;encaissement à l&apos;accueil.
+            </p>
+            {modalError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">{modalError}</div>
+            )}
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setConfirmModal(null)} className="flex-1 py-2.5 rounded-xl border border-outline-variant/30 text-xs font-bold">
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={subscribing}
+                onClick={() => handleSubscribe({ type: confirmModal.type, isRenewal: confirmModal.isRenewal })}
+                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold disabled:opacity-50"
+              >
+                {subscribing ? 'Envoi…' : 'Valider la demande'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modale résiliation membre */}
+      {showResiliateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowResiliateModal(false)}>
+          <form onSubmit={handleConfirmResiliate} className="bg-white dark:bg-[#1a1917] rounded-3xl p-6 max-w-md w-full border border-outline-variant/20 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-sora text-lg font-bold text-primary dark:text-white">Résilier mon abonnement ?</h3>
+            <p className="text-xs text-on-surface-variant">
+              Cette action met fin à votre abonnement et désactive tout renouvellement.
+            </p>
+            <div>
+              <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Motif (optionnel)</label>
+              <input
+                type="text"
+                value={resiliateMotif}
+                onChange={(e) => setResiliateMotif(e.target.value)}
+                placeholder="Ex : Fin de projet, changement de rythme…"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/30 text-sm"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowResiliateModal(false)} className="flex-1 py-2.5 rounded-xl border border-outline-variant/30 text-xs font-bold">
+                Conserver
+              </button>
+              <button
+                type="submit"
+                disabled={resiliating}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {resiliating ? 'Résiliation…' : 'Confirmer la résiliation'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </PortalLayout>
   );
 }

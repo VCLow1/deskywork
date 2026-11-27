@@ -1,6 +1,6 @@
 /**
  * Numérotation continue et sans trou pour les documents financiers DESKYWORK :
- * - receipt      -> REC-YYYY-XXXX (généré UNIQUEMENT à l'encaissement, jamais au téléchargement PDF)
+ * - receipt      -> REC-AAAA-NNNNNN (6 chiffres, généré UNIQUEMENT à l'encaissement, jamais au téléchargement PDF)
  * - invoice      -> FAC-YYYY-XXXX (généré UNIQUEMENT à l'émission de la facture)
  * - quote        -> DEV-YYYY-XXXX
  * - credit_note  -> AV-YYYY-XXXX (généré à la création d'un avoir / remboursement)
@@ -30,10 +30,11 @@ function getTunisFiscalYear(date = new Date()) {
   }
 }
 
-function formatDocumentNumber(prefix, fiscalYear, seq) {
+function formatDocumentNumber(prefix, fiscalYear, seq, docType = null) {
   const safePrefix = String(prefix || 'DOC').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'DOC';
   const safeSeq = Math.max(1, parseInt(seq, 10) || 1);
-  return `${safePrefix}-${fiscalYear}-${String(safeSeq).padStart(4, '0')}`;
+  const padWidth = (docType === 'receipt' || safePrefix === 'REC') ? 6 : 4;
+  return `${safePrefix}-${fiscalYear}-${String(safeSeq).padStart(padWidth, '0')}`;
 }
 
 async function getTenantNumberingConfig(supabaseAdmin, tenantId) {
@@ -73,7 +74,14 @@ async function allocateDocumentNumber(supabaseAdmin, tenantId, docType, options 
       p_fiscal_year: fiscalYear,
     });
     if (!rpcErr && typeof rpcNum === 'string' && rpcNum.trim()) {
-      return rpcNum.trim();
+      const trimmed = rpcNum.trim();
+      if (docType === 'receipt') {
+        const m = trimmed.match(/^([A-Z0-9_-]+-\d{4}-)(\d+)$/);
+        if (m && m[2].length < 6) {
+          return `${m[1]}${m[2].padStart(6, '0')}`;
+        }
+      }
+      return trimmed;
     }
   } catch {
     // Repli vers document_counters puis tenants.settings
@@ -100,7 +108,7 @@ async function allocateDocumentNumber(supabaseAdmin, tenantId, docType, options 
             updated_at: new Date().toISOString(),
           })
           .eq('id', existingCounter.id);
-        return formatDocumentNumber(configuredPrefix || existingCounter.prefix, fiscalYear, nextVal);
+        return formatDocumentNumber(configuredPrefix || existingCounter.prefix, fiscalYear, nextVal, docType);
       }
       const floorStart = Math.max(1, parseInt(numbering[`${meta.counterKey}_${fiscalYear}`] || numbering[meta.counterKey] || 1, 10) || 1);
       const { error: insErr } = await supabaseAdmin
@@ -113,7 +121,7 @@ async function allocateDocumentNumber(supabaseAdmin, tenantId, docType, options 
           last_number: floorStart,
         });
       if (!insErr) {
-        return formatDocumentNumber(configuredPrefix, fiscalYear, floorStart);
+        return formatDocumentNumber(configuredPrefix, fiscalYear, floorStart, docType);
       }
     }
   } catch {
@@ -170,7 +178,7 @@ async function allocateDocumentNumber(supabaseAdmin, tenantId, docType, options 
     })
     .eq('id', tenantId);
 
-  return formatDocumentNumber(configuredPrefix, fiscalYear, nextSeq);
+  return formatDocumentNumber(configuredPrefix, fiscalYear, nextSeq, docType);
 }
 
 /**

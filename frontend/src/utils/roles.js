@@ -145,46 +145,19 @@ export const COMPANY_NAV = [
   },
 ];
 
+// LOT 2 Espace Membre : Navigation mobile-first en 8 entrées claires (sans scroll interne caché)
 export const MEMBER_NAV = [
   {
-    group: 'Général',
+    group: 'Espace membre',
     items: [
       { id: 'dashboard', label: 'Accueil', icon: 'home', to: '/dashboard' },
-    ],
-  },
-  {
-    group: 'Réservations',
-    items: [
+      { id: 'book', label: 'Réserver', icon: 'add_circle', to: '/book/step1' },
       { id: 'member_bookings', label: 'Mes réservations', icon: 'calendar_month', to: '/dashboard/bookings' },
-      { id: 'book', label: 'Réserver un espace', icon: 'calendar_today', to: '/book/step1' },
-      { id: 'qr', label: 'Mon accès', icon: 'qr_code_2', to: '/dashboard/qr' },
-    ],
-  },
-  {
-    group: 'Formations',
-    items: [
+      { id: 'abonnement', label: 'Mon abonnement', icon: 'card_membership', to: '/dashboard/abonnement' },
+      { id: 'member_payments', label: 'Mes paiements', icon: 'payments', to: '/member/payments' },
       { id: 'member_formations', label: 'Formations', icon: 'school', to: '/dashboard/formations' },
-    ],
-  },
-  {
-    group: 'Comptes & Finance',
-    items: [
-      { id: 'abonnement', label: 'Abonnement & tarifs', icon: 'payments', to: '/dashboard/abonnement' },
-      { id: 'member_payments', label: 'Mes reçus', icon: 'receipt_long', to: '/member/payments' },
-    ],
-  },
-  {
-    group: 'Communication',
-    items: [
-      { id: 'member_messages', label: 'Messagerie', icon: 'chat', to: '/dashboard/messages' },
-      { id: 'member_notifications', label: 'Notifications', icon: 'notifications', to: '/dashboard/notifications' },
-    ],
-  },
-  {
-    group: 'Mon compte',
-    items: [
-      { id: 'member_documents', label: 'Mes documents', icon: 'folder', to: '/dashboard/documents' },
-      { id: 'member_rgpd', label: 'Données & RGPD', icon: 'privacy_tip', to: '/dashboard/rgpd' },
+      { id: 'member_messages', label: 'Messages', icon: 'chat', to: '/dashboard/messages' },
+      { id: 'member_profile', label: 'Mon compte', icon: 'account_circle', to: '/dashboard/profile' },
     ],
   },
 ];

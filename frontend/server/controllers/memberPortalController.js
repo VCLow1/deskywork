@@ -2,76 +2,220 @@
 const { supabaseAdmin } = require('../config/supabase');
 const { sweepPastConfirmedReservations } = require('../models/bookingAvailability');
 const { computeTenantLiveAvailability } = require('../models/availabilitySummary');
+const { roundMillime } = require('../models/pricingMath');
+
+function getTunisYearMonth(dateInput = new Date()) {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Tunis',
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(d);
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    if (y && m) return `${y}-${m}`;
+  } catch (_) {}
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
 
 // ── GET /api/bookings/history ─────────────────────────────────────────────
 async function bookingsHistory(req, res) {
   await sweepPastConfirmedReservations(supabaseAdmin, { userId: req.user.id }).catch(() => {});
-  const { page = 1, limit = 10, statut } = req.query;
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const { page = 1, limit = 10, statut, tab } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
 
-  let query = supabaseAdmin
+  const { data: rawBookings, error } = await supabaseAdmin
     .from('reservations')
     .select(`
       *,
-      espaces (id, nom, type, tarif_horaire),
+      espaces (id, nom, type, tarif_horaire, tenant_id),
       profiles!user_id (nom, prenom, email),
-      paiements (id, statut, mode, montant)
-    `, { count: 'exact' })
+      paiements (id, statut, mode, montant, total_du, montant_paye, reste_a_payer)
+    `)
     .eq('user_id', req.user.id)
-    .order('created_at', { ascending: false });
+    .order('date_debut', { ascending: false });
 
-  if (statut) query = query.eq('statut', statut);
-
-  const { data: rawData, error, count } = await query.range(offset, offset + parseInt(limit) - 1);
   if (error) return res.status(500).json({ error: error.message });
 
-  const { data: allBookings } = await supabaseAdmin
-    .from('reservations')
-    .select('id, statut, date_debut, date_fin, espaces(tarif_horaire)')
-    .eq('user_id', req.user.id);
+  const allRows = (rawBookings || []).filter((r) => !r.archived_at);
+  const resIds = allRows.map((r) => r.id);
+  const tenantIds = Array.from(new Set(allRows.map((r) => r.tenant_id || r.espaces?.tenant_id).filter(Boolean)));
 
-  let totalHours = 0;
-  let totalSpent = 0;
+  const [sessRes, tenantRowsRes] = await Promise.all([
+    resIds.length > 0
+      ? supabaseAdmin
+          .from('sessions')
+          .select('id, reservation_id, started_at, check_in, check_out, statut')
+          .in('reservation_id', resIds)
+      : { data: [] },
+    tenantIds.length > 0
+      ? supabaseAdmin.from('tenants').select('id, nom, settings').in('id', tenantIds)
+      : { data: [] },
+  ]);
 
-  (allBookings || []).forEach(b => {
-    let hours = 0;
-    if (b.date_debut && b.date_fin) {
-      hours = Math.max(0, (new Date(b.date_fin) - new Date(b.date_debut)) / (1000 * 60 * 60));
+  const activeSessionByRes = new Map();
+  const anySessionByRes = new Map();
+  for (const s of sessRes?.data || []) {
+    if (!anySessionByRes.has(s.reservation_id)) anySessionByRes.set(s.reservation_id, s);
+    if (!s.check_out && ['active', 'overtime'].includes(s.statut) && (s.started_at || s.check_in)) {
+      activeSessionByRes.set(s.reservation_id, s);
     }
-    if (b.statut !== 'cancelled') {
-      totalHours += hours;
-      const tarif = parseFloat(b.espaces?.tarif_horaire) || 0;
-      totalSpent += (hours * tarif);
-    }
-  });
+  }
 
-  const enrichedBookings = (rawData || []).map(b => {
-    let hours = 0;
-    if (b.date_debut && b.date_fin) {
-      hours = Math.max(0, (new Date(b.date_fin) - new Date(b.date_debut)) / (1000 * 60 * 60));
+  const refusalByRes = {};
+  const payMetaById = {};
+  const tenantNameById = new Map();
+  for (const t of tenantRowsRes?.data || []) {
+    tenantNameById.set(t.id, t.nom);
+    const rr = t.settings?.reservation_refusal_reasons;
+    if (rr && typeof rr === 'object') {
+      Object.assign(refusalByRes, rr);
     }
+    const pm = t.settings?.payment_meta;
+    if (pm && typeof pm === 'object') {
+      Object.assign(payMetaById, pm);
+    }
+  }
+
+  const nowMs = Date.now();
+  const currentMonthKey = getTunisYearMonth(new Date(nowMs));
+
+  let upcomingCount = 0;
+  let hoursThisMonth = 0;
+  let totalPaid = 0;
+  let totalRemaining = 0;
+  const tabCounts = { upcoming: 0, ongoing: 0, past: 0, cancelled_refused: 0 };
+
+  const enrichedAll = allRows.map((b) => {
+    const startMs = b.date_debut ? new Date(b.date_debut).getTime() : NaN;
+    const endMs = b.date_fin ? new Date(b.date_fin).getTime() : NaN;
+    const hours = Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(0, (endMs - startMs) / (1000 * 60 * 60))
+      : 0;
     const tarif = parseFloat(b.espaces?.tarif_horaire) || 0;
-    const computedCost = parseFloat((hours * tarif).toFixed(3));
+    const montantTotal = roundMillime(b.montant_ttc ?? b.montant_total ?? (hours * tarif));
+
+    const payList = Array.isArray(b.paiements) ? b.paiements : [];
+    let paidForBooking = 0;
+    let remainingForBooking = 0;
+    for (const p of payList) {
+      const meta = payMetaById[p.id] || {};
+      const st = meta.logical_status && p.statut === 'pending' ? meta.logical_status : p.statut;
+      if (st === 'paid') {
+        paidForBooking = roundMillime(paidForBooking + Number(p.montant || 0));
+      } else if (st === 'partial') {
+        const resteP = Number(p.reste_a_payer ?? meta.reste_a_payer ?? p.montant ?? 0);
+        remainingForBooking = roundMillime(remainingForBooking + resteP);
+      } else if (st === 'pending') {
+        remainingForBooking = roundMillime(remainingForBooking + Number(p.reste_a_payer ?? meta.reste_a_payer ?? p.montant ?? 0));
+      }
+    }
+
+    const isCancelledOrRefused = b.statut === 'cancelled' || b.statut === 'refused';
+    if (!isCancelledOrRefused && payList.length === 0 && montantTotal > 0) {
+      remainingForBooking = montantTotal;
+    }
+    if (isCancelledOrRefused) {
+      // Seules les pénalités explicitement maintenues en attente comptent dans remaining
+      remainingForBooking = roundMillime(
+        payList
+          .filter((p) => p.statut === 'pending' && String(p.reference_externe || '').toUpperCase().startsWith('PENALITE'))
+          .reduce((s, p) => s + Number(p.montant || 0), 0)
+      );
+    }
+
+    const activeSess = activeSessionByRes.get(b.id) || null;
+    const anySess = anySessionByRes.get(b.id) || null;
+    const hasStarted = Boolean(activeSess || anySess?.check_in || (Number.isFinite(startMs) && startMs <= nowMs));
+
+    let tabBucket = 'past';
+    if (isCancelledOrRefused) {
+      tabBucket = 'cancelled_refused';
+    } else if (
+      activeSess ||
+      (['confirmed', 'pending', 'en_attente_confirmation'].includes(b.statut) &&
+        Number.isFinite(startMs) &&
+        Number.isFinite(endMs) &&
+        startMs <= nowMs &&
+        endMs > nowMs)
+    ) {
+      tabBucket = 'ongoing';
+    } else if (
+      ['confirmed', 'pending', 'en_attente_confirmation', 'waitlisted'].includes(b.statut) &&
+      Number.isFinite(startMs) &&
+      startMs > nowMs
+    ) {
+      tabBucket = 'upcoming';
+    }
+
+    tabCounts[tabBucket] = (tabCounts[tabBucket] || 0) + 1;
+    if (tabBucket === 'upcoming') upcomingCount++;
+    if (!isCancelledOrRefused && b.date_debut && getTunisYearMonth(b.date_debut) === currentMonthKey) {
+      hoursThisMonth += hours;
+    }
+    totalPaid = roundMillime(totalPaid + paidForBooking);
+    totalRemaining = roundMillime(totalRemaining + remainingForBooking);
+
+    const tid = b.tenant_id || b.espaces?.tenant_id || null;
+    const refusalReason =
+      b.motif_refus ||
+      refusalByRes[b.id] ||
+      (b.statut === 'refused' ? (b.motif_annulation || null) : null);
+
     return {
       ...b,
-      montant_total: computedCost,
+      coworking_nom: tid ? (tenantNameById.get(tid) || null) : null,
+      montant_total: montantTotal,
+      montant_paye: paidForBooking,
+      reste_a_payer: remainingForBooking,
+      has_active_session: Boolean(activeSess),
+      has_started: hasStarted,
+      tab_bucket: tabBucket,
+      motif_refus: refusalReason,
     };
   });
 
+  let filteredList = enrichedAll;
+  if (tab && ['upcoming', 'ongoing', 'past', 'cancelled_refused'].includes(tab)) {
+    filteredList = filteredList.filter((b) => b.tab_bucket === tab);
+  } else if (statut) {
+    filteredList = filteredList.filter((b) => b.statut === statut);
+  }
+
+  // Tri : à venir & en cours du plus proche au plus lointain ; passées & annulées du plus récent au plus ancien
+  if (tab === 'upcoming' || tab === 'ongoing') {
+    filteredList = [...filteredList].sort((a, b) => new Date(a.date_debut) - new Date(b.date_debut));
+  }
+
+  const totalCount = filteredList.length;
+  const offset = (pageNum - 1) * limitNum;
+  const paginated = filteredList.slice(offset, offset + limitNum);
+
   const stats = {
-    total: allBookings?.length || 0,
-    confirmed: allBookings?.filter(b => b.statut === 'confirmed').length || 0,
-    pending: allBookings?.filter(b => b.statut === 'pending').length || 0,
-    cancelled: allBookings?.filter(b => b.statut === 'cancelled').length || 0,
-    completed: allBookings?.filter(b => b.statut === 'completed').length || 0,
-    totalHours: totalHours.toFixed(1),
-    totalSpent: totalSpent.toFixed(3),
+    total: allRows.length,
+    upcomingCount,
+    hoursThisMonth: Number(hoursThisMonth.toFixed(1)),
+    totalPaid,
+    totalRemaining,
+    tabCounts,
+    confirmed: allRows.filter((b) => b.statut === 'confirmed').length,
+    pending: allRows.filter((b) => b.statut === 'pending').length,
+    cancelled: allRows.filter((b) => b.statut === 'cancelled').length,
+    completed: allRows.filter((b) => b.statut === 'completed').length,
   };
 
   res.json({
-    bookings: enrichedBookings,
+    bookings: paginated,
     stats,
-    pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / parseInt(limit)) },
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: totalCount,
+      totalPages: Math.max(1, Math.ceil(totalCount / limitNum)),
+    },
   });
 }
 
@@ -134,14 +278,23 @@ async function spacesNearby(req, res) {
     const [{ data: prof }, { data: tenants }, { data: memberBookings }] = await Promise.all([
       supabaseAdmin.from('profiles').select('tenant_id').eq('id', userId).maybeSingle(),
       supabaseAdmin.from('tenants').select('id, nom, ville, adresse, pays, settings').eq('statut', 'actif'),
-      supabaseAdmin.from('reservations').select('tenant_id, espaces(tenant_id)').eq('user_id', userId),
+      supabaseAdmin
+        .from('reservations')
+        .select('id, espace_id, tenant_id, statut, date_fin, espaces(tenant_id)')
+        .eq('user_id', userId),
     ]);
 
+    const nowMs = Date.now();
     const tenantById = new Map((tenants || []).map((t) => [t.id, t]));
     const tenantFreq = {};
+    const spacePastCount = {};
     (memberBookings || []).forEach((b) => {
       const tid = b.tenant_id || b.espaces?.tenant_id;
       if (tid) tenantFreq[tid] = (tenantFreq[tid] || 0) + 1;
+      const isPast = b.date_fin && new Date(b.date_fin).getTime() <= nowMs;
+      if (b.espace_id && isPast && !['cancelled', 'refused'].includes(b.statut)) {
+        spacePastCount[b.espace_id] = (spacePastCount[b.espace_id] || 0) + 1;
+      }
     });
 
     const homeTenantId = prof?.tenant_id && tenantById.has(prof.tenant_id) ? prof.tenant_id : null;
@@ -180,6 +333,8 @@ async function spacesNearby(req, res) {
       freeSpacesCount += live.summary.free_spaces || 0;
 
       for (const sp of live.spaces || []) {
+        const pastCount = spacePastCount[sp.id] || 0;
+        const isHabituel = pastCount >= 2;
         spaces.push({
           id: sp.id,
           tenant_id: sp.tenant_id,
@@ -196,7 +351,9 @@ async function spacesNearby(req, res) {
           places_restantes: sp.available_units ?? sp.remaining_spots,
           total_units: sp.total_units,
           available_units: sp.available_units,
-          proche: tenant.id === homeTenantId || !!tenantFreq[tenant.id],
+          past_bookings_count: pastCount,
+          habituel: isHabituel,
+          proche: isHabituel,
           coworking: { nom: tenant.nom, ville: tenant.ville, adresse: tenant.adresse, pays: tenant.pays },
         });
       }
@@ -204,7 +361,7 @@ async function spacesNearby(req, res) {
 
     spaces.sort((a, b) => {
       if (a.disponible !== b.disponible) return a.disponible ? -1 : 1;
-      if (!!a.proche !== !!b.proche) return a.proche ? -1 : 1;
+      if (!!a.habituel !== !!b.habituel) return a.habituel ? -1 : 1;
       return a.tarif_horaire - b.tarif_horaire;
     });
 

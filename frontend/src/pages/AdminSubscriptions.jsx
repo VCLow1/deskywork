@@ -7,6 +7,7 @@ import { formatDateDMY } from '../utils/format';
 import Money from '../components/common/Money';
 
 const STATUS_TABS = [
+  { id: 'demandes', label: 'Demandes', icon: 'pending_actions' },
   { id: 'active', label: 'Actifs', icon: 'verified' },
   { id: 'a_renouveler', label: 'À renouveler', icon: 'autorenew' },
   { id: 'expired', label: 'Expirés', icon: 'event_busy' },
@@ -15,12 +16,15 @@ const STATUS_TABS = [
 ];
 
 const STATUS_META = {
+  demandes: { label: 'En attente de paiement', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+  en_attente_paiement: { label: 'En attente de paiement', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
   active: { label: 'Actif', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
   actif: { label: 'Actif', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
   a_renouveler: { label: 'À renouveler', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
   expired: { label: 'Expiré', cls: 'bg-slate-100 text-slate-700 border-slate-200' },
   suspended: { label: 'Suspendu', cls: 'bg-orange-100 text-orange-800 border-orange-200' },
   resilie: { label: 'Résilié', cls: 'bg-red-100 text-red-800 border-red-200' },
+  refuse: { label: 'Refusé', cls: 'bg-rose-100 text-rose-800 border-rose-200' },
 };
 
 const TYPE_LABELS = {
@@ -34,7 +38,8 @@ const TYPE_LABELS = {
 
 function normalizeBucket(sub) {
   const st = String(sub?.statut || 'active').toLowerCase();
-  if (st === 'resilie') return 'resilie';
+  if (st === 'en_attente_paiement' || sub?.pending_payment) return 'demandes';
+  if (st === 'resilie' || st === 'refuse') return 'resilie';
   if (st === 'suspended') return 'suspended';
   if (st === 'expired') return 'expired';
   if (st === 'a_renouveler') return 'a_renouveler';
@@ -69,6 +74,12 @@ export default function AdminSubscriptions({ session }) {
   const [creating, setCreating] = useState(false);
   const [suspendTarget, setSuspendTarget] = useState(null);
   const [suspendMotif, setSuspendMotif] = useState('');
+  const [approveTarget, setApproveTarget] = useState(null);
+  const [approveMode, setApproveMode] = useState('cash');
+  const [approving, setApproving] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectMotif, setRejectMotif] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const [form, setForm] = useState({
     user_id: '',
     type: 'mensuel',
@@ -111,7 +122,7 @@ export default function AdminSubscriptions({ session }) {
   useEffect(() => { loadData(); }, [includeArchived]);
 
   const counts = useMemo(() => {
-    const map = { active: 0, a_renouveler: 0, expired: 0, suspended: 0, resilie: 0 };
+    const map = { demandes: 0, active: 0, a_renouveler: 0, expired: 0, suspended: 0, resilie: 0 };
     subscriptions.forEach((s) => {
       if (s.archived_at) return;
       const b = normalizeBucket(s);
@@ -203,6 +214,45 @@ export default function AdminSubscriptions({ session }) {
       await loadData();
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleConfirmApprovePayment = async (e) => {
+    e.preventDefault();
+    if (!approveTarget) return;
+    setApproving(true);
+    setError('');
+    try {
+      const res = await subscriptionApi.approvePayment(approveTarget.id, { mode: approveMode });
+      setApproveTarget(null);
+      showToast(res.message || 'Abonnement encaissé et activé !');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleConfirmRejectRequest = async (e) => {
+    e.preventDefault();
+    if (!rejectTarget) return;
+    if (rejectMotif.trim().length < 3) {
+      setError('Saisissez un motif de refus (minimum 3 caractères).');
+      return;
+    }
+    setRejecting(true);
+    setError('');
+    try {
+      await subscriptionApi.rejectRequest(rejectTarget.id, { motif: rejectMotif.trim() });
+      setRejectTarget(null);
+      setRejectMotif('');
+      showToast("Demande d'abonnement refusée.");
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -359,40 +409,62 @@ export default function AdminSubscriptions({ session }) {
                               </button>
                             ) : (
                               <>
-                                {normalizeBucket(s) !== 'active' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleChangeStatus(s, 'active')}
-                                    className="px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50"
-                                  >
-                                    Activer
-                                  </button>
+                                {normalizeBucket(s) === 'demandes' ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setApproveTarget(s); setApproveMode('cash'); }}
+                                      style={{ backgroundColor: '#16a34a', color: '#ffffff' }}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-bold hover:opacity-95"
+                                    >
+                                      Encaisser &amp; activer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setRejectTarget(s); setRejectMotif(''); }}
+                                      className="px-2.5 py-1 rounded-lg border border-rose-300 text-rose-700 text-xs font-semibold hover:bg-rose-50"
+                                    >
+                                      Refuser
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    {normalizeBucket(s) !== 'active' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleChangeStatus(s, 'active')}
+                                        className="px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50"
+                                      >
+                                        Activer
+                                      </button>
+                                    )}
+                                    {normalizeBucket(s) === 'active' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleChangeStatus(s, 'suspended')}
+                                        className="px-2.5 py-1 rounded-lg border border-amber-300 text-amber-800 text-xs font-semibold hover:bg-amber-50"
+                                      >
+                                        Suspendre
+                                      </button>
+                                    )}
+                                    {normalizeBucket(s) !== 'resilie' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleChangeStatus(s, 'resilie')}
+                                        className="px-2.5 py-1 rounded-lg border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-50"
+                                      >
+                                        Résilier
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleArchive(s)}
+                                      className="px-2.5 py-1 rounded-lg border border-outline-variant/30 text-on-surface-variant text-xs font-semibold hover:bg-surface-container-low"
+                                    >
+                                      Archiver
+                                    </button>
+                                  </>
                                 )}
-                                {normalizeBucket(s) === 'active' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleChangeStatus(s, 'suspended')}
-                                    className="px-2.5 py-1 rounded-lg border border-amber-300 text-amber-800 text-xs font-semibold hover:bg-amber-50"
-                                  >
-                                    Suspendre
-                                  </button>
-                                )}
-                                {normalizeBucket(s) !== 'resilie' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleChangeStatus(s, 'resilie')}
-                                    className="px-2.5 py-1 rounded-lg border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-50"
-                                  >
-                                    Résilier
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handleArchive(s)}
-                                  className="px-2.5 py-1 rounded-lg border border-outline-variant/30 text-on-surface-variant text-xs font-semibold hover:bg-surface-container-low"
-                                >
-                                  Archiver
-                                </button>
                               </>
                             )}
                           </div>
@@ -503,6 +575,74 @@ export default function AdminSubscriptions({ session }) {
                 <button type="button" onClick={() => setShowNew(false)} className="px-4 py-2 rounded-xl border border-outline-variant/30 text-sm font-semibold">Annuler</button>
                 <button type="submit" disabled={creating} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="px-5 py-2 rounded-xl text-sm font-bold">
                   {creating ? 'Création…' : 'Créer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {approveTarget && (
+          <div className="fixed inset-0 z-[100] bg-black/45 flex items-center justify-center p-4">
+            <form onSubmit={handleConfirmApprovePayment} className="bg-white dark:bg-[#1a1815] rounded-3xl p-6 max-w-md w-full border border-outline-variant/20 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-sora font-bold text-lg text-primary">Encaisser &amp; activer l&apos;abonnement</h2>
+                <button type="button" onClick={() => setApproveTarget(null)} className="text-on-surface-variant">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-surface-container-low/50 text-xs space-y-1">
+                <p><strong>Membre :</strong> {approveTarget.profiles ? `${approveTarget.profiles.prenom || ''} ${approveTarget.profiles.nom || ''}`.trim() : 'Membre'}</p>
+                <p><strong>Formule :</strong> {TYPE_LABELS[approveTarget.type] || approveTarget.type}</p>
+                {approveTarget.montant_ttc > 0 && (
+                  <p><strong>Montant à encaisser :</strong> <Money amount={approveTarget.montant_ttc} showTaxType="TTC" /></p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Mode d&apos;encaissement *</label>
+                <select
+                  value={approveMode}
+                  onChange={(e) => setApproveMode(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm bg-white"
+                >
+                  <option value="cash">Espèces</option>
+                  <option value="bank_transfer">Virement bancaire</option>
+                  <option value="check">Chèque</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setApproveTarget(null)} className="px-4 py-2 rounded-xl border border-outline-variant/30 text-sm font-semibold">Annuler</button>
+                <button type="submit" disabled={approving} style={{ backgroundColor: '#16a34a', color: '#ffffff' }} className="px-5 py-2 rounded-xl text-sm font-bold disabled:opacity-50">
+                  {approving ? 'Validation…' : 'Encaisser & activer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {rejectTarget && (
+          <div className="fixed inset-0 z-[100] bg-black/45 flex items-center justify-center p-4">
+            <form onSubmit={handleConfirmRejectRequest} className="bg-white dark:bg-[#1a1815] rounded-3xl p-6 max-w-md w-full border border-outline-variant/20 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-sora font-bold text-lg text-primary">Refuser la demande</h2>
+                <button type="button" onClick={() => setRejectTarget(null)} className="text-on-surface-variant">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Motif du refus *</label>
+                <input
+                  required
+                  minLength={3}
+                  value={rejectMotif}
+                  onChange={(e) => setRejectMotif(e.target.value)}
+                  placeholder="Ex : Formulaire incomplet ou créneau non éligible"
+                  className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setRejectTarget(null)} className="px-4 py-2 rounded-xl border border-outline-variant/30 text-sm font-semibold">Annuler</button>
+                <button type="submit" disabled={rejecting} className="px-5 py-2 rounded-xl bg-rose-600 text-white text-sm font-bold disabled:opacity-50">
+                  {rejecting ? 'Envoi…' : 'Confirmer le refus'}
                 </button>
               </div>
             </form>

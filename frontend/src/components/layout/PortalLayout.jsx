@@ -41,9 +41,21 @@ function getProfilePath(role, typeMembre = null) {
 
 // Titres des pages hors navigation (breadcrumb / recherche)
 const PAGE_TITLES = {
-  '/book/step1': 'Réserver un espace',
-  '/book/step2': 'Réserver un espace',
-  '/book/step3': 'Réserver un espace',
+  '/book/step1': 'Réserver',
+  '/book/step2': 'Réserver · Créneau',
+  '/book/step3': 'Réserver · Confirmation',
+  '/dashboard': 'Accueil',
+  '/dashboard/qr': 'Mon accès',
+  '/dashboard/bookings': 'Mes réservations',
+  '/dashboard/abonnement': 'Mon abonnement',
+  '/member/payments': 'Mes paiements',
+  '/dashboard/formations': 'Formations',
+  '/dashboard/messages': 'Messages',
+  '/dashboard/profile': 'Mon compte',
+  '/dashboard/documents': 'Mes documents',
+  '/dashboard/rgpd': 'Données & RGPD',
+  '/dashboard/notifications': 'Notifications',
+  '/member/profile': 'Mon compte',
   '/admin/dashboard': "Aujourd'hui",
   '/admin/reservations': 'Réservations',
   '/admin/agenda': 'Réservations',
@@ -67,24 +79,40 @@ const PAGE_TITLES = {
   '/admin/messages': 'Messagerie',
   '/trainer-dashboard': 'Tableau de bord',
   '/trainer/notifications': 'Notifications',
-  '/member/profile': 'Mon Profil',
-  '/dashboard/profile': 'Mon Profil',
   '/trainer/profile': 'Mon Profil',
-  '/dashboard/notifications': 'Notifications',
 };
 
 function derivePageTitle(pathname, navItems) {
-  const match = navItems.find((item) =>
-    pathname === item.to || pathname.startsWith(`${item.to}/`)
-  );
-  if (match) return match.label;
   if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  const exact = navItems.find((item) => item.to === pathname);
+  if (exact) return exact.label;
+  // Préfixe le plus long hors '/dashboard' ou home générique pour éviter que '/dashboard' n'écrase '/dashboard/...'
+  const prefixMatches = navItems
+    .filter((item) => item.to && item.to !== '/dashboard' && pathname.startsWith(`${item.to}/`))
+    .sort((a, b) => b.to.length - a.to.length);
+  if (prefixMatches[0]) return prefixMatches[0].label;
+  if (pathname.startsWith('/book')) return 'Réserver';
   const last = pathname.split('/').filter(Boolean).pop();
-  if (!last) return 'Tableau de bord';
+  if (!last) return 'Accueil';
   return last
     .split('-')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
+}
+
+function deriveBreadcrumbs(pathname, navItems, { homePath, portalLabel, isRegularMember }) {
+  const crumbs = [{ label: portalLabel, to: homePath }];
+  if (pathname === homePath) {
+    crumbs.push({ label: isRegularMember ? 'Accueil' : 'Tableau de bord', to: null });
+    return crumbs;
+  }
+  if (isRegularMember && ['/dashboard/documents', '/dashboard/rgpd'].includes(pathname)) {
+    crumbs.push({ label: 'Mon compte', to: '/dashboard/profile' });
+  } else if (isRegularMember && pathname.startsWith('/book/step') && pathname !== '/book/step1') {
+    crumbs.push({ label: 'Réserver', to: '/book/step1' });
+  }
+  crumbs.push({ label: derivePageTitle(pathname, navItems), to: null });
+  return crumbs;
 }
 
 function getRelativeTime(dateStr) {
@@ -181,10 +209,13 @@ const routeChunkPreloaders = {
   '/admin/multi-sites': () => import('../../pages/AdminMultiSites'),
   '/admin/profile-coworking': () => import('../../pages/AdminCoworkingProfile'),
   '/dashboard': () => import('../../pages/Dashboard'),
+  '/book/step1': () => import('../../pages/BookingStep1'),
   '/dashboard/bookings': () => import('../../pages/MemberBookings'),
   '/dashboard/formations': () => import('../../pages/MemberFormations'),
   '/dashboard/abonnement': () => import('../../pages/MemberSubscription'),
   '/dashboard/messages': () => import('../../pages/MemberMessages'),
+  '/dashboard/profile': () => import('../../pages/MemberProfile'),
+  '/dashboard/qr': () => import('../../pages/QrCodeView'),
   '/dashboard/notifications': () => import('../../pages/MemberNotifications'),
   '/dashboard/documents': () => import('../../pages/MemberDocuments'),
   '/dashboard/rgpd': () => import('../../pages/MemberRGPD'),
@@ -749,10 +780,15 @@ export default function PortalLayout({ children, profile, onLogout }) {
           : isCompany
             ? 'Espace Entreprise'
             : 'Espace membre';
-  const pageTitle = derivePageTitle(location.pathname, navItems);
+  const breadcrumbs = deriveBreadcrumbs(location.pathname, navItems, { homePath, portalLabel, isRegularMember });
 
   const isNavActive = (to) => {
     if (to === homePath) return location.pathname === to;
+    if (to === '/dashboard/profile') {
+      return ['/dashboard/profile', '/dashboard/documents', '/dashboard/rgpd'].some(
+        (p) => location.pathname === p || location.pathname.startsWith(`${p}/`)
+      );
+    }
     return location.pathname === to || location.pathname.startsWith(`${to}/`);
   };
 
@@ -1021,8 +1057,35 @@ export default function PortalLayout({ children, profile, onLogout }) {
           </div>
         )}
 
-        {/* Right: + Réserver (Membre) / + Nouveau (Admin/Staff) + Nom + Cloche + Mode sombre + Avatar */}
+        {/* Right: Mon accès (QR 1-tap Membre) + Réserver (Membre) / + Nouveau (Admin/Staff) + Nom + Cloche + Mode sombre + Avatar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', flexShrink: 0 }}>
+
+          {isRegularMember && (
+            <Link
+              to="/dashboard/qr"
+              title="Mon accès QR"
+              className="inline-flex items-center gap-1.5"
+              style={{
+                height: 36,
+                padding: '0 12px',
+                borderRadius: 10,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: 'none',
+                border: location.pathname === '/dashboard/qr'
+                  ? '1.5px solid #f95d00'
+                  : (dark ? '1px solid rgba(255,255,255,0.14)' : '1px solid rgba(16,15,13,0.14)'),
+                backgroundColor: location.pathname === '/dashboard/qr'
+                  ? 'rgba(249,93,0,0.14)'
+                  : (dark ? 'rgba(255,255,255,0.06)' : '#ffffff'),
+                color: location.pathname === '/dashboard/qr' ? '#f95d00' : (dark ? '#fbffff' : '#100f0d'),
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>qr_code_2</span>
+              <span className="hidden sm:inline">Mon accès</span>
+            </Link>
+          )}
 
           {showStickyMemberReserveCta && (
             <Link
@@ -1535,7 +1598,27 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     >
                       <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>account_circle</span>
-                      <span>Mon Profil</span>
+                      <span>{isRegularMember ? 'Mon compte' : 'Mon Profil'}</span>
+                    </Link>
+                  )}
+
+                  {isRegularMember && (
+                    <Link
+                      to="/dashboard/qr"
+                      onClick={() => setDropdownOpen(false)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 12px', borderRadius: 12,
+                        fontSize: 13, fontWeight: 600,
+                        textDecoration: 'none',
+                        color: dark ? '#fbffff' : '#100f0d',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.05)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f95d00' }}>qr_code_2</span>
+                      <span>Mon accès</span>
                     </Link>
                   )}
 
@@ -1737,7 +1820,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
           minWidth: 0,
         }}>
           <div style={{ maxWidth: 1280, margin: '0 auto', width: '100%' }}>
-            {/* Breadcrumb — Fil d'ariane (Spec §13) */}
+            {/* Breadcrumb — Fil d'Ariane dynamique */}
             <nav aria-label="Fil d'ariane" style={{
               display: 'flex', alignItems: 'center', gap: 6,
               fontSize: 12, fontWeight: 500,
@@ -1746,11 +1829,20 @@ export default function PortalLayout({ children, profile, onLogout }) {
               flexWrap: 'wrap',
               minWidth: 0,
             }}>
-              <Link to={homePath} style={{ color: '#f95d00', textDecoration: 'none', fontWeight: 600 }}>
-                {portalLabel}
-              </Link>
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>chevron_right</span>
-              <span style={{ color: dark ? '#fbffff' : '#100f0d', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 120px)' }}>{pageTitle}</span>
+              {breadcrumbs.map((crumb, idx) => (
+                <span key={`${crumb.label}-${idx}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  {idx > 0 && <span className="material-symbols-outlined" style={{ fontSize: 14 }}>chevron_right</span>}
+                  {crumb.to ? (
+                    <Link to={crumb.to} style={{ color: '#f95d00', textDecoration: 'none', fontWeight: 600 }}>
+                      {crumb.label}
+                    </Link>
+                  ) : (
+                    <span style={{ color: dark ? '#fbffff' : '#100f0d', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 120px)' }}>
+                      {crumb.label}
+                    </span>
+                  )}
+                </span>
+              ))}
             </nav>
             {children}
           </div>

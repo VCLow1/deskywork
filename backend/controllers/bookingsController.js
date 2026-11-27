@@ -907,7 +907,7 @@ async function cancelInfoBooking(req, res) {
   try {
     const { data: reservation, error: fetchErr } = await supabaseAdmin
       .from('reservations')
-      .select('*, espaces(nom, type), paiements(id, montant, statut, montant_rembourse)')
+      .select('*, espaces(nom, type, tarif_horaire), paiements(id, montant, statut, montant_rembourse)')
       .eq('id', id)
       .single();
 
@@ -922,13 +922,21 @@ async function cancelInfoBooking(req, res) {
     const tenantId = reservation.tenant_id || req.tenantId;
     const policy = await getCancellationPolicy(tenantId);
     const espacePolicy = await getCancellationPolicyForEspace(tenantId, reservation.espaces?.type);
-    const paiement = (reservation.paiements || [])[0];
-    const info = buildCancellationInfo(reservation, policy, espacePolicy, isStaff, paiement?.montant);
+    const payList = reservation.paiements || [];
+    const paidSum = payList
+      .filter((p) => p.statut === 'paid')
+      .reduce((s, p) => s + Number(p.montant || 0), 0);
+    const hours = reservation.date_debut && reservation.date_fin
+      ? Math.max(0, (new Date(reservation.date_fin) - new Date(reservation.date_debut)) / 3600000)
+      : 0;
+    const estTotal = reservation.montant_ttc ?? reservation.montant_total ?? (hours * Number(reservation.espaces?.tarif_horaire || 0));
+    const info = buildCancellationInfo(reservation, policy, espacePolicy, isStaff, paidSum, estTotal);
 
     res.json({
       info,
       policy: {
         delai_heures: policy.delai_heures,
+        delai_annulation_gratuite: policy.delai_annulation_gratuite,
         penalite_pct: policy.penalite_pct,
         annulation_membre_autorisee: policy.annulation_membre_autorisee,
         remboursement_auto: policy.remboursement_auto,
@@ -948,7 +956,7 @@ async function deleteBooking(req, res) {
   try {
     const { data: reservation, error: fetchErr } = await supabaseAdmin
       .from('reservations')
-      .select('*, espaces(nom, type), paiements(id, montant, statut, montant_rembourse)')
+      .select('*, espaces(nom, type, tarif_horaire), paiements(id, montant, statut, montant_rembourse)')
       .eq('id', id)
       .single();
 
@@ -961,12 +969,21 @@ async function deleteBooking(req, res) {
     }
 
     // Tâche 6 — Politique d'annulation : vérifier les conditions, déterminer
-    // si un remboursement ou un crédit est applicable, puis les appliquer.
+    // si un remboursement, un crédit ou une pénalité hors délai s'applique.
     const tenantId = reservation.tenant_id || req.tenantId;
     const policy = await getCancellationPolicy(tenantId);
     const espacePolicy = await getCancellationPolicyForEspace(tenantId, reservation.espaces?.type);
-    const paiement = (reservation.paiements || [])[0];
-    const info = buildCancellationInfo(reservation, policy, espacePolicy, isStaff, paiement?.montant);
+    const payList = reservation.paiements || [];
+    const paidPayment = payList.find((p) => p.statut === 'paid') || null;
+    const pendingPayment = payList.find((p) => p.statut === 'pending' || p.statut === 'partial') || null;
+    const paidSum = payList
+      .filter((p) => p.statut === 'paid')
+      .reduce((s, p) => s + Number(p.montant || 0), 0);
+    const hours = reservation.date_debut && reservation.date_fin
+      ? Math.max(0, (new Date(reservation.date_fin) - new Date(reservation.date_debut)) / 3600000)
+      : 0;
+    const estTotal = reservation.montant_ttc ?? reservation.montant_total ?? (hours * Number(reservation.espaces?.tarif_horaire || 0));
+    const info = buildCancellationInfo(reservation, policy, espacePolicy, isStaff, paidSum, estTotal);
 
     if (!info.allowed) {
       return res.status(403).json({
@@ -985,15 +1002,14 @@ async function deleteBooking(req, res) {
       return res.status(400).json({ error: updateErr.message });
     }
 
-    let refund = { montant_rembourse: 0, montant_credit: 0, paiement_updated: false };
+    let refund = { montant_rembourse: 0, montant_credit: 0, montant_penalite: info.montantPenalite || 0, paiement_updated: false };
 
-    if (paiement) {
-      // Remboursement (cash) si la règle le prévoit
+    if (paidPayment) {
       if (info.montantRembourse > 0) {
         const { error: refundErr } = await supabaseAdmin.from('paiements').update({
           montant_rembourse: info.montantRembourse,
           statut: 'refunded',
-        }).eq('id', paiement.id);
+        }).eq('id', paidPayment.id);
         if (refundErr) {
           console.error('⚠️ Échec enregistrement remboursement paiement:', refundErr.message);
         } else {
@@ -1002,7 +1018,6 @@ async function deleteBooking(req, res) {
         }
       }
 
-      // Crédit portefeuille (formule avec credit_portefeuille_auto)
       if (info.montantCredit > 0) {
         const { error: creditErr } = await supabaseAdmin.from('credits_membres').insert({
           tenant_id: reservation.tenant_id || tenantId,
@@ -1016,12 +1031,46 @@ async function deleteBooking(req, res) {
         } else {
           const { error: statusErr } = await supabaseAdmin.from('paiements').update({
             statut: 'refunded',
-          }).eq('id', paiement.id);
+          }).eq('id', paidPayment.id);
           if (statusErr) console.error('⚠️ Échec mise à jour statut paiement (crédit):', statusErr.message);
           refund.montant_credit = info.montantCredit;
           refund.paiement_updated = true;
         }
       }
+    } else if (!isStaff && info.montantPenalite > 0) {
+      // Réservation non encore payée annulée hors délai gratuit : facturer uniquement le montant de pénalité
+      if (pendingPayment) {
+        await supabaseAdmin
+          .from('paiements')
+          .update({
+            montant: info.montantPenalite,
+            reference_externe: `PENALITE-ANNULATION-${info.penalite_pct}PCT`,
+          })
+          .eq('id', pendingPayment.id)
+          .catch(() => {});
+      } else if (reservation.user_id) {
+        await supabaseAdmin
+          .from('paiements')
+          .insert({
+            user_id: reservation.user_id,
+            reservation_id: reservation.id,
+            tenant_id: reservation.tenant_id || tenantId,
+            montant: info.montantPenalite,
+            mode: 'cash',
+            statut: 'pending',
+            reference_externe: `PENALITE-ANNULATION-${info.penalite_pct}PCT`,
+          })
+          .catch(() => {});
+      }
+    } else if (pendingPayment && (info.montantPenalite || 0) <= 0) {
+      // Annulation gratuite : retirer le montant dû en attente
+      await supabaseAdmin
+        .from('paiements')
+        .update({ statut: 'cancelled' })
+        .eq('id', pendingPayment.id)
+        .catch(() =>
+          supabaseAdmin.from('paiements').update({ statut: 'failed' }).eq('id', pendingPayment.id).catch(() => {})
+        );
     }
 
     try {
@@ -1293,7 +1342,7 @@ async function getBookingsOccupation(req, res) {
 
 async function updateBooking(req, res) {
   const { id } = req.params;
-  const { date_debut, date_fin, statut, motif_annulation, motif_retroactif, override_conflit } = req.body;
+  const { date_debut, date_fin, statut, motif_annulation, motif_refus, motif_retroactif, override_conflit } = req.body;
   const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile.role);
 
   try {
@@ -1368,6 +1417,7 @@ async function updateBooking(req, res) {
     if (date_debut) updates.date_debut = date_debut;
     if (date_fin) updates.date_fin = date_fin;
     if (motif_annulation !== undefined) updates.motif_annulation = String(motif_annulation || '').trim() || null;
+    if (motif_refus !== undefined) updates.motif_refus = String(motif_refus || '').trim() || null;
     if (motif_retroactif) updates.motif_retroactif = String(motif_retroactif).trim();
     if (statut && isStaff) {
       const VALID_BOOKING_STATUSES = [
@@ -1382,6 +1432,17 @@ async function updateBooking(req, res) {
       ];
       if (!VALID_BOOKING_STATUSES.includes(statut)) {
         return res.status(400).json({ error: 'statut invalide.' });
+      }
+      if (statut === 'refused') {
+        const cleanRefusalMotif = String(motif_refus ?? motif_annulation ?? '').trim();
+        if (cleanRefusalMotif.length < 3) {
+          return res.status(400).json({
+            error: 'Un motif de refus explicite (minimum 3 caractères) est obligatoire.',
+            code: 'REFUSAL_MOTIF_REQUIRED',
+          });
+        }
+        updates.motif_refus = cleanRefusalMotif;
+        updates.motif_annulation = cleanRefusalMotif;
       }
       if (statut === 'confirmed' && existing.statut === 'en_attente_confirmation') {
         updates.confirmation_expires_at = null;
@@ -1406,20 +1467,42 @@ async function updateBooking(req, res) {
       .eq('id', id)
       .select('*, espaces(nom, type)')
       .single();
-    if (error && /column|does not exist/i.test(error.message || '')) {
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
       const cleanUpd = { ...updates };
-      delete cleanUpd.motif_annulation;
-      delete cleanUpd.motif_retroactif;
-      delete cleanUpd.confirmation_expires_at;
+      delete cleanUpd.motif_refus;
       ({ data, error } = await supabaseAdmin
         .from('reservations')
         .update(cleanUpd)
         .eq('id', id)
         .select('*, espaces(nom, type)')
         .single());
+      if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+        delete cleanUpd.motif_annulation;
+        delete cleanUpd.motif_retroactif;
+        delete cleanUpd.confirmation_expires_at;
+        ({ data, error } = await supabaseAdmin
+          .from('reservations')
+          .update(cleanUpd)
+          .eq('id', id)
+          .select('*, espaces(nom, type)')
+          .single());
+      }
     }
 
     if (error) return res.status(400).json({ error: error.message });
+
+    if (updates.statut === 'refused' && updates.motif_refus) {
+      const refTid = data?.tenant_id || existing?.tenant_id || req.tenantId;
+      if (refTid) {
+        try {
+          const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', refTid).maybeSingle();
+          const cur = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+          const reasons = { ...(cur.reservation_refusal_reasons || {}), [id]: updates.motif_refus };
+          await supabaseAdmin.from('tenants').update({ settings: { ...cur, reservation_refusal_reasons: reasons } }).eq('id', refTid);
+        } catch (_) {}
+      }
+      data = { ...data, motif_refus: updates.motif_refus };
+    }
 
     // Si l'admin confirme la réservation → notifier le membre par email + in-app
     if (updates.statut === 'confirmed') {
@@ -1506,14 +1589,15 @@ async function updateBooking(req, res) {
       }
     }
 
-    // Si l'admin refuse la réservation → notifier le membre in-app + Email (CDC v3.0)
+    // Si l'admin refuse la réservation → notifier le membre in-app + Email avec motif
     if (updates.statut === 'refused' && data.user_id) {
+      const motifLabel = updates.motif_refus ? ` Motif : ${updates.motif_refus}` : '';
       try {
         await supabaseAdmin.from('notifications').insert({
           user_id: data.user_id,
           type: 'refus_reservation',
           canal: 'Dashboard',
-          message: `❌ Votre demande de réservation pour ${data.espaces?.nom || 'l\'espace'} a été refusée par l'établissement.`,
+          message: `❌ Votre demande de réservation pour ${data.espaces?.nom || "l'espace"} a été refusée.${motifLabel}`,
         });
 
         const { data: memberProfile } = await supabaseAdmin
@@ -1532,8 +1616,8 @@ async function updateBooking(req, res) {
           sendEmailUniversal({
             to: memberEmail,
             subject: `Information sur votre demande de réservation — ${data.espaces?.nom || 'Espace'}`,
-            text: `Bonjour ${memberProfile?.prenom || ''},\n\nVotre demande de réservation pour l'espace ${data.espaces?.nom || 'un espace'} n'a malheureusement pas pu être acceptée par l'établissement.\n`,
-            html: `<p>Bonjour <strong>${memberProfile?.prenom || ''}</strong>,</p><p>Votre demande de réservation pour l'espace <strong>${data.espaces?.nom || 'un espace'}</strong> n'a pas pu être acceptée par l'établissement.</p><p>Nous vous invitons à consulter les disponibilités pour un autre créneau ou un autre espace.</p>`,
+            text: `Bonjour ${memberProfile?.prenom || ''},\n\nVotre demande de réservation pour l'espace ${data.espaces?.nom || 'un espace'} n'a pas pu être acceptée par l'établissement.${motifLabel}\n`,
+            html: `<p>Bonjour <strong>${memberProfile?.prenom || ''}</strong>,</p><p>Votre demande de réservation pour l'espace <strong>${data.espaces?.nom || 'un espace'}</strong> n'a pas pu être acceptée par l'établissement.</p>${updates.motif_refus ? `<p><strong>Motif :</strong> ${updates.motif_refus}</p>` : ''}<p>Nous vous invitons à consulter les disponibilités pour un autre créneau ou un autre espace.</p>`,
           }).catch(() => {});
         }
       } catch (notifErr) {

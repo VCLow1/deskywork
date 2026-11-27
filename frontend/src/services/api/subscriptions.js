@@ -6,6 +6,14 @@ export const subscriptionApi = {
   getActive: () => apiFetch('/api/subscriptions/me/active'),
   selfSubscribe: (payload) =>
     apiFetch('/api/subscriptions/self', { method: 'POST', body: JSON.stringify(payload) }),
+  approvePayment: (id, payload = { mode: 'cash' }) =>
+    apiFetch(`/api/subscriptions/${id}/approve-payment`, { method: 'POST', body: JSON.stringify(payload) }),
+  rejectRequest: (id, payload) =>
+    apiFetch(`/api/subscriptions/${id}/reject-request`, { method: 'POST', body: JSON.stringify(payload) }),
+  cancelRequest: (id) =>
+    apiFetch(`/api/subscriptions/${id}/cancel-request`, { method: 'POST' }),
+  resiliate: (id, payload = {}) =>
+    apiFetch(`/api/subscriptions/${id}/resiliate`, { method: 'POST', body: JSON.stringify(payload) }),
   getAll: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return apiFetch(`/api/subscriptions${qs ? `?${qs}` : ''}`);

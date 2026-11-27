@@ -242,29 +242,65 @@ async function getCancellationPolicyForEspace(tenantId, espaceType) {
 }
 
 // Calcule les conditions d'annulation d'une réservation :
-// pénalité, montant retenu, montant remboursé (cash) ou converti en crédit.
-function buildCancellationInfo(reservation, policy, espacePolicy, isStaff, montantPaye) {
+// pénalité (y compris sur réservation non encore encaissée), montant retenu, montant remboursé (cash) ou converti en crédit.
+function buildCancellationInfo(reservation, policy, espacePolicy, isStaff, montantPaye, montantTotalReservation = null) {
+  const roundM = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 1000) / 1000 : 0;
+  };
   const hoursUntilStart = (new Date(reservation.date_debut).getTime() - Date.now()) / 3600000;
-  const montant = Math.round((Number(montantPaye || 0)) * 100) / 100;
+  const started = Number.isFinite(hoursUntilStart) ? hoursUntilStart <= 0 : false;
+  const paidAmount = roundM(montantPaye || 0);
+  const reservationAmount = roundM(montantTotalReservation ?? reservation.montant_ttc ?? reservation.montant_total ?? 0);
+  const montantReference = roundM(Math.max(paidAmount, reservationAmount));
+  const delaiGratuite = Number(espacePolicy?.tranche_libre_heures ?? policy.delai_heures ?? 24);
+  const horsDelaiGratuit = hoursUntilStart < delaiGratuite;
 
-  const base = { montantPaye: montant, montantRembourse: 0, montantCredit: 0, montantRetenu: 0, mode: 'aucun', hoursUntilStart: Number(hoursUntilStart.toFixed(1)) };
+  const base = {
+    montantPaye: paidAmount,
+    montantTotal: reservationAmount,
+    montantReference,
+    montantPenalite: 0,
+    montantRembourse: 0,
+    montantCredit: 0,
+    montantRetenu: 0,
+    mode: 'aucun',
+    started,
+    hors_delai_gratuit: horsDelaiGratuit,
+    delai_heures: delaiGratuite,
+    hoursUntilStart: Number(hoursUntilStart.toFixed(1)),
+  };
 
   if (isStaff) {
-    return { ...base, allowed: true, penalite_pct: 0, montantRembourse: montant, mode: montant > 0 ? 'remboursement' : 'aucun' };
+    return { ...base, allowed: true, penalite_pct: 0, montantRembourse: paidAmount, mode: paidAmount > 0 ? 'remboursement' : 'aucun' };
   }
 
   if (!policy.annulation_membre_autorisee) {
-    return { ...base, allowed: false, reason: "Les annulations en ligne sont désactivées. Contactez l'accueil." };
+    return { ...base, allowed: false, reason: "Les annulations en ligne sont désactivées. Contactez l'établissement." };
   }
 
-  let penalite = Number(policy.penalite_pct || 0);
+  if (started) {
+    return {
+      ...base,
+      allowed: false,
+      reason: "Cette réservation a déjà commencé ou est terminée. Contactez l'établissement.",
+    };
+  }
+
+  let penalite = 0;
   if (!espacePolicy) {
-    if (hoursUntilStart < policy.delai_heures) {
-      return {
-        ...base,
-        allowed: false,
-        reason: `Annulation impossible moins de ${policy.delai_heures} h avant le début.`,
-      };
+    if (horsDelaiGratuit) {
+      const configuredPen = Number(policy.penalite_pct || 0);
+      if (configuredPen <= 0) {
+        return {
+          ...base,
+          allowed: false,
+          reason: `Annulation impossible moins de ${delaiGratuite} h avant le début.`,
+        };
+      }
+      penalite = configuredPen;
+    } else {
+      penalite = 0;
     }
   } else {
     const libre = Number(espacePolicy.tranche_libre_heures ?? 24);
@@ -274,8 +310,9 @@ function buildCancellationInfo(reservation, policy, espacePolicy, isStaff, monta
     else penalite = Number(espacePolicy.penalite_tres_tardive_pct ?? 100);
   }
 
-  const montantRetenu = Math.round(montant * penalite / 100 * 100) / 100;
-  const remboursable = Math.max(0, Math.round((montant - montantRetenu) * 100) / 100);
+  const montantPenalite = roundM((montantReference * penalite) / 100);
+  const montantRetenu = roundM(Math.min(paidAmount, montantPenalite));
+  const remboursable = Math.max(0, roundM(paidAmount - montantRetenu));
 
   let mode = 'aucun';
   let montantRembourse = 0;
@@ -294,6 +331,7 @@ function buildCancellationInfo(reservation, policy, espacePolicy, isStaff, monta
     ...base,
     allowed: true,
     penalite_pct: penalite,
+    montantPenalite,
     montantRetenu,
     montantRembourse,
     montantCredit,

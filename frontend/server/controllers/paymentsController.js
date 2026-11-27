@@ -24,6 +24,53 @@ const {
   buildReminderTemplates,
 } = require('../models/financeHelpers');
 const { generateInvoicePDF } = require('../utils/generateInvoicePdf');
+const { buildZipBuffer } = require('../models/zipBuilder');
+
+async function activatePendingSubscriptionOnPayment(paymentRow) {
+  if (!paymentRow?.abonnement_id) return;
+  try {
+    const { data: sub } = await supabaseAdmin
+      .from('abonnements')
+      .select('*')
+      .eq('id', paymentRow.abonnement_id)
+      .maybeSingle();
+    if (!sub) return;
+
+    const tid = paymentRow.tenant_id || sub.tenant_id;
+    let metaMap = {};
+    let tRow = null;
+    if (tid) {
+      const resT = await supabaseAdmin.from('tenants').select('settings').eq('id', tid).maybeSingle();
+      tRow = resT.data || null;
+      metaMap = (tRow?.settings?.subscription_meta && typeof tRow.settings.subscription_meta === 'object')
+        ? { ...tRow.settings.subscription_meta }
+        : {};
+    }
+    const meta = metaMap[sub.id] || {};
+    const isPendingSub = sub.statut === 'en_attente_paiement' || (sub.statut === 'suspended' && meta.logical_status === 'en_attente_paiement');
+    if (!isPendingSub) return;
+
+    await supabaseAdmin
+      .from('abonnements')
+      .update({ statut: 'active', updated_at: new Date().toISOString() })
+      .eq('id', sub.id);
+
+    if (tid && tRow) {
+      metaMap[sub.id] = { ...meta, logical_status: 'active', pending_payment: false };
+      await supabaseAdmin
+        .from('tenants')
+        .update({ settings: { ...(tRow.settings || {}), subscription_meta: metaMap } })
+        .eq('id', tid);
+    }
+
+    await supabaseAdmin.from('notifications').insert({
+      user_id: sub.user_id,
+      type: 'abonnement_active',
+      canal: 'Dashboard',
+      message: `Votre abonnement (${sub.type}) est désormais actif !${paymentRow.numero_recu ? ` Reçu ${paymentRow.numero_recu}.` : ''} [Lien: /dashboard/abonnement]`,
+    }).catch(() => {});
+  } catch (_) {}
+}
 
 async function createPayment(req, res) {
   try {
@@ -93,14 +140,20 @@ async function createPayment(req, res) {
       }
     }
 
+    const effectiveStatus = statut || 'pending';
+    const numeroRecu = effectiveStatus === 'paid'
+      ? (req.body.numero_recu || await allocateDocumentNumber(supabaseAdmin, req.tenantId, 'receipt'))
+      : null;
+
     const paymentData = {
       user_id,
       reservation_id: reservation_id || null,
       abonnement_id: abonnement_id || null,
       montant: parseFloat(montant),
       mode,
-      statut: statut || 'pending',
-      date_paiement: date_paiement || null,
+      statut: effectiveStatus,
+      date_paiement: date_paiement || (effectiveStatus === 'paid' ? new Date().toISOString() : null),
+      ...(numeroRecu ? { numero_recu: numeroRecu } : {}),
       tenant_id: req.tenantId,
     };
 
@@ -329,16 +382,72 @@ async function getMemberPayments(req, res) {
 
     if (error) return res.status(500).json({ error: error.message });
 
+    const tenantIds = Array.from(new Set((data || []).map((p) => p.tenant_id).filter(Boolean)));
+    const payMetaMap = {};
+    if (tenantIds.length > 0) {
+      const { data: tRows } = await supabaseAdmin.from('tenants').select('id, settings').in('id', tenantIds);
+      for (const tr of tRows || []) {
+        if (tr?.settings?.payment_meta && typeof tr.settings.payment_meta === 'object') {
+          Object.assign(payMetaMap, tr.settings.payment_meta);
+        }
+      }
+    }
+
+    const enriched = (data || []).map((p) => {
+      const meta = payMetaMap[p.id] || {};
+      const totalDu = roundMillime(p.total_du ?? meta.total_du ?? p.montant ?? 0);
+      const logicalStatut = meta.logical_status && p.statut === 'pending' ? meta.logical_status : p.statut;
+      const resteAPayer = (logicalStatut === 'paid' || logicalStatut === 'refunded' || logicalStatut === 'failed' || logicalStatut === 'cancelled')
+        ? 0
+        : roundMillime(p.reste_a_payer ?? meta.reste_a_payer ?? p.montant ?? 0);
+      const montantPaye = logicalStatut === 'paid' || logicalStatut === 'refunded'
+        ? totalDu
+        : roundMillime(p.montant_paye ?? meta.montant_paye ?? Math.max(0, totalDu - resteAPayer));
+      const aging = (logicalStatut === 'pending' || logicalStatut === 'partial')
+        ? computeAgingBucket(p.due_date || p.reservations?.date_fin || p.created_at)
+        : { daysOverdue: 0, bucket: 'regle', label: 'Réglé' };
+      const refUpper = String(p.reference_externe || '').toUpperCase();
+      let libelle = 'Paiement';
+      if (refUpper.startsWith('DEPASSEMENT')) {
+        libelle = `Dépassement horaire — ${p.reservations?.espaces?.nom || 'Espace'}`;
+      } else if (refUpper.startsWith('PENALITE') || refUpper.startsWith('ANNULATION')) {
+        libelle = `Pénalité — ${p.reservations?.espaces?.nom || 'Établissement'}`;
+      } else if (refUpper.startsWith('PROLONGATION')) {
+        libelle = `Prolongation — ${p.reservations?.espaces?.nom || 'Espace'}`;
+      } else if (p.inscriptions_formations?.length > 0) {
+        libelle = `Formation — ${p.inscriptions_formations[0]?.formations?.titre || 'Session'}`;
+      } else if (p.reservations?.espaces?.nom) {
+        libelle = `Réservation — ${p.reservations.espaces.nom}`;
+      } else if (p.abonnement_id || p.abonnements?.type) {
+        libelle = `Abonnement — ${p.abonnements?.type || 'Formule'}`;
+      }
+
+      return {
+        ...p,
+        statut: logicalStatut,
+        libelle,
+        total_du: totalDu,
+        montant_paye: montantPaye,
+        reste_a_payer: resteAPayer,
+        days_overdue: aging.daysOverdue,
+        aging_bucket: aging.bucket,
+        aging_label: aging.label,
+        due_date: p.due_date || p.reservations?.date_fin || p.created_at,
+        motif_remboursement: p.motif_remboursement || meta.motif_remboursement || null,
+        avoir_numero: meta.avoir_numero || null,
+      };
+    });
+
     const stats = {
-      total_paiements: data.length,
-      total_montant: data.reduce((sum, p) => sum + parseFloat(p.montant || 0), 0),
-      pending: data.filter(p => p.statut === 'pending').length,
-      paid: data.filter(p => p.statut === 'paid').length,
-      failed: data.filter(p => p.statut === 'failed').length,
-      refunded: data.filter(p => p.statut === 'refunded').length,
+      total_paiements: enriched.length,
+      total_montant: enriched.reduce((sum, p) => sum + parseFloat(p.montant || 0), 0),
+      pending: enriched.filter((p) => p.statut === 'pending' || p.statut === 'partial').length,
+      paid: enriched.filter((p) => p.statut === 'paid').length,
+      failed: enriched.filter((p) => p.statut === 'failed').length,
+      refunded: enriched.filter((p) => p.statut === 'refunded').length,
     };
 
-    res.json({ payments: data, statistics: stats });
+    res.json({ payments: enriched, statistics: stats });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -453,6 +562,7 @@ async function updatePayment(req, res) {
     if (error) return res.status(400).json({ error: error.message });
 
     if (statut === 'paid') {
+      await activatePendingSubscriptionOnPayment(data);
       try {
         await notifyPaiementEnregistre(
           supabaseAdmin,
@@ -521,6 +631,10 @@ async function getPaymentReceipt(req, res) {
 
     if (!isStaff && payment.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Accès refusé. Ce reçu ne vous appartient pas.' });
+    }
+
+    if (!['paid', 'refunded'].includes(payment.statut)) {
+      return res.status(400).json({ error: "Le reçu PDF n'est disponible que pour les paiements encaissés." });
     }
 
     // Ne JAMAIS allouer de numéro de reçu au téléchargement PDF (uniquement à l'encaissement)
@@ -950,7 +1064,8 @@ async function collectPayment(req, res) {
         }).eq('id', tid);
       }
 
-      // Mettre à jour statut paiement sur inscription_formation éventuelle
+      // Mettre à jour statut paiement sur inscription_formation éventuelle + activer abonnement en attente
+      await activatePendingSubscriptionOnPayment(paidPayment);
       try {
         await supabaseAdmin
           .from('inscriptions_formations')
@@ -1504,6 +1619,167 @@ async function recordPaymentPromise(req, res) {
   }
 }
 
+// GET /api/payments/me/receipts-zip — Export ZIP des reçus PDF encaissés selon la période & statut filtrés (RM-26)
+async function downloadMemberReceiptsZip(req, res) {
+  try {
+    const userId = req.user.id;
+    const { from, to, statut = 'all', q = '' } = req.query;
+
+    const { data, error } = await supabaseAdmin
+      .from('paiements')
+      .select(`
+        *,
+        profiles(nom, prenom, email, telephone),
+        reservations(date_debut, date_fin, espaces(nom, type)),
+        abonnements(type, date_debut, date_fin)
+      `)
+      .eq('user_id', userId)
+      .in('statut', ['paid', 'refunded'])
+      .order('date_paiement', { ascending: false })
+      .limit(100);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const fromMs = from ? new Date(`${from}T00:00:00`).getTime() : null;
+    const toMs = to ? new Date(`${to}T23:59:59.999`).getTime() : null;
+    const searchLower = String(q || '').trim().toLowerCase();
+
+    const matched = (data || []).filter((p) => {
+      if (statut && statut !== 'all' && p.statut !== statut) return false;
+      const dt = new Date(p.date_paiement || p.created_at).getTime();
+      if (fromMs && Number.isFinite(dt) && dt < fromMs) return false;
+      if (toMs && Number.isFinite(dt) && dt > toMs) return false;
+      if (searchLower) {
+        const ref = String(p.numero_recu || '').toLowerCase();
+        const esp = String(p.reservations?.espaces?.nom || '').toLowerCase();
+        const ab = String(p.abonnements?.type || '').toLowerCase();
+        if (!ref.includes(searchLower) && !esp.includes(searchLower) && !ab.includes(searchLower)) return false;
+      }
+      return true;
+    }).slice(0, 40);
+
+    if (matched.length === 0) {
+      return res.status(404).json({ error: 'Aucun reçu encaissé sur la période sélectionnée.' });
+    }
+
+    const tenantIds = Array.from(new Set(matched.map((p) => p.tenant_id).filter(Boolean)));
+    const tenantById = new Map();
+    if (tenantIds.length > 0) {
+      const { data: tRows } = await supabaseAdmin
+        .from('tenants')
+        .select('id, nom, email, telephone, adresse')
+        .in('id', tenantIds);
+      for (const t of tRows || []) tenantById.set(t.id, t);
+    }
+
+    const entries = [];
+    for (const p of matched) {
+      const tRow = p.tenant_id ? tenantById.get(p.tenant_id) : null;
+      const pdfBuf = await generateReceiptPDF(p, {
+        coworkingName: tRow?.nom || process.env.COWORKING_NAME || 'DeskyWork',
+        coworkingEmail: tRow?.email || process.env.COWORKING_EMAIL || 'contact@deskywork.tn',
+        coworkingTel: tRow?.telephone || process.env.COWORKING_TEL || '+216 52 882 880 / +216 52 882 930',
+        coworkingAdresse: tRow?.adresse || process.env.COWORKING_ADRESSE || 'Tunis, Tunisie',
+      });
+      const safeNum = String(p.numero_recu || p.id.slice(0, 8)).replace(/[^a-zA-Z0-9._-]/g, '_');
+      entries.push({
+        filename: `recu-${safeNum}.pdf`,
+        content: pdfBuf,
+        mtime: new Date(p.date_paiement || p.created_at || Date.now()),
+      });
+    }
+
+    const zipBuffer = buildZipBuffer(entries);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="recus-deskywork.zip"');
+    res.setHeader('Content-Length', zipBuffer.length);
+    res.send(zipBuffer);
+  } catch (err) {
+    res.status(500).json({ error: 'Impossible de générer le ZIP des reçus : ' + err.message });
+  }
+}
+
+async function loadMemberInvoiceDocs(req) {
+  const userId = req.user.id;
+  const emailLower = String(req.profile?.email || req.user?.email || '').trim().toLowerCase();
+  const docs = [];
+  const seen = new Set();
+
+  const matchesMember = (doc) => {
+    if (!doc || doc.archived_at) return false;
+    if (!['facture', 'avoir'].includes(doc.type)) return false;
+    if (doc.statut === 'brouillon') return false;
+    if (doc.user_id && doc.user_id === userId) return true;
+    if (emailLower && doc.client_email && String(doc.client_email).trim().toLowerCase() === emailLower) return true;
+    return false;
+  };
+
+  try {
+    const { data: sqlDocs, error } = await supabaseAdmin
+      .from('devis_factures')
+      .select('*')
+      .in('type', ['facture', 'avoir'])
+      .order('date_emission', { ascending: false })
+      .limit(200);
+    if (!error && Array.isArray(sqlDocs)) {
+      for (const d of sqlDocs) {
+        if (matchesMember(d) && !seen.has(d.id)) {
+          seen.add(d.id);
+          docs.push(d);
+        }
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const { data: tenants } = await supabaseAdmin.from('tenants').select('id, nom, settings');
+    for (const t of tenants || []) {
+      const list = Array.isArray(t?.settings?.devis_factures) ? t.settings.devis_factures : [];
+      for (const d of list) {
+        if (matchesMember(d) && !seen.has(d.id)) {
+          seen.add(d.id);
+          docs.push({ ...d, tenant_id: d.tenant_id || t.id, emetteur_nom: t.nom });
+        }
+      }
+    }
+  } catch (_) {}
+
+  docs.sort((a, b) => new Date(b.date_emission || b.created_at) - new Date(a.date_emission || a.created_at));
+  return docs;
+}
+
+// GET /api/payments/me/invoices — Factures & avoirs émis au membre (onglet Factures RM-24)
+async function getMemberInvoices(req, res) {
+  try {
+    const items = await loadMemberInvoiceDocs(req);
+    res.json({ invoices: items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/payments/me/invoices/:id/pdf — Téléchargement PDF facture/avoir membre
+async function downloadMemberInvoicePdf(req, res) {
+  try {
+    const items = await loadMemberInvoiceDocs(req);
+    const doc = items.find((d) => d.id === req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Facture introuvable.' });
+
+    const { data: tenantRow } = doc.tenant_id
+      ? await supabaseAdmin.from('tenants').select('*').eq('id', doc.tenant_id).maybeSingle()
+      : { data: null };
+
+    const pdfBuffer = await generateInvoicePDF(doc, tenantRow || {});
+    const safeName = `${doc.type || 'facture'}-${doc.numero || doc.id}.pdf`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   createPayment,
   createPaymentSelf,
@@ -1519,6 +1795,9 @@ module.exports = {
   sendPaymentReminder,
   recordPaymentPromise,
   getPaymentReceipt,
+  downloadMemberReceiptsZip,
+  getMemberInvoices,
+  downloadMemberInvoicePdf,
   stripePay,
   stripeVerify,
   stripeWebhookHandler,

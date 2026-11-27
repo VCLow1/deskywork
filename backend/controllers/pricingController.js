@@ -30,6 +30,15 @@ function normalizeTypeEspace(value) {
   return v;
 }
 
+const SUBSCRIPTION_DEFAULT_DESCRIPTIONS = {
+  day_pass: "Accès complet à l'espace commun pour une journée ouvrée.",
+  week_pass: 'Accès flexible 7 jours consécutifs aux postes nomades.',
+  mensuel: 'Accès mensuel continu à votre espace de travail favori.',
+  trimestriel: 'Engagement 3 mois avec tarif préférentiel.',
+  annuel: "Formule annuelle illimitée avec avantages permanents.",
+  bureau_prive: 'Bureau privatif dédié avec contrat mensuel.',
+};
+
 async function getPricing(req, res) {
   try {
     const plan = req.query.plan_tarifaire
@@ -45,28 +54,75 @@ async function getPricing(req, res) {
       .eq('actif', true)
       .lte('date_debut', today);
     if (req.tenantId) q = q.eq('tenant_id', req.tenantId);
-    // Si un type d'espace est précisé : montrer les formules qui lui sont
-    // dédiées, ainsi que les formules génériques (tous types d'espaces).
     if (typeEspace) {
       q = q.or(`type_espace.is.null,type_espace.eq.${typeEspace}`);
     }
-    const { data, error } = await q.order('type_abonnement', { ascending: true });
+    const { data, error } = await q.order('date_debut', { ascending: false });
 
-    let tarifs = [];
+    const archIds = await getTenantArchivedList(req.tenantId, 'archived_pricing');
+    let rawTarifs = [];
     if (!error && data && data.length > 0) {
-      tarifs = data.filter((t) => !t.date_fin || t.date_fin >= today);
+      rawTarifs = data.filter((t) => !t.archived_at && !archIds.has(t.id) && (!t.date_fin || t.date_fin >= today));
     }
-    if (tarifs.length === 0) {
-      tarifs = DEFAULT_TARIFS.filter((t) => t.plan_tarifaire === plan);
+    if (rawTarifs.length === 0) {
+      rawTarifs = DEFAULT_TARIFS.filter((t) => t.plan_tarifaire === plan);
     }
-    res.json({
-      plan_tarifaire: plan,
-      tarifs: tarifs.map((t) => ({
+
+    // Dédupliquer par (type_abonnement, type_espace) pour garantir 1 seule carte par formule
+    const dedupMap = new Map();
+    for (const t of rawTarifs) {
+      const key = `${t.type_abonnement}::${t.type_espace || ''}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, t);
+      }
+    }
+
+    const tarifs = Array.from(dedupMap.values()).map((t) => {
+      const tvaPct = Number(t.tva_pct ?? DEFAULT_TVA_PCT);
+      const hasExplicitHT = t.prix_ht !== undefined && t.prix_ht !== null;
+      const prixHT = roundMillime(hasExplicitHT ? Number(t.prix_ht) : Number(t.prix ?? 0));
+      const prixTTC = t.prix_ttc !== undefined && t.prix_ttc !== null
+        ? roundMillime(Number(t.prix_ttc))
+        : computeTTC(prixHT, tvaPct);
+      const montantTVA = roundMillime(prixTTC - prixHT);
+      const quotaType = t.quota_type || 'illimite';
+      const quotaTotal = t.quota_total != null ? Number(t.quota_total) : null;
+      const dureeJours = SUBSCRIPTION_DURATIONS[t.type_abonnement] || null;
+      const avantages = Array.isArray(t.avantages) && t.avantages.length > 0
+        ? t.avantages
+        : [
+            quotaType === 'heures' && quotaTotal > 0
+              ? `${quotaTotal} h incluses`
+              : quotaType === 'jours' && quotaTotal > 0
+                ? `${quotaTotal} jours inclus`
+                : 'Accès illimité sur les horaires d’ouverture',
+            dureeJours ? `Validité ${dureeJours} jour${dureeJours > 1 ? 's' : ''}` : 'Contrat flexible',
+          ];
+
+      return {
         ...t,
+        prix: prixTTC,
+        prix_ht: prixHT,
+        prix_ttc: prixTTC,
+        tva_pct: tvaPct,
+        montant_tva: montantTVA,
+        quota_type: quotaType,
+        quota_total: quotaTotal,
+        description: (t.description && String(t.description).trim()) || SUBSCRIPTION_DEFAULT_DESCRIPTIONS[t.type_abonnement] || '',
+        avantages,
         label: SUBSCRIPTION_LABELS[t.type_abonnement] || t.type_abonnement,
-        duree_jours: SUBSCRIPTION_DURATIONS[t.type_abonnement] || null,
-      })),
+        duree_jours: dureeJours,
+      };
     });
+
+    const ORDER = ['day_pass', 'week_pass', 'mensuel', 'trimestriel', 'annuel', 'bureau_prive'];
+    tarifs.sort((a, b) => {
+      const ia = ORDER.indexOf(a.type_abonnement);
+      const ib = ORDER.indexOf(b.type_abonnement);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+
+    res.json({ tarifs });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
