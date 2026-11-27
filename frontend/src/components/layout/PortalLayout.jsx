@@ -53,7 +53,9 @@ const PAGE_TITLES = {
   '/admin/team': 'Équipe (Staff)',
   '/admin/subscription': 'Mon Abonnement',
   '/admin/rapports': 'Rapports',
-  '/admin/statistiques': 'Statistiques Marketplace',
+  '/admin/statistiques': 'Visibilité Marketplace',
+  '/admin/formateurs': 'Formateurs & Versements',
+  '/admin/dashboard': "Aujourd'hui",
   '/trainer-dashboard': 'Tableau de bord',
   '/trainer/notifications': 'Notifications',
   '/member/profile': 'Mon Profil',
@@ -219,7 +221,7 @@ function NavLink({ item, isActive, onClick, dark }) {
   if (item.locked) {
     return (
       <div
-        title="Fonctionnalité disponible en Phase 2 / Option"
+        title="Fonctionnalité bientôt disponible"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -242,16 +244,16 @@ function NavLink({ item, isActive, onClick, dark }) {
         </span>
         <span
           style={{
-            fontSize: 9.5,
+            fontSize: 12,
             fontWeight: 700,
-            padding: '2px 6px',
+            padding: '2px 8px',
             borderRadius: 99,
             background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.08)',
             color: dark ? '#cbd5e1' : '#57534e',
             flexShrink: 0,
           }}
         >
-          {item.badge || 'Phase 2'}
+          {item.badge || 'Bientôt'}
         </span>
       </div>
     );
@@ -316,7 +318,7 @@ function NavLink({ item, isActive, onClick, dark }) {
       {item.badge && (
         <span
           style={{
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: 700,
             padding: '2px 6px',
             borderRadius: 99,
@@ -835,7 +837,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                 }}
               />
               {globalSearching && (
-                <span style={{ position: 'absolute', right: 10, fontSize: 11, color: '#f95d00', fontWeight: 700 }}>...</span>
+                <span style={{ position: 'absolute', right: 10, fontSize: 12, color: '#f95d00', fontWeight: 700 }}>...</span>
               )}
             </div>
 
@@ -864,7 +866,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {globalResults.membres?.length > 0 && (
                       <div>
-                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f95d00' }}>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f95d00' }}>
                           Membres ({globalResults.membres.length})
                         </p>
                         {globalResults.membres.map((m) => (
@@ -882,7 +884,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                             }}
                           >
                             <span style={{ fontSize: 13, fontWeight: 600 }}>{m.prenom} {m.nom}</span>
-                            <span style={{ fontSize: 11, color: '#6b7280' }}>{m.email}</span>
+                            <span style={{ fontSize: 12, color: '#6b7280' }}>{m.email}</span>
                           </button>
                         ))}
                       </div>
@@ -890,7 +892,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
 
                     {globalResults.reservations?.length > 0 && (
                       <div>
-                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#0ea5e9' }}>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#f95d00' }}>
                           Réservations ({globalResults.reservations.length})
                         </p>
                         {globalResults.reservations.map((r) => (
@@ -910,7 +912,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                             <span style={{ fontSize: 13, fontWeight: 600 }}>
                               {r.profiles ? `${r.profiles.prenom} ${r.profiles.nom}` : (r.guest_nom || 'Réservation')} · {r.spaces?.nom || 'Espace'}
                             </span>
-                            <span style={{ fontSize: 11, color: '#6b7280' }}>
+                            <span style={{ fontSize: 12, color: '#6b7280' }}>
                               {new Date(r.date_debut).toLocaleDateString('fr-FR')}
                             </span>
                           </button>
@@ -920,7 +922,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
 
                     {globalResults.espaces?.length > 0 && (
                       <div>
-                        <p style={{ margin: '2px 8px 4px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
+                        <p style={{ margin: '2px 8px 4px', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
                           Espaces ({globalResults.espaces.length})
                         </p>
                         {globalResults.espaces.map((e) => (
@@ -938,7 +940,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                             }}
                           >
                             <span style={{ fontSize: 13, fontWeight: 600 }}>{e.nom}</span>
-                            <span style={{ fontSize: 11, color: '#6b7280' }}>{e.capacite} pers. · {e.tarif_horaire} DT/h</span>
+                            <span style={{ fontSize: 12, color: '#6b7280' }}>{e.capacite} pers. · {e.tarif_horaire} DT/h</span>
                           </button>
                         ))}
                       </div>
@@ -1025,7 +1027,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                   position: 'absolute', top: -3, right: -3,
                   minWidth: 18, height: 18, padding: '0 4px',
                   borderRadius: 99, background: '#f95d00', color: '#ffffff',
-                  fontSize: 10, fontWeight: 800,
+                  fontSize: 12, fontWeight: 800,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   boxShadow: '0 2px 6px rgba(249,93,0,0.5)',
                   border: dark ? '2px solid #100f0d' : '2px solid #ffffff',
@@ -1074,7 +1076,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 15, fontWeight: 700 }}>Notifications</span>
                     {unreadCount > 0 && (
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: 'rgba(249,93,0,0.12)', color: '#f95d00' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: 'rgba(249,93,0,0.12)', color: '#f95d00' }}>
                         {unreadCount} nouvelle{unreadCount > 1 ? 's' : ''}
                       </span>
                     )}
@@ -1087,7 +1089,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
                         padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                        fontSize: 11, fontWeight: 700,
+                        fontSize: 12, fontWeight: 700,
                         background: soundEnabled ? 'rgba(47,190,143,0.12)' : (dark ? 'rgba(255,255,255,0.06)' : 'rgba(16,15,13,0.06)'),
                         color: soundEnabled ? '#2fbe8f' : (dark ? '#a3a09b' : '#64748b'),
                       }}
@@ -1102,7 +1104,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       title="Tester le son d'alerte"
                       style={{
                         padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                        fontSize: 10, fontWeight: 700,
+                        fontSize: 12, fontWeight: 700,
                         background: 'rgba(249,93,0,0.1)', color: '#f95d00',
                       }}
                     >
@@ -1115,7 +1117,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                         title="Activer aussi les alertes bureau quand l'onglet est en arrière-plan"
                         style={{
                           padding: '4px 7px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                          fontSize: 10, fontWeight: 700,
+                          fontSize: 12, fontWeight: 700,
                           background: dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.06)',
                           color: dark ? '#fbffff' : '#100f0d',
                         }}
@@ -1127,7 +1129,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                       <button
                         type="button"
                         onClick={markAllAsRead}
-                        style={{ fontSize: 11.5, fontWeight: 600, color: '#f95d00', border: 'none', background: 'transparent', cursor: 'pointer', paddingLeft: 4 }}
+                        style={{ fontSize: 12, fontWeight: 600, color: '#f95d00', border: 'none', background: 'transparent', cursor: 'pointer', paddingLeft: 4 }}
                       >
                         Tout lire
                       </button>
@@ -1171,7 +1173,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                           <p style={{ fontSize: 13, fontWeight: n.lu ? 500 : 700, margin: 0, lineHeight: 1.35, color: dark ? '#fbffff' : '#100f0d' }}>
                             {n.message || n.title || 'Notification'}
                           </p>
-                          <span style={{ fontSize: 11, color: dark ? 'rgba(251,255,255,0.5)' : '#888', marginTop: 4, display: 'block' }}>
+                          <span style={{ fontSize: 12, color: dark ? 'rgba(251,255,255,0.5)' : '#888', marginTop: 4, display: 'block' }}>
                             {getRelativeTime(n.created_at)}
                           </span>
                         </div>
@@ -1288,11 +1290,11 @@ export default function PortalLayout({ children, profile, onLogout }) {
                     <p style={{ fontSize: 14, fontWeight: 700, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whitespace: 'nowrap' }}>
                       {profile?.prenom} {profile?.nom}
                     </p>
-                    <p style={{ fontSize: 11, color: dark ? 'rgba(251,255,255,0.6)' : '#666', margin: '2px 0 4px 0', textOverflow: 'ellipsis', overflow: 'hidden', whitespace: 'nowrap' }}>
+                    <p style={{ fontSize: 12, color: dark ? 'rgba(251,255,255,0.6)' : '#666', margin: '2px 0 4px 0', textOverflow: 'ellipsis', overflow: 'hidden', whitespace: 'nowrap' }}>
                       {profile?.email || ''}
                     </p>
                     <span style={{
-                      display: 'inline-block', fontSize: 10, fontWeight: 700,
+                      display: 'inline-block', fontSize: 12, fontWeight: 700,
                       padding: '2px 8px', borderRadius: 99,
                       background: 'rgba(249,93,0,0.12)', color: '#f95d00',
                     }}>
@@ -1423,17 +1425,17 @@ export default function PortalLayout({ children, profile, onLogout }) {
           )}
 
           {/* Label section */}
-          <p style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.18em', padding: '0 12px', marginBottom: 12, color: dark ? 'rgba(251,255,255,0.5)' : '#44474d' }}>
+          <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', padding: '0 12px', marginBottom: 12, color: dark ? 'rgba(251,255,255,0.6)' : '#44474d' }}>
             {portalLabel}
           </p>
 
-          {/* Navigation links — Menu / Sous-menu (Spec §13) */}
+          {/* Navigation links — Menu / Sous-menu */}
           <nav style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {navSections.map((section, idx) => (
               <div key={section.group || idx}>
                 <p style={{
-                  fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.16em',
-                  color: dark ? 'rgba(251,255,255,0.45)' : '#6b7280',
+                  fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em',
+                  color: dark ? 'rgba(251,255,255,0.55)' : '#5e5a55',
                   margin: '0 0 6px 12px',
                 }}>
                   {section.group}
@@ -1503,7 +1505,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
           minHeight: 'calc(100vh - 68px)',
           minWidth: 0,
         }}>
-          <div style={{ maxWidth: 1200, margin: '0 auto', width: '100%' }}>
+          <div style={{ maxWidth: 1280, margin: '0 auto', width: '100%' }}>
             {/* Breadcrumb — Fil d'ariane (Spec §13) */}
             <nav aria-label="Fil d'ariane" style={{
               display: 'flex', alignItems: 'center', gap: 6,
@@ -1595,7 +1597,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                  <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#f95d00' }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#f95d00' }}>
                     Nouvelle alerte
                   </span>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2fbe8f' }} />

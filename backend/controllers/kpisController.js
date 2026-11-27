@@ -141,7 +141,7 @@ function previousWindow(win) {
 
 function pctChange(cur, prev) {
   if (prev > 0) return Math.round(((cur - prev) / prev) * 100);
-  return cur > 0 ? 100 : 0;
+  return null;
 }
 
 function sumMt(items) {

@@ -2,12 +2,14 @@ import React, { useEffect, useState, useMemo } from 'react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
+import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 
 const PERM_LABELS = [
   { key: 'agenda_checkin', label: 'Agenda & Check-in / Libération des sessions', allowed: true },
   { key: 'reservations', label: 'Gestion des réservations & accueil', allowed: true },
   { key: 'encaissement_place', label: 'Encaissements sur place (espèces/chèque/virement)', allowed: true },
-  { key: 'membres_lecture', label: 'Consultation membres & Guests', allowed: true },
+  { key: 'membres_lecture', label: 'Consultation membres & Invités', allowed: true },
   { key: 'tarifs_acces', label: 'Tarification & codes promo (Verrouillé Staff)', allowed: false },
   { key: 'rapports_financiers', label: 'Rapports financiers & CA (Verrouillé Staff)', allowed: false },
   { key: 'equipe_gestion', label: 'Gestion équipe & abonnement SaaS (Verrouillé Staff)', allowed: false },
@@ -50,11 +52,22 @@ export default function AdminTeam({ session }) {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    setCreating(true);
     setError('');
     setTempPwd('');
+    if (form.telephone && form.telephone.trim()) {
+      const check = validateTunisianPhone(form.telephone);
+      if (!check.valid) {
+        setError(check.error);
+        return;
+      }
+    }
+    setCreating(true);
     try {
-      const res = await tenantAdminApi.createStaff(form);
+      const payload = {
+        ...form,
+        telephone: form.telephone?.trim() ? normalizeTunisianPhone(form.telephone) : '',
+      };
+      const res = await tenantAdminApi.createStaff(payload);
       if (res.temporary_password) setTempPwd(res.temporary_password);
       setMsg(res.message || 'Compte Staff créé.');
       setForm({ nom: '', prenom: '', email: '', telephone: '' });
@@ -95,9 +108,9 @@ export default function AdminTeam({ session }) {
     <PortalLayout profile={profile}>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Équipe (Staff & Réception)</h1>
+          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Équipe (Staff & Réception)</h1>
           <p className="text-sm text-on-surface-variant">
-            Créez des accès Staff avec permissions opérationnelles restreintes (CDC v3.0 : Essentiel 1, Standard 3, Premium 10).
+            Créez des accès Staff avec permissions opérationnelles restreintes (Essentiel : 1, Standard : 3, Premium : 10).
           </p>
         </div>
         <button
@@ -159,8 +172,8 @@ export default function AdminTeam({ session }) {
                 <div key={s.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <p className="font-semibold text-primary text-sm">{s.prenom} {s.nom}</p>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      <p className="font-semibold text-[#100f0d] text-sm">{s.prenom} {s.nom}</p>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                         s.statut_compte === 'suspendu' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
                       }`}>
                         {s.statut_compte || 'actif'}
@@ -190,11 +203,11 @@ export default function AdminTeam({ session }) {
           )}
         </div>
 
-        {/* Matrice des permissions CDC v3.0 */}
+        {/* Matrice des permissions Staff */}
         <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15">
-          <h2 className="font-sora font-bold text-base text-primary mb-2">Permissions du rôle Staff (Niveau 2)</h2>
+          <h2 className="font-sora font-bold text-base text-[#100f0d] mb-2">Permissions du rôle Staff (Niveau 2)</h2>
           <p className="text-xs text-on-surface-variant mb-4">
-            Conformément au CDC DeskyWork v3.0, le Staff gère l'accueil quotidien mais n'a aucun accès aux tarifs, rapports financiers ni équipe.
+            Le Staff gère l&apos;accueil quotidien mais n&apos;a aucun accès aux tarifs, rapports financiers ni à la gestion d&apos;équipe.
           </p>
           <div className="space-y-2.5">
             {PERM_LABELS.map((p) => (
@@ -221,7 +234,7 @@ export default function AdminTeam({ session }) {
         <div className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-sora font-bold text-lg text-primary">Nouveau compte Staff</h2>
+              <h2 className="font-sora font-bold text-lg text-[#100f0d]">Nouveau compte Staff</h2>
               <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-gray-700">✕</button>
             </div>
             {tempPwd ? (
@@ -233,7 +246,8 @@ export default function AdminTeam({ session }) {
                 <button
                   type="button"
                   onClick={() => { setTempPwd(''); setShowCreate(false); }}
-                  className="w-full py-2.5 rounded-xl bg-primary text-white font-semibold text-sm"
+                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                  className="w-full py-2.5 rounded-xl font-semibold text-sm"
                 >
                   Fermer
                 </button>
@@ -273,11 +287,9 @@ export default function AdminTeam({ session }) {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1">Téléphone</label>
-                  <input
-                    type="tel"
-                    placeholder="+216 ..."
+                  <TunisianPhoneInput
                     value={form.telephone}
-                    onChange={(e) => setForm((p) => ({ ...p, telephone: e.target.value }))}
+                    onChange={(val) => setForm((p) => ({ ...p, telephone: val }))}
                     className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm"
                   />
                 </div>

@@ -4,10 +4,10 @@ import { QRCodeSVG } from 'qrcode.react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi, memberApi, guestApi, documentsApi } from '../services/api';
-
-function formatDT(val) {
-  return `${Number(val || 0).toFixed(3)} DT`;
-}
+import { formatDT, formatDateDMY } from '../utils/format';
+import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
+import Money from '../components/common/Money';
 
 export default function AdminClients({ session }) {
   const { userId, email, metadata } = useSessionUser(session);
@@ -129,11 +129,22 @@ export default function AdminClients({ session }) {
 
   const handleCreateMember = async (e) => {
     e.preventDefault();
-    setCreating(true);
     setError('');
     setCreatedTempPwd('');
+    if (createForm.telephone && createForm.telephone.trim()) {
+      const phoneCheck = validateTunisianPhone(createForm.telephone);
+      if (!phoneCheck.valid) {
+        setError(phoneCheck.error);
+        return;
+      }
+    }
+    setCreating(true);
     try {
-      const res = await tenantAdminApi.createMember(createForm);
+      const payload = {
+        ...createForm,
+        telephone: createForm.telephone?.trim() ? normalizeTunisianPhone(createForm.telephone) : '',
+      };
+      const res = await tenantAdminApi.createMember(payload);
       if (res.temporary_password) setCreatedTempPwd(res.temporary_password);
       setMsg(res.message || 'Membre créé avec succès.');
       setCreateForm({ nom: '', prenom: '', email: '', telephone: '', type_membre: 'particulier' });
@@ -149,13 +160,20 @@ export default function AdminClients({ session }) {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editMember) return;
-    setSavingEdit(true);
     setError('');
+    if (editMember.telephone && String(editMember.telephone).trim()) {
+      const phoneCheck = validateTunisianPhone(editMember.telephone);
+      if (!phoneCheck.valid) {
+        setError(phoneCheck.error);
+        return;
+      }
+    }
+    setSavingEdit(true);
     try {
       await memberApi.updateById(editMember.id, {
         nom: editMember.nom,
         prenom: editMember.prenom,
-        telephone: editMember.telephone,
+        telephone: editMember.telephone?.trim() ? normalizeTunisianPhone(editMember.telephone) : '',
         type_membre: editMember.type_membre,
         statut_compte: editMember.statut_compte,
       });
@@ -198,7 +216,7 @@ export default function AdminClients({ session }) {
     if (!window.confirm(`Convertir l'invité ${g.prenom || ''} ${g.nom || g.email} en membre ?`)) return;
     try {
       const res = await guestApi.convert(g.id, {});
-      setMsg(res.message || 'Guest converti en membre avec succès.');
+      setMsg(res.message || 'Invité converti en membre avec succès.');
       await loadData();
       setTab('membres');
     } catch (err) {
@@ -241,9 +259,9 @@ export default function AdminClients({ session }) {
     <PortalLayout profile={profile}>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">Membres & Clients</h1>
+          <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">Membres & Clients</h1>
           <p className="text-sm text-on-surface-variant">
-            Annuaire complet des membres, invités (Guests), comptes Entreprises et documents contractuels.
+            Annuaire complet des membres, invités, comptes Entreprises et documents contractuels.
           </p>
         </div>
         <button
@@ -269,12 +287,12 @@ export default function AdminClients({ session }) {
         </div>
       )}
 
-      {/* Onglets CDC v3.0 + Barre de recherche */}
+      {/* Onglets + Barre de recherche */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div className="flex flex-wrap gap-2">
           {[
             { id: 'membres', label: `Membres (${members.length})`, icon: 'group' },
-            { id: 'guests', label: `Guests (${guests.length})`, icon: 'person_outline' },
+            { id: 'guests', label: `Invités (${guests.length})`, icon: 'person_outline' },
             { id: 'entreprises', label: `Entreprises (${entreprises.length})`, icon: 'business' },
             { id: 'documents', label: 'Documents & Contrats', icon: 'description' },
           ].map((t) => (
@@ -282,9 +300,10 @@ export default function AdminClients({ session }) {
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
+              style={tab === t.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition ${
                 tab === t.id
-                  ? 'bg-primary text-on-primary shadow-xs'
+                  ? 'shadow-xs'
                   : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant/15 hover:bg-surface-container-low'
               }`}
             >
@@ -313,7 +332,7 @@ export default function AdminClients({ session }) {
         <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="border-b border-outline-variant/15 text-[11px] uppercase tracking-wider text-on-surface-variant">
+              <tr className="border-b border-outline-variant/15 text-xs uppercase tracking-wider text-on-surface-variant">
                 <th className="py-3.5 px-4">Membre</th>
                 <th className="py-3.5 px-4">Type</th>
                 <th className="py-3.5 px-4">Statut</th>
@@ -337,14 +356,14 @@ export default function AdminClients({ session }) {
                       <p className="text-xs text-on-surface-variant">{m.email} {m.telephone ? `· ${m.telephone}` : ''}</p>
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                        m.type_membre === 'entreprise' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                        m.type_membre === 'entreprise' ? 'bg-orange-100 text-orange-800' : 'bg-slate-100 text-slate-700'
                       }`}>
                         {m.type_membre === 'entreprise' ? 'Entreprise' : 'Particulier'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                         m.statut_compte === 'suspendu'
                           ? 'bg-red-100 text-red-700'
                           : m.statut_compte === 'en_attente'
@@ -356,7 +375,7 @@ export default function AdminClients({ session }) {
                     </td>
                     <td className="py-3 px-4 text-xs text-on-surface-variant">
                       <p>{m.reservations_count || 0} résa(s)</p>
-                      <p className="text-[11px]">{m.abonnement_actif ? `Abo : ${m.abonnement_actif.type}` : 'Sans abonnement'}</p>
+                      <p className="text-xs">{m.abonnement_actif ? `Abo : ${m.abonnement_actif.type}` : 'Sans abonnement'}</p>
                     </td>
                     <td className="py-3 px-4 text-xs">
                       <p className="font-semibold text-emerald-700">Payé : {formatDT(m.total_paye)}</p>
@@ -410,8 +429,8 @@ export default function AdminClients({ session }) {
         <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="border-b border-outline-variant/15 text-[11px] uppercase tracking-wider text-on-surface-variant">
-                <th className="py-3.5 px-4">Invité (Guest)</th>
+              <tr className="border-b border-outline-variant/15 text-xs uppercase tracking-wider text-on-surface-variant">
+                <th className="py-3.5 px-4">Invité</th>
                 <th className="py-3.5 px-4">Téléphone</th>
                 <th className="py-3.5 px-4">Statut</th>
                 <th className="py-3.5 px-4">Créé le</th>
@@ -429,19 +448,19 @@ export default function AdminClients({ session }) {
                 filteredGuests.map((g) => (
                   <tr key={g.id} className="hover:bg-surface-container-low/40">
                     <td className="py-3 px-4">
-                      <p className="font-semibold text-primary">{g.prenom} {g.nom || 'Guest'}</p>
+                      <p className="font-semibold text-[#100f0d]">{g.prenom} {g.nom || 'Invité'}</p>
                       <p className="text-xs text-on-surface-variant">{g.email}</p>
                     </td>
                     <td className="py-3 px-4 text-xs text-on-surface-variant">{g.telephone || '—'}</td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                         g.converted_user_id ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
                       }`}>
-                        {g.converted_user_id ? 'Converti' : 'Guest ponctuel'}
+                        {g.converted_user_id ? 'Converti' : 'Invité ponctuel'}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-xs text-on-surface-variant">
-                      {g.created_at ? new Date(g.created_at).toLocaleDateString('fr-FR') : '—'}
+                      {g.created_at ? formatDateDMY(g.created_at) : '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {!g.converted_user_id ? (
@@ -466,7 +485,7 @@ export default function AdminClients({ session }) {
         <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="border-b border-outline-variant/15 text-[11px] uppercase tracking-wider text-on-surface-variant">
+              <tr className="border-b border-outline-variant/15 text-xs uppercase tracking-wider text-on-surface-variant">
                 <th className="py-3.5 px-4">Entreprise / Raison sociale</th>
                 <th className="py-3.5 px-4">Contact</th>
                 <th className="py-3.5 px-4">Matricule Fiscale</th>
@@ -548,7 +567,8 @@ export default function AdminClients({ session }) {
                 type="button"
                 onClick={handleSaveDoc}
                 disabled={savingDoc}
-                className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+                style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50"
               >
                 {savingDoc ? 'Enregistrement…' : 'Enregistrer le modèle'}
               </button>
@@ -606,7 +626,7 @@ export default function AdminClients({ session }) {
                         <p className="font-semibold text-primary truncate">{d.profiles ? `${d.profiles.prenom} ${d.profiles.nom}` : 'Membre'}</p>
                         <p className="text-on-surface-variant">{d.nom || d.type_doc || d.type}</p>
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                         isSigned ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
                       }`}>
                         {isSigned ? 'signé' : (d.statut || 'en_attente')}
@@ -638,7 +658,8 @@ export default function AdminClients({ session }) {
                 <button
                   type="button"
                   onClick={() => { setCreatedTempPwd(''); setShowCreate(false); }}
-                  className="w-full py-2.5 rounded-xl bg-primary text-white font-semibold text-sm"
+                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                  className="w-full py-2.5 rounded-xl font-semibold text-sm"
                 >
                   Fermer
                 </button>
@@ -678,11 +699,9 @@ export default function AdminClients({ session }) {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1">Téléphone</label>
-                  <input
-                    type="tel"
-                    placeholder="+216 ..."
+                  <TunisianPhoneInput
                     value={createForm.telephone}
-                    onChange={(e) => setCreateForm((p) => ({ ...p, telephone: e.target.value }))}
+                    onChange={(val) => setCreateForm((p) => ({ ...p, telephone: val }))}
                     className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm"
                   />
                 </div>
@@ -742,10 +761,9 @@ export default function AdminClients({ session }) {
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">Téléphone</label>
-              <input
-                type="tel"
+              <TunisianPhoneInput
                 value={editMember.telephone || ''}
-                onChange={(e) => setEditMember((p) => ({ ...p, telephone: e.target.value }))}
+                onChange={(val) => setEditMember((p) => ({ ...p, telephone: val }))}
                 className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm"
               />
             </div>
@@ -794,7 +812,7 @@ export default function AdminClients({ session }) {
             <div className="inline-block p-4 rounded-2xl border border-gray-100 bg-white mb-4">
               <QRCodeSVG value={`DESKYWORK:MEMBER:${qrMember.id}`} size={180} />
             </div>
-            <button onClick={() => setQrMember(null)} className="w-full py-2.5 rounded-xl bg-primary text-white text-sm font-semibold">
+            <button onClick={() => setQrMember(null)} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="w-full py-2.5 rounded-xl text-sm font-semibold">
               Fermer
             </button>
           </div>
@@ -826,8 +844,8 @@ export default function AdminClients({ session }) {
                     <div className="divide-y divide-gray-100">
                       {historyData.reservations.map((r) => (
                         <div key={r.id} className="py-2 flex justify-between">
-                          <span>{r.espaces?.nom || 'Espace'} · {new Date(r.date_debut).toLocaleDateString('fr-FR')}</span>
-                          <span className="font-semibold">{formatDT(r.montant_total)} ({r.statut})</span>
+                          <span>{r.espaces?.nom || 'Espace'} · {formatDateDMY(r.date_debut)}</span>
+                          <span className="font-semibold"><Money amount={r.montant_total} /> ({r.statut})</span>
                         </div>
                       ))}
                     </div>

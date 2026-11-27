@@ -2,7 +2,15 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { kpiApi, memberApi, tenantAdminApi, guestApi, sessionApi } from '../services/api';
-import { formatDT as formatDTMillimes, TUNIS_TZ } from '../utils/format';
+import {
+  formatDT as formatDTMillimes,
+  formatDateDMY,
+  formatTime24h,
+  formatTimeHMS,
+  formatKpiDelta,
+  TUNIS_TZ,
+} from '../utils/format';
+import Money from '../components/common/Money';
 import PortalLayout from '../components/layout/PortalLayout';
 import { getRoleLabel } from '../utils/roles';
 import { exportDashboardToExcel } from '../utils/exportDashboardExcel';
@@ -51,9 +59,7 @@ const DASH_ANIMATIONS = `
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function formatDT(val) {
-  return typeof val === 'number'
-    ? val.toLocaleString('fr-TN', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
-    : '—';
+  return formatDTMillimes(val, { suffix: false });
 }
 
 function formatClockSeconds(totalSec) {
@@ -72,13 +78,11 @@ function greeting() {
 }
 
 function formatTimeShort(dateStr) {
-  if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleTimeString('fr-FR', { timeZone: TUNIS_TZ, timeStyle: 'short' });
+  return formatTime24h(dateStr);
 }
 
 function formatDateShort(dateStr) {
-  if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleDateString('fr-FR', { timeZone: TUNIS_TZ, day: 'numeric', month: 'short' });
+  return formatDateDMY(dateStr);
 }
 
 function relTime(dateStr) {
@@ -143,23 +147,29 @@ function AnimatedNumber({ value, decimals = 0, suffix = '' }) {
   const isNum = Number.isFinite(num);
   const animated = useCountUp(isNum ? num : 0);
   if (!isNum || animated == null) return <span>—</span>;
+  if (decimals === 3 && suffix.trim() === 'DT') {
+    return <span>{formatDTMillimes(animated, { suffix: true })}</span>;
+  }
   const formatted = decimals > 0
-    ? animated.toLocaleString('fr-TN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    : Math.round(animated).toLocaleString('fr-FR');
+    ? formatDTMillimes(animated, { suffix: false })
+    : Math.round(animated).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
   return <span>{formatted}{suffix}</span>;
 }
 
-// ─── Composant StatCard Cliquable & Animée ──────────────────────────────────
+// ─── Composant StatCard Cliquable & Animée (un seul filet neutre) ──────────
 function StatCard({ label, rawValue, decimals = 0, suffix = '', sub, icon, accent = '#f95d00', to = '/admin/dashboard', badge, pulse, trend, delayMs = 0 }) {
   const { dark } = useTheme();
   const bg = accent === '#2fbe8f' ? 'rgba(47,190,143,0.12)'
     : accent === '#ba1a1a' ? 'rgba(186,26,26,0.10)'
       : accent === '#f59e0b' ? 'rgba(245,158,11,0.12)'
         : accent === '#8b5cf6' ? 'rgba(139,92,246,0.12)'
-          : accent === '#0ea5e9' ? 'rgba(14,165,233,0.11)'
-            : 'rgba(249,93,0,0.11)';
+          : 'rgba(249,93,0,0.11)';
 
-  const trendColor = trend?.dir === 'up' ? '#2fbe8f' : trend?.dir === 'down' ? '#ba1a1a' : (dark ? '#a3a09b' : '#64748b');
+  const trendColor = trend?.dir === 'up' || trend?.dir === 'new'
+    ? '#2fbe8f'
+    : trend?.dir === 'down'
+      ? '#ba1a1a'
+      : (dark ? '#cfcac3' : '#5e5a55');
 
   return (
     <Link
@@ -168,21 +178,12 @@ function StatCard({ label, rawValue, decimals = 0, suffix = '', sub, icon, accen
       style={{ animationDelay: `${delayMs}ms` }}
     >
       <div
-        className="bg-surface-container-lowest rounded-3xl border border-outline-variant/15 h-full transition-all duration-300 group-hover:-translate-y-1.5 group-hover:border-secondary/40 relative overflow-hidden"
+        className="bg-surface-container-lowest rounded-3xl border border-outline-variant/25 h-full transition-all duration-300 group-hover:-translate-y-1 group-hover:border-[#f95d00]/50 relative overflow-hidden"
         style={{
           padding: '18px 20px',
-          boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.06)',
+          boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 6px 20px rgba(16,35,63,0.05)',
         }}
       >
-        <span
-          className="absolute inset-x-0 top-0 h-1 transition-all duration-300 group-hover:h-1.5"
-          style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}
-        />
-        <span
-          className="pointer-events-none absolute -right-8 -bottom-8 w-24 h-24 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl"
-          style={{ background: bg }}
-        />
-
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <span
@@ -191,7 +192,7 @@ function StatCard({ label, rawValue, decimals = 0, suffix = '', sub, icon, accen
             >
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
             </span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant leading-tight">
+            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant leading-tight">
               {label}
             </span>
           </div>
@@ -212,19 +213,19 @@ function StatCard({ label, rawValue, decimals = 0, suffix = '', sub, icon, accen
           </div>
         </div>
 
-        <p className="font-sora font-extrabold text-primary leading-tight" style={{ fontSize: 23 }}>
+        <p className="font-sora font-extrabold text-primary leading-tight" style={{ fontSize: 22 }}>
           <AnimatedNumber value={rawValue} decimals={decimals} suffix={suffix} />
         </p>
 
         {trend && (
-          <p className="text-[11px] font-bold mt-1 flex items-center gap-1" style={{ color: trendColor }}>
+          <p className="text-xs font-bold mt-1 flex items-center gap-1" style={{ color: trendColor }}>
             {trend.text}
           </p>
         )}
-        {sub && <p className="text-[11px] text-on-surface-variant mt-1 font-medium truncate">{sub}</p>}
+        {sub && <p className="text-xs text-on-surface-variant mt-1 font-medium truncate">{sub}</p>}
         {badge != null && (
           <span
-            className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
+            className="inline-flex items-center gap-1 mt-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold"
             style={{ background: bg, color: accent }}
           >
             {badge}
@@ -309,7 +310,7 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
               <span className="font-sora font-bold text-primary text-sm leading-tight">
                 {totalFormatter ? totalFormatter(total) : total}
               </span>
-              <span className="text-[9px] text-on-surface-variant font-semibold uppercase tracking-wider mt-0.5">Total</span>
+              <span className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider mt-0.5">Total</span>
             </div>
           </div>
           <div className="flex-1 min-w-[140px] space-y-1">
@@ -319,7 +320,7 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
                 <div key={d.name} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-surface-container-low/60 transition-colors">
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
                   <span className="text-xs text-on-surface-variant truncate flex-1">{d.name}</span>
-                  <span className="text-[11px] font-bold text-primary">{p}%</span>
+                  <span className="text-xs font-bold text-primary">{p}%</span>
                 </div>
               );
             })}
@@ -381,7 +382,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-semibold text-primary text-sm truncate">{s.membre}</p>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeCfg.cls}`}>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${badgeCfg.cls}`}>
               {badgeCfg.txt}
             </span>
           </div>
@@ -400,7 +401,7 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
             {isOvertime ? `+${formatClockSeconds(Math.abs(diffSec))}` : formatClockSeconds(diffSec)}
           </p>
           {isOvertime && (
-            <p className="text-[11px] font-bold text-red-600">
+            <p className="text-xs font-bold text-red-600">
               Surplus : {formatDTMillimes(overtimeCost)}
             </p>
           )}
@@ -462,7 +463,6 @@ export default function AdminDashboard({ session }) {
   const [exportingPdf, setExportingPdf] = useState(false);
 
   // Onglets / filtres locaux interactifs
-  const [tunisClock, setTunisClock] = useState('');
   const [bookingTab, setBookingTab] = useState('upcoming'); // 'upcoming' | 'today'
   const [formationTab, setFormationTab] = useState('period'); // 'period' | 'today'
   const [guestScope, setGuestScope] = useState('period'); // 'period' | 'all'
@@ -476,23 +476,6 @@ export default function AdminDashboard({ session }) {
 
   const kpiTimerRef = useRef(null);
   const sessionTimerRef = useRef(null);
-
-  // Horloge temps réel Africa/Tunis dans le header
-  useEffect(() => {
-    const updateClock = () => {
-      setTunisClock(
-        new Intl.DateTimeFormat('fr-FR', {
-          timeZone: TUNIS_TZ,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }).format(new Date())
-      );
-    };
-    updateClock();
-    const id = setInterval(updateClock, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   // ── Fetch KPIs ────────────────────────────────────────────────────────────
   const fetchKpis = useCallback(async (silent = false) => {
@@ -713,7 +696,20 @@ export default function AdminDashboard({ session }) {
         ? `Par mois · ${label}`
         : 'Par année · historique';
 
-  const membersTrend = trendBadge(membres.periode || 0, membres.periodePrecedente || 0);
+  const caDelta = formatKpiDelta(ca.periode ?? 0, ca.periodePrecedente ?? 0);
+  const caTrend = {
+    text: caDelta.pct === null
+      ? `${caDelta.text} vs période préc.`
+      : `${caDelta.pct > 0 ? '▲ +' : caDelta.pct < 0 ? '▼ ' : '→ '}${caDelta.pct}% vs période préc.`,
+    dir: caDelta.dir,
+  };
+  const memDelta = formatKpiDelta(membres.periode || 0, membres.periodePrecedente || 0);
+  const membersTrend = {
+    text: memDelta.pct === null
+      ? `${memDelta.text} vs période préc.`
+      : `${memDelta.pct > 0 ? '▲ +' : memDelta.pct < 0 ? '▼ ' : '→ '}${memDelta.pct}% vs période préc.`,
+    dir: memDelta.dir,
+  };
   const formationsPeriode = useMemo(
     () => formations.filter((f) => inWindow(f.date_debut, win)),
     [formations, win]
@@ -771,36 +767,30 @@ export default function AdminDashboard({ session }) {
         style={{
           background: dark
             ? 'linear-gradient(135deg, rgba(249,93,0,0.12) 0%, #151412 52%, rgba(47,190,143,0.08) 100%)'
-            : 'linear-gradient(135deg, rgba(249,93,0,0.07) 0%, #ffffff 55%, rgba(14,165,233,0.05) 100%)',
+            : 'linear-gradient(135deg, rgba(249,93,0,0.07) 0%, #ffffff 55%, rgba(47,190,143,0.04) 100%)',
           boxShadow: cardShadow,
         }}
       >
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 relative z-10">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1.5">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-secondary/12 text-secondary text-[11px] font-bold">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-secondary/12 text-secondary text-xs font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
                 {coworking?.nom || getRoleLabel(profile?.role)}
               </span>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                {new Date().toLocaleDateString('fr-FR', { timeZone: TUNIS_TZ, weekday: 'long', day: 'numeric', month: 'long' })}
+              <span className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                {formatDateDMY(new Date())}
               </span>
-              {tunisClock && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-300 font-mono text-[11px] font-bold">
-                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
-                  Tunis {tunisClock}
-                </span>
-              )}
             </div>
 
             <h1 className="font-sora font-extrabold text-primary text-2xl sm:text-3xl leading-tight">
               {welcomeText}, {profile?.prenom || 'Gérant'}
             </h1>
             <p className="text-on-surface-variant text-xs sm:text-sm mt-1 flex flex-wrap gap-1.5 items-center">
-              <span>Pilotage en temps réel — Règlement 100 % sur place</span>
+              <span>Pilotage de l&apos;établissement — Règlement 100 % sur place</span>
               {lastRefresh && (
-                <span className="text-xs text-on-surface-variant/70">
-                  · Actualisé à {lastRefresh.toLocaleTimeString('fr-FR', { timeZone: TUNIS_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                <span className="text-xs text-on-surface-variant/80 font-medium">
+                  · Actualisé à {formatTimeHMS(lastRefresh)}
                 </span>
               )}
             </p>
@@ -883,7 +873,7 @@ export default function AdminDashboard({ session }) {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 20 }}>pending_actions</span>
               <h2 className="font-sora font-bold text-primary text-base">Demandes de compte en attente</h2>
-              <span className="flex h-5 px-2 items-center justify-center rounded-full text-[11px] font-bold text-white bg-amber-600 animate-pulse">
+              <span className="flex h-5 px-2 items-center justify-center rounded-full text-xs font-bold text-white bg-amber-600 animate-pulse">
                 {pendingAccounts.length}
               </span>
             </div>
@@ -943,11 +933,8 @@ export default function AdminDashboard({ session }) {
             decimals={3}
             suffix=" DT"
             sub={`${ca.transactions ?? 0} transactions · ${label}`}
-            badge={typeof k.caMoisPrecedent === 'number' ? `Mois préc. : ${formatDT(k.caMoisPrecedent)} DT` : null}
-            trend={{
-              text: `${ca.evolution > 0 ? '▲' : ca.evolution < 0 ? '▼' : '→'} ${Math.abs(ca.evolution ?? 0)}% vs période préc.`,
-              dir: ca.evolution > 0 ? 'up' : ca.evolution < 0 ? 'down' : 'flat',
-            }}
+            badge={typeof k.caMoisPrecedent === 'number' ? `Mois préc. : ${formatDTMillimes(k.caMoisPrecedent)}` : null}
+            trend={caTrend}
             icon="payments"
             accent="#2fbe8f"
             to="/admin/payments"
@@ -1011,7 +998,7 @@ export default function AdminDashboard({ session }) {
             rawValue={guestsPeriode.length}
             sub={`${guests.length} invité(s) au total · ${label}`}
             icon="person_add_alt"
-            accent="#0ea5e9"
+            accent="#f95d00"
             pulse={guestsPeriode.some((g) => g.reservations?.[0]?.statut === 'pending')}
             to="/admin/reservations"
           />
@@ -1038,7 +1025,7 @@ export default function AdminDashboard({ session }) {
           >
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div className="flex items-center gap-2.5">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(14,165,233,0.12)] text-[#0ea5e9]">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(249,93,0,0.12)] text-[#f95d00]">
                   <span className="material-symbols-outlined" style={{ fontSize: 19 }}>upcoming</span>
                 </span>
                 <div>
@@ -1052,7 +1039,7 @@ export default function AdminDashboard({ session }) {
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+                <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-xs font-bold">
                   <button
                     type="button"
                     onClick={() => setBookingTab('upcoming')}
@@ -1120,7 +1107,7 @@ export default function AdminDashboard({ session }) {
                           {formatDateShort(r.date_debut)}
                         </span>
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${
                             isConfirmed
                               ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                               : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
@@ -1151,7 +1138,7 @@ export default function AdminDashboard({ session }) {
                   <p className="text-xs text-on-surface-variant">Flux en direct de l&apos;établissement</p>
                 </div>
               </div>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 text-[10px] font-bold">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 text-xs font-bold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Live
               </span>
@@ -1180,7 +1167,7 @@ export default function AdminDashboard({ session }) {
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-primary font-medium leading-snug">{a.text}</p>
-                        <p className="text-[10px] text-on-surface-variant mt-0.5">{relTime(a.time)}</p>
+                        <p className="text-xs text-on-surface-variant mt-0.5">{relTime(a.time)}</p>
                       </div>
                     </div>
                   );
@@ -1209,7 +1196,7 @@ export default function AdminDashboard({ session }) {
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+              <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => setFormationTab('period')}
@@ -1249,12 +1236,12 @@ export default function AdminDashboard({ session }) {
               <table className="w-full min-w-[650px] text-left text-sm border-collapse">
                 <thead>
                   <tr className="border-b border-outline-variant/15">
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formation</th>
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Formateur</th>
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Date &amp; Heure</th>
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Salle</th>
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-center">Remplissage</th>
-                    <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Tarif</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Formation</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Formateur</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Date &amp; Heure</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Salle</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant text-center">Remplissage</th>
+                    <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant text-right">Tarif</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/10">
@@ -1270,17 +1257,17 @@ export default function AdminDashboard({ session }) {
                         <td className="py-3 text-on-surface-variant">
                           <div>{formateurName}</div>
                           {f.profiles?.specialite && (
-                            <div className="text-[10px] text-on-surface-variant/70">{f.profiles.specialite}</div>
+                            <div className="text-xs text-on-surface-variant/70">{f.profiles.specialite}</div>
                           )}
                         </td>
                         <td className="py-3 text-on-surface-variant">
                           <div className="font-medium text-primary">{formatDateShort(f.date_debut)}</div>
-                          <div className="text-[10px] text-on-surface-variant/75">{formatTimeShort(f.date_debut)}</div>
+                          <div className="text-xs text-on-surface-variant/75">{formatTimeShort(f.date_debut)}</div>
                         </td>
                         <td className="py-3 text-on-surface-variant">{f.espaces?.nom || '—'}</td>
                         <td className="py-3">
                           <div className="flex flex-col items-center justify-center min-w-[110px]">
-                            <div className="flex items-center justify-between w-full text-[10px] mb-1">
+                            <div className="flex items-center justify-between w-full text-xs mb-1">
                               <span className="font-semibold text-on-surface-variant">{f.nb_inscrits ?? 0} / {f.capacite_max ?? 0}</span>
                               <span className="font-bold text-primary">{fillPct}%</span>
                             </div>
@@ -1323,7 +1310,7 @@ export default function AdminDashboard({ session }) {
               )}
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-[11px] text-on-surface-variant font-medium hidden sm:inline">
+              <span className="text-xs text-on-surface-variant font-medium hidden sm:inline">
                 Minuteur temps réel · Libération manuelle obligatoire
               </span>
               <Link
@@ -1412,7 +1399,7 @@ export default function AdminDashboard({ session }) {
                 className="flex items-center justify-between gap-3 w-full px-3.5 py-2.5 rounded-2xl bg-surface-container-low text-primary font-semibold text-sm hover:bg-surface-container transition-all hover:-translate-y-0.5 border border-outline-variant/15"
               >
                 <span className="flex items-center gap-2.5">
-                  <span className="material-symbols-outlined text-[#0ea5e9]" style={{ fontSize: 19 }}>person_add</span>
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 19 }}>person_add</span>
                   Nouveau membre
                 </span>
                 <span className="material-symbols-outlined opacity-40" style={{ fontSize: 16 }}>arrow_forward</span>
@@ -1433,21 +1420,21 @@ export default function AdminDashboard({ session }) {
         </div>
       </section>
 
-      {/* ── 5. JUSTE APRÈS LES SESSIONS : Réservations invités (Guests) ──── */}
+      {/* ── 5. JUSTE APRÈS LES SESSIONS : Réservations invités ──── */}
       <section
         aria-label="Réservations invités"
-        className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 mb-6"
+        className="dash-enter bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/25 mb-6"
         style={{ boxShadow: cardShadow }}
       >
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2.5">
-            <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(14,165,233,0.12)] text-[#0ea5e9]">
+            <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-[rgba(249,93,0,0.12)] text-[#f95d00]">
               <span className="material-symbols-outlined" style={{ fontSize: 19 }}>person_add_alt</span>
             </span>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-sora font-bold text-primary text-base">Réservations invités (guests)</h2>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-secondary text-white">
+                <h2 className="font-sora font-bold text-primary text-base">Réservations invités</h2>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-secondary text-white">
                   {displayedGuests.length}
                 </span>
               </div>
@@ -1458,28 +1445,26 @@ export default function AdminDashboard({ session }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-xs font-bold">
               <button
                 type="button"
                 onClick={() => setGuestScope('period')}
-                className={`px-2.5 py-1 rounded-lg transition-all ${
-                  guestScope === 'period' ? 'bg-primary text-on-primary shadow-2xs' : 'text-on-surface-variant hover:text-primary'
-                }`}
+                className="px-2.5 py-1 rounded-lg transition-all"
+                style={guestScope === 'period' ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               >
                 Période ({guestsPeriode.length})
               </button>
               <button
                 type="button"
                 onClick={() => setGuestScope('all')}
-                className={`px-2.5 py-1 rounded-lg transition-all ${
-                  guestScope === 'all' ? 'bg-primary text-on-primary shadow-2xs' : 'text-on-surface-variant hover:text-primary'
-                }`}
+                className="px-2.5 py-1 rounded-lg transition-all"
+                style={guestScope === 'all' ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               >
                 Tous ({guests.length})
               </button>
             </div>
 
-            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-[11px] font-bold">
+            <div className="inline-flex rounded-xl border border-outline-variant/20 bg-surface-container-low p-0.5 text-xs font-bold">
               {[
                 { id: 'all', label: 'Tous' },
                 { id: 'pending', label: 'En attente' },
@@ -1489,9 +1474,8 @@ export default function AdminDashboard({ session }) {
                   key={st.id}
                   type="button"
                   onClick={() => setGuestStatusFilter(st.id)}
-                  className={`px-2.5 py-1 rounded-lg transition-all ${
-                    guestStatusFilter === st.id ? 'bg-secondary text-white shadow-2xs' : 'text-on-surface-variant hover:text-primary'
-                  }`}
+                  className="px-2.5 py-1 rounded-lg transition-all"
+                  style={guestStatusFilter === st.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
                 >
                   {st.label}
                 </button>
@@ -1514,11 +1498,11 @@ export default function AdminDashboard({ session }) {
             <table className="w-full min-w-[650px] text-left text-sm border-collapse">
               <thead>
                 <tr className="border-b border-outline-variant/15">
-                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Invité(e)</th>
-                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Contact</th>
-                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Espace réservé</th>
-                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">Créneau</th>
-                  <th className="pb-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant text-right">Statut</th>
+                  <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Invité(e)</th>
+                  <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Contact</th>
+                  <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Espace réservé</th>
+                  <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant">Créneau</th>
+                  <th className="pb-2.5 text-xs font-bold uppercase tracking-wider text-on-surface-variant text-right">Statut</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
@@ -1540,14 +1524,14 @@ export default function AdminDashboard({ session }) {
                       </td>
                       <td className="py-3 text-on-surface-variant">
                         <div className="truncate max-w-[220px]">{g.email}</div>
-                        {g.telephone && <div className="text-[10px] text-on-surface-variant/75">{g.telephone}</div>}
+                        {g.telephone && <div className="text-xs text-on-surface-variant/75">{g.telephone}</div>}
                       </td>
                       <td className="py-3 text-on-surface-variant font-medium">{res?.espaces?.nom || '—'}</td>
                       <td className="py-3 text-on-surface-variant">
                         {res?.date_debut ? (
                           <div>
                             <div className="font-medium text-primary">{formatDateShort(res.date_debut)}</div>
-                            <div className="text-[10px] opacity-75">
+                            <div className="text-xs opacity-75">
                               {formatTimeShort(res.date_debut)} → {formatTimeShort(res.date_fin)}
                             </div>
                           </div>
@@ -1555,7 +1539,7 @@ export default function AdminDashboard({ session }) {
                       </td>
                       <td className="py-3 text-right">
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${
+                          className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-tight ${
                             statut === 'confirmed'
                               ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                               : statut === 'pending'
@@ -1610,11 +1594,11 @@ export default function AdminDashboard({ session }) {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'} />
-                  <XAxis dataKey="mois" tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} />
-                  <YAxis yAxisId="ca" tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} tickFormatter={(v) => `${v} DT`} width={72} />
-                  <YAxis yAxisId="tx" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} width={30} />
+                  <XAxis dataKey="mois" tick={{ fontSize: 12, fill: dark ? '#a3a09b' : '#64748b' }} />
+                  <YAxis yAxisId="ca" tick={{ fontSize: 12, fill: dark ? '#a3a09b' : '#64748b' }} tickFormatter={(v) => `${v} DT`} width={72} />
+                  <YAxis yAxisId="tx" orientation="right" tick={{ fontSize: 12, fill: '#94a3b8' }} allowDecimals={false} width={30} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar
                     yAxisId="ca"
                     dataKey="ca"
@@ -1651,7 +1635,7 @@ export default function AdminDashboard({ session }) {
               data={caParEspace}
               title="CA par espace"
               sub={label}
-              totalFormatter={(v) => `${formatDT(v)} DT`}
+              totalFormatter={(v) => formatDTMillimes(v)}
             />
           </div>
         </div>
@@ -1677,12 +1661,12 @@ export default function AdminDashboard({ session }) {
                   <CartesianGrid strokeDasharray="3 3" stroke={dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'} />
                   <XAxis
                     dataKey="nom"
-                    tick={{ fontSize: 10, fill: dark ? '#a3a09b' : '#64748b' }}
+                    tick={{ fontSize: 12, fill: dark ? '#a3a09b' : '#64748b' }}
                     tickFormatter={(v) => (v.length > 12 ? `${v.slice(0, 12)}…` : v)}
                   />
-                  <YAxis tick={{ fontSize: 11, fill: dark ? '#a3a09b' : '#64748b' }} width={32} allowDecimals={false} />
+                  <YAxis tick={{ fontSize: 12, fill: dark ? '#a3a09b' : '#64748b' }} width={32} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar
                     dataKey="confirmed"
                     name="Confirmées"
@@ -1751,7 +1735,7 @@ export default function AdminDashboard({ session }) {
                         </div>
                       </div>
                       <span className="font-bold text-[#2fbe8f] text-xs sm:text-sm shrink-0">
-                        {formatDT(m.ca)} DT
+                        <Money amount={m.ca} />
                       </span>
                     </div>
                   );

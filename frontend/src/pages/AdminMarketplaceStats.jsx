@@ -4,6 +4,7 @@ import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
 import { supabase } from '../supabaseClient';
+import { formatDateTimeDMY } from '../utils/format';
 
 export default function AdminMarketplaceStats({ session }) {
   const { userId, email, metadata } = useSessionUser(session);
@@ -59,8 +60,8 @@ export default function AdminMarketplaceStats({ session }) {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="font-sora font-bold text-2xl sm:text-3xl text-primary">
-                Statistiques Marketplace
+              <h1 className="font-sora font-bold text-2xl sm:text-3xl text-[#100f0d]">
+                Visibilité Marketplace
               </h1>
               {isPartner ? (
                 <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 border border-emerald-500/30">
@@ -68,7 +69,7 @@ export default function AdminMarketplaceStats({ session }) {
                   Partenaire Officiel — Pack Premium (90 DT/mois)
                 </span>
               ) : (
-                <span className="px-2.5 py-0.5 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-[11px] font-bold uppercase tracking-wider">
+                <span className="px-2.5 py-0.5 rounded-full bg-[#f95d00]/12 text-[#f95d00] text-xs font-bold uppercase tracking-wider">
                   Pack Premium
                 </span>
               )}
@@ -119,8 +120,8 @@ export default function AdminMarketplaceStats({ session }) {
                   <span className="material-symbols-outlined" style={{ fontSize: 26 }}>lock</span>
                 </div>
                 <div>
-                  <h2 className="font-sora font-bold text-lg text-primary">
-                    Module Statistiques détaillées réservé au Pack Premium
+                  <h2 className="font-sora font-bold text-lg text-[#100f0d]">
+                    Module Visibilité Marketplace réservé au Pack Premium
                   </h2>
                   <p className="text-sm text-on-surface-variant mt-1 max-w-2xl">
                     Votre pack actuel (<strong className="capitalize">{mpStats.current_pack || 'essentiel'}</strong>) inclut la présence sur la Marketplace DeskyWork.
@@ -149,7 +150,7 @@ export default function AdminMarketplaceStats({ session }) {
                     <span className="text-xs font-bold uppercase tracking-wider">{feat.title}</span>
                   </div>
                   <p className="font-sora font-bold text-xl text-on-surface-variant/60">—</p>
-                  <p className="text-[11px] text-on-surface-variant mt-1">{feat.desc}</p>
+                  <p className="text-xs text-on-surface-variant mt-1">{feat.desc}</p>
                 </div>
               ))}
             </div>
@@ -160,25 +161,25 @@ export default function AdminMarketplaceStats({ session }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 shadow-xs">
                 <div className="flex items-center justify-between text-on-surface-variant mb-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Vues fiche</span>
-                  <span className="material-symbols-outlined text-blue-600" style={{ fontSize: 20 }}>visibility</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Vues fiche</span>
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>visibility</span>
                 </div>
-                <p className="font-sora font-bold text-3xl text-primary">{vues}</p>
+                <p className="font-sora font-bold text-3xl text-[#100f0d]">{vues}</p>
                 <p className="text-xs text-on-surface-variant mt-1">Visites enregistrées sur la fiche publique</p>
               </div>
 
               <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 shadow-xs">
                 <div className="flex items-center justify-between text-on-surface-variant mb-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Clics réservation</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Clics réservation</span>
                   <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>ads_click</span>
                 </div>
-                <p className="font-sora font-bold text-3xl text-primary">{clics}</p>
+                <p className="font-sora font-bold text-3xl text-[#100f0d]">{clics}</p>
                 <p className="text-xs text-on-surface-variant mt-1">Taux de clic : {clickRate}% des vues</p>
               </div>
 
               <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 shadow-xs">
                 <div className="flex items-center justify-between text-on-surface-variant mb-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Réservations (30j)</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Réservations (30j)</span>
                   <span className="material-symbols-outlined text-[#2fbe8f]" style={{ fontSize: 20 }}>event_available</span>
                 </div>
                 <p className="font-sora font-bold text-3xl text-[#2fbe8f]">{reservations}</p>
@@ -187,8 +188,8 @@ export default function AdminMarketplaceStats({ session }) {
 
               <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 shadow-xs">
                 <div className="flex items-center justify-between text-on-surface-variant mb-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Conversion globale</span>
-                  <span className="material-symbols-outlined text-purple-600" style={{ fontSize: 20 }}>trending_up</span>
+                  <span className="text-xs font-bold uppercase tracking-wider">Conversion globale</span>
+                  <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 20 }}>trending_up</span>
                 </div>
                 <p className="font-sora font-bold text-3xl text-[#f95d00]">{conversion}%</p>
                 <p className="text-xs text-on-surface-variant mt-1">Ratio réservations / vues de la fiche</p>
@@ -198,16 +199,16 @@ export default function AdminMarketplaceStats({ session }) {
             {/* Entonnoir & Optimisation fiche */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               <div className="lg:col-span-7 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 space-y-4">
-                <h2 className="font-sora font-bold text-base text-primary">Entonnoir de visibilité Marketplace</h2>
+                <h2 className="font-sora font-bold text-base text-[#100f0d]">Entonnoir de visibilité Marketplace</h2>
                 {[
-                  { label: 'Vues de la fiche publique', value: vues, pct: 100, color: '#3b82f6' },
+                  { label: 'Vues de la fiche publique', value: vues, pct: 100, color: '#100f0d' },
                   { label: 'Clics vers la réservation', value: clics, pct: vues > 0 ? Math.min(100, Math.round((clics / vues) * 100)) : 0, color: '#f95d00' },
                   { label: 'Réservations enregistrées (30j)', value: reservations, pct: vues > 0 ? Math.min(100, Math.round((reservations / vues) * 100)) : 0, color: '#2fbe8f' },
                 ].map((step) => (
                   <div key={step.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-primary">{step.label}</span>
-                      <span className="font-bold text-primary">{step.value} ({step.pct}%)</span>
+                      <span className="font-semibold text-[#100f0d]">{step.label}</span>
+                      <span className="font-bold text-[#100f0d]">{step.value} ({step.pct}%)</span>
                     </div>
                     <div className="h-2.5 rounded-full bg-surface-container-low overflow-hidden">
                       <div className="h-full rounded-full transition-all" style={{ width: `${step.pct}%`, background: step.color }} />
@@ -215,8 +216,8 @@ export default function AdminMarketplaceStats({ session }) {
                   </div>
                 ))}
                 {mpStats?.stats?.last_updated && (
-                  <p className="text-[11px] text-on-surface-variant pt-1">
-                    Dernière activité suivie : {new Date(mpStats.stats.last_updated).toLocaleString('fr-FR', { timeZone: 'Africa/Tunis' })}
+                  <p className="text-xs text-on-surface-variant pt-1">
+                    Dernière activité suivie : {formatDateTimeDMY(mpStats.stats.last_updated)}
                   </p>
                 )}
               </div>

@@ -205,7 +205,7 @@ async function onboardTenant(req, res) {
 
 function pctChange(cur, prev) {
   if (prev > 0) return Math.round(((cur - prev) / prev) * 100);
-  return cur > 0 ? 100 : 0;
+  return null;
 }
 
 async function getStats(req, res) {

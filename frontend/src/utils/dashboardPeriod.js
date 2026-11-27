@@ -198,5 +198,5 @@ export function trendBadge(cur, prev, unit = '') {
   return { text: '→ Stable vs période préc.', dir: 'flat', value: 0 };
 }
 
-// Colonnes couleur cohérentes PowerBI
-export const CHART_COLORS = ['#f95d00', '#2fbe8f', '#8b5cf6', '#f59e0b', '#0ea5e9', '#ec4899', '#14b8a6', '#6366f1'];
+// Palettes graphiques charte DeskyWork (sans bleu hors-charte)
+export const CHART_COLORS = ['#f95d00', '#2fbe8f', '#f59e0b', '#8b5cf6', '#14b8a6', '#ec4899', '#4e4a46', '#ba1a1a'];

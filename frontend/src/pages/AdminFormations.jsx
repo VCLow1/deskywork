@@ -3,16 +3,20 @@ import { supabase } from '../supabaseClient';
 import { formationApi, bookingApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import { formatDateDMY, formatTime24h } from '../utils/format';
+import { validateTunisianPhone, normalizeTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
+import Money from '../components/common/Money';
 
 const ITEMS_PER_PAGE = 10;
 
 /* ─── Constants ─────────────────────────────────────────────────────────── */
 const STATUT_STYLES = {
   planifiee: 'bg-amber-50 text-amber-800 border border-amber-200',
-  publiee: 'bg-blue-50 text-blue-800 border border-blue-200',
+  publiee: 'bg-[#fff4ed] text-[#c2410c] border border-[#f95d00]/30',
   complete: 'bg-purple-50 text-purple-800 border border-purple-200',
   en_cours: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
-  terminee: 'bg-sky-50 text-sky-800 border border-sky-200',
+  terminee: 'bg-slate-100 text-slate-700 border border-slate-200',
   annulee: 'bg-red-50 text-red-800 border border-red-200',
 };
 const STATUT_LABELS = {
@@ -289,9 +293,21 @@ export default function AdminFormations({ session }) {
 
   /* ─── Formateur Actions ─── */
   const saveFormateur = async (e) => {
-    e.preventDefault(); setError(''); setFormSaving(true);
+    e.preventDefault(); setError('');
+    if (formateurForm.telephone && formateurForm.telephone.trim()) {
+      const check = validateTunisianPhone(formateurForm.telephone);
+      if (!check.valid) {
+        setError(check.error);
+        return;
+      }
+    }
+    setFormSaving(true);
     try {
-      await formationApi.createFormateur(formateurForm);
+      const payload = {
+        ...formateurForm,
+        telephone: formateurForm.telephone?.trim() ? normalizeTunisianPhone(formateurForm.telephone) : '',
+      };
+      await formationApi.createFormateur(payload);
       setSuccess(`Formateur ${formateurForm.prenom} ${formateurForm.nom} créé.`);
       setFormateurForm({ nom: '', prenom: '', email: '', telephone: '', specialite: '', biographie: '' });
       setShowFormateurDrawer(false);
@@ -458,18 +474,18 @@ export default function AdminFormations({ session }) {
         {/* ── KPI Cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           {[
-            { label: 'Formations', value: formations.length, icon: 'event_note', color: 'text-secondary bg-secondary/10' },
-            { label: 'Formateurs', value: formateurs.length, icon: 'person', color: 'text-violet-600 bg-violet-50' },
-            { label: 'Participants', value: totalInscrits, icon: 'group', color: 'text-sky-600 bg-sky-50' },
-            { label: 'Honoraires dus', value: `${pendingPay.toFixed(0)} DT`, icon: 'account_balance_wallet', color: 'text-amber-600 bg-amber-50' },
+            { label: 'Formations', value: formations.length, icon: 'event_note', color: 'text-[#f95d00] bg-[#fff4ed]' },
+            { label: 'Formateurs', value: formateurs.length, icon: 'person', color: 'text-slate-700 bg-slate-100' },
+            { label: 'Participants', value: totalInscrits, icon: 'group', color: 'text-[#f95d00] bg-[#fff4ed]' },
+            { label: 'Honoraires dus', value: <Money amount={pendingPay} />, icon: 'account_balance_wallet', color: 'text-amber-700 bg-amber-50' },
           ].map(({ label, value, icon, color }) => (
             <div key={label} className="bg-surface-container-lowest rounded-3xl sm:rounded-3xl p-4 sm:p-5 border border-outline-variant/20 shadow-sm flex items-center gap-3 sm:gap-4">
               <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center shrink-0 ${color}`}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20 }}>{icon}</span>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-on-surface-variant truncate">{label}</p>
-                <p className="font-sora font-bold text-primary text-xl sm:text-2xl leading-tight">{value}</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant truncate">{label}</p>
+                <p className="font-sora font-bold text-[#100f0d] text-xl sm:text-2xl leading-tight">{value}</p>
               </div>
             </div>
           ))}
@@ -485,14 +501,15 @@ export default function AdminFormations({ session }) {
             <button
               key={key}
               onClick={() => setActiveTab(key)}
+              style={activeTab === key ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all ${activeTab === key
-                ? 'bg-white text-secondary shadow-sm'
-                : 'text-on-surface-variant hover:text-primary'
+                ? 'shadow-sm'
+                : 'text-on-surface-variant hover:text-[#100f0d]'
                 }`}
             >
               <span className="material-symbols-outlined hidden sm:block" style={{ fontSize: 16 }}>{icon}</span>
               <span className="truncate">{label}</span>
-              <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${activeTab === key ? 'bg-secondary/10 text-secondary' : 'bg-outline-variant/20 text-on-surface-variant'
+              <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${activeTab === key ? 'bg-white/20 text-white' : 'bg-outline-variant/20 text-on-surface-variant'
                 }`}>{count}</span>
             </button>
           ))}
@@ -641,8 +658,8 @@ export default function AdminFormations({ session }) {
                   {paginatedFormations.map((f) => (
                     <div key={f.id} className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-4 shadow-sm">
                       <div className="flex justify-between items-start gap-2 mb-3">
-                        <h3 className="font-sora font-bold text-primary text-sm leading-snug">{f.titre}</h3>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${STATUT_STYLES[f.statut]}`}>
+                        <h3 className="font-sora font-bold text-[#100f0d] text-sm leading-snug">{f.titre}</h3>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${STATUT_STYLES[f.statut]}`}>
                           {STATUT_LABELS[f.statut]}
                         </span>
                       </div>
@@ -653,9 +670,9 @@ export default function AdminFormations({ session }) {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>calendar_today</span>
-                          {new Date(f.date_debut).toLocaleDateString('fr-FR')} {new Date(f.date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {formatDateDMY(f.date_debut)} {formatTime24h(f.date_debut)}
                           <span>→</span>
-                          {new Date(f.date_fin).toLocaleDateString('fr-FR')} {new Date(f.date_fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {formatDateDMY(f.date_fin)} {formatTime24h(f.date_fin)}
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>group</span>
@@ -664,7 +681,7 @@ export default function AdminFormations({ session }) {
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>
                           {f.prix_inscription > 0
-                            ? `${Number(f.prix_inscription).toFixed(3)} DT`
+                            ? <Money amount={f.prix_inscription} />
                             : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]'))
                             ? <span className="text-emerald-600 font-semibold">Gratuit</span>
                             : <span className="text-slate-400 font-medium italic">Non défini</span>}
@@ -718,24 +735,24 @@ export default function AdminFormations({ session }) {
                             </td>
                             <td className="p-4 text-on-surface-variant text-xs whitespace-normal break-words">{f.espaces?.nom || '—'}</td>
                             <td className="p-4 text-xs text-on-surface-variant whitespace-normal break-words min-w-[240px]">
-                              <div>{new Date(f.date_debut).toLocaleDateString('fr-FR')} {new Date(f.date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
-                              <div className="font-medium text-primary break-words">{new Date(f.date_fin).toLocaleDateString('fr-FR')} {new Date(f.date_fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+                              <div>{formatDateDMY(f.date_debut)} {formatTime24h(f.date_debut)}</div>
+                              <div className="font-medium text-[#100f0d] break-words">{formatDateDMY(f.date_fin)} {formatTime24h(f.date_fin)}</div>
                             </td>
                             <td className="p-4">
                               <div className="flex items-center gap-1">
-                                <span className="font-bold text-primary">{f.nb_inscrits || 0}</span>
+                                <span className="font-bold text-[#100f0d]">{f.nb_inscrits || 0}</span>
                                 <span className="text-on-surface-variant text-xs">/ {f.capacite_max}</span>
                               </div>
                               <div className="h-1 w-16 rounded-full bg-outline-variant/20 mt-1">
                                 <div
-                                  className="h-1 rounded-full bg-secondary transition-all"
+                                  className="h-1 rounded-full bg-[#f95d00] transition-all"
                                   style={{ width: `${Math.min(100, ((f.nb_inscrits || 0) / f.capacite_max) * 100)}%` }}
                                 />
                               </div>
                             </td>
-                            <td className="p-4 font-semibold text-primary text-xs">
+                            <td className="p-4 font-semibold text-[#100f0d] text-xs">
                               {f.prix_inscription > 0 ? (
-                                `${Number(f.prix_inscription).toFixed(3)} DT`
+                                <Money amount={f.prix_inscription} />
                               ) : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? (
                                 <span className="text-emerald-600 font-semibold">Gratuit</span>
                               ) : (
@@ -821,7 +838,7 @@ export default function AdminFormations({ session }) {
                           <p className="font-semibold text-primary text-sm truncate">{t.prenom} {t.nom}</p>
                           <p className="text-xs text-on-surface-variant truncate">{t.email}</p>
                         </div>
-                        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                        <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                           {t.statut_compte || 'actif'}
                         </span>
                       </div>
@@ -848,7 +865,7 @@ export default function AdminFormations({ session }) {
                           <p className="font-sora font-bold text-primary truncate">{t.prenom} {t.nom}</p>
                           <p className="text-xs text-on-surface-variant truncate">{t.email}</p>
                         </div>
-                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                           {t.statut_compte || 'actif'}
                         </span>
                       </div>
@@ -924,13 +941,13 @@ export default function AdminFormations({ session }) {
                   {remunerations.map((r) => (
                     <div key={r.id} className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-4 shadow-sm">
                       <div className="flex justify-between items-start mb-2">
-                        <p className="font-semibold text-primary text-sm">{r.profiles?.prenom} {r.profiles?.nom}</p>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        <p className="font-semibold text-[#100f0d] text-sm">{r.profiles?.prenom} {r.profiles?.nom}</p>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                           {r.statut === 'paye' ? 'Payé' : 'En attente'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant mb-1">{r.formations?.titre || 'Honoraires'}</p>
-                      <p className="font-bold text-emerald-700 text-base mb-3">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
+                      <p className="font-bold text-emerald-700 text-base mb-3"><Money amount={r.montant} /></p>
                       {r.statut === 'en_attente' && (
                         <button onClick={() => markRemunerationPaid(r.id)} className="w-full py-2 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700">
                           Marquer comme payé
@@ -960,14 +977,14 @@ export default function AdminFormations({ session }) {
                           <tr key={r.id} className="hover:bg-surface-container-lowest transition-colors group">
                             <td className="p-4 font-semibold text-primary">{r.profiles?.prenom} {r.profiles?.nom}</td>
                             <td className="p-4 text-on-surface-variant text-xs">{r.formations?.titre || '—'}</td>
-                            <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</td>
+                            <td className="p-4 font-bold text-emerald-700"><Money amount={r.montant} /></td>
                             <td className="p-4">
                               <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${r.statut === 'paye' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
                                 {r.statut === 'paye' ? 'Payé' : 'En attente'}
                               </span>
                             </td>
                             <td className="p-4 text-xs text-on-surface-variant">
-                              {r.date_versement ? new Date(r.date_versement).toLocaleDateString('fr-FR') : '—'}
+                              {r.date_versement ? formatDateDMY(r.date_versement) : '—'}
                             </td>
                             <td className="p-4 text-xs text-on-surface-variant italic max-w-[160px]">
                               <div className="truncate">{r.note || '—'}</div>
@@ -1057,7 +1074,7 @@ export default function AdminFormations({ session }) {
                 ))}
               </select>
               {formateurs.length === 0 && (
-                <p className="text-[11px] text-amber-600 mt-1">
+                <p className="text-xs text-amber-600 mt-1">
                   ⚠️ Aucun formateur disponible.
                 </p>
               )}
@@ -1072,7 +1089,7 @@ export default function AdminFormations({ session }) {
                 ))}
               </select>
               {sallesOptions.length === 0 && (
-                <p className="text-[11px] text-amber-600 mt-1">⚠️ Aucun espace trouvé.</p>
+                <p className="text-xs text-amber-600 mt-1">⚠️ Aucun espace trouvé.</p>
               )}
             </Field>
           </div>
@@ -1156,8 +1173,8 @@ export default function AdminFormations({ session }) {
         }
       >
         <form id="formateurForm" onSubmit={saveFormateur} className="space-y-4">
-          <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-800 text-xs flex items-start gap-2">
-            <span className="material-symbols-outlined text-sky-500 shrink-0" style={{ fontSize: 16 }}>info</span>
+          <div className="p-3 rounded-xl bg-[#fff4ed] border border-[#f95d00]/25 text-[#9a3412] text-xs flex items-start gap-2">
+            <span className="material-symbols-outlined text-[#f95d00] shrink-0" style={{ fontSize: 16 }}>info</span>
             Un email d'invitation sera envoyé au formateur avec ses informations de connexion.
           </div>
 
@@ -1178,8 +1195,11 @@ export default function AdminFormations({ session }) {
           </Field>
 
           <Field label="Téléphone">
-            <input className={inputCls} placeholder="+216 XX XXX XXX" value={formateurForm.telephone}
-              onChange={e => setFormateurForm(p => ({ ...p, telephone: e.target.value }))} />
+            <TunisianPhoneInput
+              className={inputCls}
+              value={formateurForm.telephone}
+              onChange={(val) => setFormateurForm(p => ({ ...p, telephone: val }))}
+            />
           </Field>
 
           <Field label="Domaine d'expertise / Spécialité">
@@ -1268,7 +1288,7 @@ export default function AdminFormations({ session }) {
                 Export JSON
               </button>
             )}
-            <button onClick={() => setShowParticipantsDialog(false)} className="flex-1 py-2 bg-primary text-white font-semibold rounded-xl text-sm hover:bg-primary/90">
+            <button onClick={() => setShowParticipantsDialog(false)} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="flex-1 py-2 font-semibold rounded-xl text-sm hover:opacity-90">
               Fermer
             </button>
           </div>
@@ -1295,8 +1315,8 @@ export default function AdminFormations({ session }) {
                   {participants.map((p) => (
                     <tr key={p.id} className="hover:bg-surface-container-lowest">
                       <td className="p-3">
-                        <p className="font-semibold text-primary">{p.profiles?.prenom} {p.profiles?.nom}</p>
-                        <p className="text-on-surface-variant text-[10px]">{p.profiles?.email}</p>
+                        <p className="font-semibold text-[#100f0d]">{p.profiles?.prenom} {p.profiles?.nom}</p>
+                        <p className="text-on-surface-variant text-xs">{p.profiles?.email}</p>
                       </td>
                       <td className="p-3 text-center">
                         <input type="checkbox" checked={p.present || false} onChange={() => togglePresence(p.user_id, p.present)}
@@ -1325,7 +1345,7 @@ export default function AdminFormations({ session }) {
               {waitingList.map((w) => (
                 <div key={w.id} className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50 border border-amber-200">
                   <p className="text-xs font-medium text-amber-900">{w.profiles?.prenom} {w.profiles?.nom}</p>
-                  <p className="text-[10px] text-amber-700">{w.profiles?.email}</p>
+                  <p className="text-xs text-amber-700">{w.profiles?.email}</p>
                 </div>
               ))}
             </div>

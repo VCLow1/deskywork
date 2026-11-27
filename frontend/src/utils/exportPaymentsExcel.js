@@ -1,8 +1,9 @@
 import { loadExcelJS } from './excelHelper';
+import { formatDT, formatDateDMY, TUNIS_TZ } from './format';
 
 const MODE_LABELS = {
   cash: 'Espèces',
-  bank_transfer: 'Virement',
+  bank_transfer: 'Virement bancaire',
   check: 'Chèque',
   online: 'Sur place',
 };
@@ -29,13 +30,12 @@ const THIN_BORDER = {
 };
 
 function formatDate(value) {
-  const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('fr-FR');
+  return formatDateDMY(value);
 }
 
 function formatExportDate() {
   return new Date().toLocaleDateString('fr-FR', {
+    timeZone: TUNIS_TZ,
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -103,8 +103,8 @@ export async function exportPaymentsToExcel(payments = [], stats = null) {
   const kpiRow = sheet.getRow(4);
   kpiRow.height = 24;
   const kpis = [
-    { label: 'Recettes encaissées', value: `${safeStats.totalRevenue.toLocaleString('fr-FR')} DT`, col: 1 },
-    { label: 'En attente', value: `${safeStats.pendingAmount.toLocaleString('fr-FR')} DT`, col: 3 },
+    { label: 'Recettes encaissées', value: formatDT(safeStats.totalRevenue), col: 1 },
+    { label: 'En attente', value: formatDT(safeStats.pendingAmount), col: 3 },
     { label: 'Taux de recouvrement', value: `${safeStats.recoveryRate}% (${safeStats.paidCount}/${safeStats.totalInvoices})`, col: 5 },
   ];
 
@@ -188,7 +188,7 @@ export async function exportPaymentsToExcel(payments = [], stats = null) {
       }
 
       if (colIndex === 4) {
-        cell.numFmt = '#,##0.00';
+        cell.numFmt = '#,##0.000';
         cell.font = { bold: true, color: { argb: 'FF0F766E' } };
       }
 

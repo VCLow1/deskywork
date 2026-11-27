@@ -3,8 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { guestApi } from '../services/api';
 import { SPACE_TYPE_LABELS } from '../constants/spaceTypes';
 import { formatDT, formatDateTunis, formatTimeTunis, tunisLocalToISO } from '../utils/format';
+import { validateTunisianPhone, normalizeTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 
-const SPACE_LABELS = SPACE_TYPE_LABELS; // 7 typologies officielles (CDC v3.0)
+const SPACE_LABELS = SPACE_TYPE_LABELS; // 7 typologies officielles
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=600&fit=crop';
 
@@ -23,6 +25,7 @@ export default function GuestBookingPage() {
   const [coworkings, setCoworkings] = useState([]); // liste dispo quand pas de tenantId
   const [espaces, setEspaces]   = useState([]);
   const [selected, setSelected] = useState(null);
+  const [nbParticipants, setNbParticipants] = useState('');
   const [clientType, setClientType] = useState('particulier'); // 'particulier' | 'entreprise'
   const [form, setForm]         = useState({ nom: '', prenom: '', email: '', telephone: '' });
   const [entrepriseInfo, setEntrepriseInfo] = useState({
@@ -102,12 +105,24 @@ export default function GuestBookingPage() {
     if (!form.nom || !form.prenom || !form.email || !form.telephone) {
       setError('Tous les champs sont obligatoires.'); return;
     }
+    const phoneCheck = validateTunisianPhone(form.telephone, { required: true });
+    if (!phoneCheck.valid) { setError(phoneCheck.error); return; }
+    if (selected?.type === 'meeting_room') {
+      const cap = Math.max(1, Number(selected.capacite || 1));
+      const n = Number(nbParticipants);
+      if (!nbParticipants || !Number.isInteger(n) || n < 1 || n > cap) {
+        setError(`Veuillez indiquer un nombre de participants valide entre 1 et ${cap} pour cette salle de réunion.`);
+        return;
+      }
+    }
     if (clientType === 'entreprise') {
       const { raison_sociale, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
       if (!raison_sociale.trim() || !contact_nom.trim() || !telephone_pro.trim() || !email_facturation.trim() || !besoin_description.trim()) {
         setError('Pour une réservation Entreprise, veuillez remplir la raison sociale, la personne de contact, le téléphone professionnel, l’e-mail de facturation et l’objet du besoin.');
         return;
       }
+      const proTelCheck = validateTunisianPhone(telephone_pro, { required: true });
+      if (!proTelCheck.valid) { setError(proTelCheck.error); return; }
     }
     if (!dates.debut || !dates.fin) { setError('Veuillez choisir un créneau.'); return; }
     if (new Date(dates.debut) >= new Date(dates.fin)) {
@@ -116,13 +131,16 @@ export default function GuestBookingPage() {
     setLoading(true); setError('');
     try {
       const res = await guestApi.booking({
-        ...form, espace_id: selected.id,
+        ...form,
+        telephone: normalizeTunisianPhone(form.telephone),
+        espace_id: selected.id,
         date_debut: tunisLocalToISO(dates.debut), date_fin: tunisLocalToISO(dates.fin),
         tenant_id: coworking?.id || selected.tenant_id || null,
         client_type: clientType,
         ...(itemIdParam ? { floor_plan_item_id: itemIdParam } : {}),
         ...(itemLabelParam ? { floor_plan_item_label: itemLabelParam } : {}),
-        ...(clientType === 'entreprise' ? { entreprise_info: entrepriseInfo } : {}),
+        ...(selected?.type === 'meeting_room' ? { nb_participants: Number(nbParticipants) } : {}),
+        ...(clientType === 'entreprise' ? { entreprise_info: { ...entrepriseInfo, telephone_pro: normalizeTunisianPhone(entrepriseInfo.telephone_pro) } } : {}),
       });
       if (res.error) { setError(res.error); return; }
       setResult(res);
@@ -174,28 +192,28 @@ export default function GuestBookingPage() {
                     <span className="material-symbols-outlined" style={{ fontSize: 22 }}>location_on</span>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Établissement</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Établissement</p>
                     <p className="text-lg font-bold text-slate-900">{coworking?.nom || 'Établissement'}</p>
                   </div>
                 </div>
 
                 <div className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Espace</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Espace</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">{selected?.nom || 'Espace sélectionné'}{itemLabelParam ? ` · Poste ${itemLabelParam}` : ''}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Date</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Date</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">{formatDateTunis(tunisLocalToISO(dates.debut))}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Horaire (heure de Tunis)</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Horaire (heure de Tunis)</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">
                       {formatTimeTunis(tunisLocalToISO(dates.debut))} → {formatTimeTunis(tunisLocalToISO(dates.fin))}
                     </p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Statut</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Statut</p>
                     <p className="mt-1 text-base font-semibold text-slate-800">{isPending ? 'En attente' : 'Confirmée'}</p>
                   </div>
                 </div>
@@ -290,7 +308,7 @@ export default function GuestBookingPage() {
                               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>location_on</span>
                               {coworkingPlace(c) || c.pays || 'Tunisie'}
                             </p>
-                            <p className="mt-2 text-[11px] font-medium text-slate-500">
+                            <p className="mt-2 text-xs font-medium text-slate-500">
                               {c.space_count ?? 0} espace(s)
                             </p>
                           </div>
@@ -333,7 +351,7 @@ export default function GuestBookingPage() {
                         {espaces.map((esp) => (
                           <button
                             key={esp.id}
-                            onClick={() => setSelected(esp)}
+                            onClick={() => { setSelected(esp); setNbParticipants(''); }}
                             className={`rounded-2xl border p-4 text-left transition ${
                               selected?.id === esp.id
                                 ? 'border-[#ff6a2b] bg-[#fff4ef] ring-2 ring-[#ff6a2b]/15'
@@ -354,7 +372,7 @@ export default function GuestBookingPage() {
                   {selected && (
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div>
-                        <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Début du créneau (heure de Tunis)
                         </label>
                         <input
@@ -365,7 +383,7 @@ export default function GuestBookingPage() {
                         />
                       </div>
                       <div>
-                        <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Fin du créneau (heure de Tunis)
                         </label>
                         <input
@@ -450,9 +468,9 @@ export default function GuestBookingPage() {
               </div>
             </div>
 
-            {/* Type de client : Particulier vs Entreprise (CDC v3.0 Chantier 3.2) */}
+            {/* Type de client : Particulier vs Entreprise */}
             <div className="mb-5">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Type de réservation</p>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Type de réservation</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { id: 'particulier', label: 'Particulier', icon: 'person' },
@@ -482,17 +500,51 @@ export default function GuestBookingPage() {
                 { key: 'email', label: 'Email *', type: 'email' },
                 { key: 'telephone', label: 'Téléphone *', type: 'tel' },
               ].map(({ key, label, type = 'text' }) => (
-                <div key={key} className={key === 'email' || key === 'telephone' ? 'sm:col-span-1' : 'sm:col-span-1'}>
-                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</label>
-                  <input
-                    type={type}
-                    value={form[key]}
-                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#ff6a2b] focus:ring-2 focus:ring-[#ff6a2b]/10"
-                  />
+                <div key={key} className="sm:col-span-1">
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</label>
+                  {key === 'telephone' ? (
+                    <TunisianPhoneInput
+                      required
+                      value={form.telephone}
+                      onChange={(val) => setForm((f) => ({ ...f, telephone: val }))}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#ff6a2b] focus:ring-2 focus:ring-[#ff6a2b]/10"
+                    />
+                  ) : (
+                    <input
+                      type={type}
+                      value={form[key]}
+                      onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#ff6a2b] focus:ring-2 focus:ring-[#ff6a2b]/10"
+                    />
+                  )}
                 </div>
               ))}
             </div>
+
+            {selected?.type === 'meeting_room' && (
+              <div className="mt-5 rounded-2xl border border-orange-200 bg-orange-50/60 p-4">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label htmlFor="guest-nb-participants" className="text-xs font-bold uppercase tracking-[0.1em] text-slate-700">
+                    Nombre de participants *
+                  </label>
+                  <span className="text-xs font-bold text-[#ff6a2b]">
+                    1 à {selected.capacite || 1} personne{(selected.capacite || 1) > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <input
+                  id="guest-nb-participants"
+                  type="number"
+                  min={1}
+                  max={selected.capacite || 1}
+                  step={1}
+                  required
+                  value={nbParticipants}
+                  onChange={(e) => setNbParticipants(e.target.value)}
+                  placeholder={`Ex : 4 (capacité max ${selected.capacite || 1})`}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-[#ff6a2b]"
+                />
+              </div>
+            )}
 
             {clientType === 'entreprise' && (
               <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
@@ -501,7 +553,7 @@ export default function GuestBookingPage() {
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Raison sociale *</label>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Raison sociale *</label>
                     <input
                       type="text"
                       value={entrepriseInfo.raison_sociale}
@@ -511,7 +563,7 @@ export default function GuestBookingPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Personne de contact *</label>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Personne de contact *</label>
                     <input
                       type="text"
                       value={entrepriseInfo.contact_nom}
@@ -521,17 +573,16 @@ export default function GuestBookingPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Téléphone professionnel *</label>
-                    <input
-                      type="tel"
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Téléphone professionnel *</label>
+                    <TunisianPhoneInput
+                      required
                       value={entrepriseInfo.telephone_pro}
-                      onChange={(e) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: e.target.value }))}
-                      placeholder="+216 71 000 000"
+                      onChange={(val) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: val }))}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none focus:border-[#ff6a2b]"
                     />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Email de facturation *</label>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Email de facturation *</label>
                     <input
                       type="email"
                       value={entrepriseInfo.email_facturation}
@@ -542,7 +593,7 @@ export default function GuestBookingPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Objet du besoin / Description de la demande *</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Objet du besoin / Description de la demande *</label>
                   <textarea
                     rows={3}
                     value={entrepriseInfo.besoin_description}

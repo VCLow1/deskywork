@@ -58,21 +58,37 @@ function generateReceiptPDF(payment, options = {}) {
       const reservation = payment.reservations || null;
       const abonnement  = payment.abonnements  || null;
 
-      // ── Dates ───────────────────────────────────────────────────────────────
+      // ── Dates (Africa/Tunis, jj/mm/aaaa) ────────────────────────────────────
+      const fmtDateDMY = (v) =>
+        new Date(v).toLocaleDateString('fr-FR', {
+          timeZone: 'Africa/Tunis',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+      const fmtTime24 = (v) =>
+        new Date(v).toLocaleTimeString('fr-FR', {
+          timeZone: 'Africa/Tunis',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+      const fmtMoney = (v) => {
+        const n = Number(v || 0);
+        const safe = Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0;
+        const [intPart, decPart] = Math.abs(safe).toFixed(3).split('.');
+        const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
+        return `${safe < 0 ? '-' : ''}${grouped},${decPart}`;
+      };
+
       const datePaiement = payment.date_paiement
-        ? new Date(payment.date_paiement).toLocaleDateString('fr-FR', {
-            day: '2-digit', month: 'long', year: 'numeric',
-          })
-        : new Date(payment.created_at).toLocaleDateString('fr-FR', {
-            day: '2-digit', month: 'long', year: 'numeric',
-          });
+        ? fmtDateDMY(payment.date_paiement)
+        : fmtDateDMY(payment.created_at);
 
-      const dateEmission = new Date().toLocaleDateString('fr-FR', {
-        day: '2-digit', month: 'long', year: 'numeric',
-      });
+      const dateEmission = fmtDateDMY(new Date());
 
-      // ── Montant ─────────────────────────────────────────────────────────────
-      const montant = parseFloat(payment.montant || 0).toFixed(3);
+      // ── Montant (format tunisien strict 3 décimales, virgule, espace insécable) ──
+      const montant = fmtMoney(payment.montant);
       const statut  = payment.statut || 'pending';
 
       // ── Document PDF ────────────────────────────────────────────────────────
@@ -246,15 +262,15 @@ function generateReceiptPDF(payment, options = {}) {
 
       if (reservation) {
         description = `Réservation d'Espace — ${reservation.espaces?.nom || 'Espace'}`;
-        const d1 = new Date(reservation.date_debut).toLocaleDateString('fr-FR');
-        const h1 = new Date(reservation.date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        const h2 = new Date(reservation.date_fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        const d1 = fmtDateDMY(reservation.date_debut);
+        const h1 = fmtTime24(reservation.date_debut);
+        const h2 = fmtTime24(reservation.date_fin);
         detail = `${d1} (${h1} - ${h2})`;
       } else if (abonnement) {
-        const LABELS = { day_pass: 'Day Pass', week_pass: 'Week Pass', mensuel: 'Mensuel', trimestriel: 'Trimestriel', annuel: 'Annuel', bureau_prive: 'Bureau Privé' };
+        const LABELS = { day_pass: 'Pass journée', week_pass: 'Pass semaine', mensuel: 'Mensuel', trimestriel: 'Trimestriel', annuel: 'Annuel', bureau_prive: 'Bureau privé' };
         description = `Abonnement — ${LABELS[abonnement.type] || abonnement.type}`;
-        const d1 = new Date(abonnement.date_debut).toLocaleDateString('fr-FR');
-        const d2 = new Date(abonnement.date_fin).toLocaleDateString('fr-FR');
+        const d1 = fmtDateDMY(abonnement.date_debut);
+        const d2 = fmtDateDMY(abonnement.date_fin);
         detail = `${d1} → ${d2}`;
       }
 

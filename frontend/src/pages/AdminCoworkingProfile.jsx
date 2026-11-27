@@ -5,6 +5,8 @@ import { tenantAdminApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { fileToCompressedBase64 } from '../utils/imageCompress';
 import PortalLayout from '../components/layout/PortalLayout';
+import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 
 const BUCKET = 'coworking-images';
 
@@ -30,7 +32,7 @@ function ImageUploadZone({ label, hint, imageUrl, onUpload, uploading, onRemove,
 
   return (
     <div>
-      <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-2">{label}</label>
+      <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-2">{label}</label>
       <div
         className={`relative rounded-2xl border-2 border-dashed transition-all cursor-pointer overflow-hidden ${uploading ? 'border-secondary/50 bg-secondary/3' : 'border-outline-variant/40 hover:border-secondary hover:bg-secondary/3'}`}
         style={{ height: aspect === 'cover' ? 200 : 140 }}
@@ -238,9 +240,16 @@ export default function AdminCoworkingProfile({ session }) {
 
   const handleSave = async () => {
     if (!form.nom.trim()) { showError('Le nom du coworking est requis.'); return; }
+    if (form.telephone && form.telephone.trim()) {
+      const check = validateTunisianPhone(form.telephone);
+      if (!check.valid) { showError(check.error); return; }
+    }
     setSaving(true);
     try {
-      const payload = { ...form };
+      const payload = {
+        ...form,
+        telephone: form.telephone?.trim() ? normalizeTunisianPhone(form.telephone) : '',
+      };
       if (payload.latitude === '') payload.latitude = null;
       if (payload.longitude === '') payload.longitude = null;
       if (payload.latitude != null && isNaN(parseFloat(payload.latitude))) { showError('Latitude invalide.'); setSaving(false); return; }
@@ -366,14 +375,14 @@ export default function AdminCoworkingProfile({ session }) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Nom du coworking *</label>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Nom du coworking *</label>
                 <input value={form.nom} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))}
                   placeholder="Ex : Encre Cobalt Coworking"
                   className={inputCls} />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Description</label>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Description</label>
                 <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                   placeholder="Décrivez votre espace coworking en quelques phrases…"
                   rows={3}
@@ -391,16 +400,25 @@ export default function AdminCoworkingProfile({ session }) {
                 { key: 'longitude', label: 'Longitude (GPS)', placeholder: 'Ex : 10.181532', col: 1 },
               ].map(({ key, label, placeholder, col }) => (
                 <div key={key} className={col === 2 ? 'sm:col-span-2' : ''}>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">{label}</label>
-                  <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                    placeholder={placeholder}
-                    className={inputCls} />
+                  <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">{label}</label>
+                  {key === 'telephone' ? (
+                    <TunisianPhoneInput
+                      value={form.telephone}
+                      onChange={(val) => setForm((f) => ({ ...f, telephone: val }))}
+                      placeholder={placeholder}
+                      className={inputCls}
+                    />
+                  ) : (
+                    <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className={inputCls} />
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Section Activité & Règles CDC v3.0 (D4 & D5) */}
+          {/* Section Activité & Règles opérationnelles */}
           <div className="bg-white rounded-3xl border border-outline-variant/20 shadow-sm p-6">
             <div className="flex items-center gap-2 mb-5">
               <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>tune</span>
@@ -409,7 +427,7 @@ export default function AdminCoworkingProfile({ session }) {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-2">
+                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-2">
                   Type d'activité (débloque les menus Formations, Sessions, Apprenants, Formateurs)
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -429,7 +447,7 @@ export default function AdminCoworkingProfile({ session }) {
                       }`}
                     >
                       <p className="font-bold text-sm text-primary">{opt.label}</p>
-                      <p className="text-[11px] text-on-surface-variant mt-0.5">{opt.desc}</p>
+                      <p className="text-xs text-on-surface-variant mt-0.5">{opt.desc}</p>
                     </button>
                   ))}
                 </div>
@@ -437,7 +455,7 @@ export default function AdminCoworkingProfile({ session }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+                  <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
                     Barème de dépassement horaire (DT / h)
                   </label>
                   <input
@@ -505,7 +523,7 @@ export default function AdminCoworkingProfile({ session }) {
             </div>
           </div>
 
-          {/* Section Service de Domiciliation d'entreprise (CDC v3.0) */}
+          {/* Section Service de Domiciliation d'entreprise */}
           <div className="bg-white rounded-3xl border border-outline-variant/20 shadow-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2.5">
@@ -530,7 +548,7 @@ export default function AdminCoworkingProfile({ session }) {
               <div className="space-y-4 pt-3 border-t border-outline-variant/15">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+                    <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
                       Tarif mensuel (DT HT) *
                     </label>
                     <input
@@ -544,7 +562,7 @@ export default function AdminCoworkingProfile({ session }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+                    <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
                       Tarif annuel (DT HT)
                     </label>
                     <input
@@ -559,7 +577,7 @@ export default function AdminCoworkingProfile({ session }) {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+                  <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
                     Description, conditions &amp; Pièces requises
                   </label>
                   <textarea
@@ -653,7 +671,7 @@ export default function AdminCoworkingProfile({ session }) {
                   <p className="text-xs font-semibold text-primary">
                     Glissez-déposez plusieurs photos ici ou cliquez pour sélectionner
                   </p>
-                  <p className="text-[11px] text-on-surface-variant">
+                  <p className="text-xs text-on-surface-variant">
                     Formats JPG, PNG, WebP · Sélection multiple supportée · max 8 MB par image
                   </p>
                 </div>
@@ -670,7 +688,7 @@ export default function AdminCoworkingProfile({ session }) {
                   <div key={`${url}-${idx}`} className="rounded-2xl overflow-hidden border border-outline-variant/20 bg-surface-container-low/30 flex flex-col">
                     <div className="relative h-36 bg-slate-100">
                       <img src={url} alt={`Galerie ${idx + 1}`} className="w-full h-full object-cover" />
-                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-[10px] font-bold">
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-bold">
                         #{idx + 1}
                       </span>
                     </div>
@@ -698,7 +716,7 @@ export default function AdminCoworkingProfile({ session }) {
                       <button
                         type="button"
                         onClick={() => setForm((f) => ({ ...f, gallery_photos: f.gallery_photos.filter((_, i) => i !== idx) }))}
-                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 hover:bg-red-50 flex items-center gap-1"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center gap-1"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
                         Supprimer

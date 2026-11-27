@@ -352,7 +352,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
 
             {/* Raccourcis rapides */}
             <div className="mb-3.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider opacity-60 mb-2">
+              <p className="text-xs font-bold uppercase tracking-wider opacity-60 mb-2">
                 Raccourcis intelligents
               </p>
               <div className="grid grid-cols-2 gap-1.5">
@@ -386,7 +386,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
                       {isActive ? (
                         <span className="material-symbols-outlined shrink-0" style={{ fontSize: 14 }}>check</span>
                       ) : (
-                        <span className="text-[9px] font-bold opacity-55 shrink-0">{p.badge}</span>
+                        <span className="text-xs font-bold opacity-55 shrink-0">{p.badge}</span>
                       )}
                     </button>
                   );
@@ -397,7 +397,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
             {/* Plage libre personnalisée */}
             <div className={`pt-3 border-t ${dark ? 'border-white/10' : 'border-slate-100'}`}>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">
+                <span className="text-xs font-bold uppercase tracking-wider opacity-60">
                   Plage personnalisée
                 </span>
                 <div className="flex items-center gap-1">
@@ -406,7 +406,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
                       key={d}
                       type="button"
                       onClick={() => setQuickCustomDays(d)}
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${
+                      className={`px-2 py-0.5 rounded-full text-xs font-bold transition-colors ${
                         dark
                           ? 'bg-white/8 text-[#cfcac3] hover:bg-[#f95d00]/25 hover:text-white'
                           : 'bg-slate-100 text-slate-600 hover:bg-orange-50 hover:text-[#f95d00]'
@@ -416,7 +416,7 @@ export default function PeriodFilter({ value, onChange, className = '' }) {
                     </button>
                   ))}
                   {customDaysCount > 0 && (
-                    <span className="ml-1 text-[10px] font-bold text-[#f95d00] bg-[#f95d00]/12 px-2 py-0.5 rounded-full">
+                    <span className="ml-1 text-xs font-bold text-[#f95d00] bg-[#f95d00]/12 px-2 py-0.5 rounded-full">
                       {customDaysCount} j
                     </span>
                   )}

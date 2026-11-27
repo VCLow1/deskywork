@@ -8,6 +8,7 @@ import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { memberPortalApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
+import { formatDateDMY } from '../utils/format';
 
 function getTypeIcon(type = '') {
   if (type.includes('formation') || type.includes('inscription')) return 'school';
@@ -42,7 +43,7 @@ function getRelativeTime(dateStr) {
   if (diffMin < 60) return `il y a ${diffMin} min`;
   if (diffH < 24) return `il y a ${diffH}h`;
   if (diffD < 7) return `il y a ${diffD}j`;
-  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return formatDateDMY(dateStr);
 }
 
 function getDateGroup(dateStr) {
@@ -145,7 +146,7 @@ function NotificationItem({ notification, onClick, dark }) {
             {message}
           </p>
         )}
-        <span style={{ fontSize: 11, color: dark ? 'rgba(251,255,255,0.35)' : '#9ca3af' }}>
+        <span style={{ fontSize: 12, color: dark ? 'rgba(251,255,255,0.45)' : '#6b7280' }}>
           {getRelativeTime(created_at)}
         </span>
       </div>
@@ -338,7 +339,7 @@ export default function AdminNotifications({ session }) {
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 minWidth: 24, height: 24, padding: '0 8px',
                 borderRadius: 99, background: '#f95d00',
-                fontSize: 11, fontWeight: 800, color: '#ffffff',
+                fontSize: 12, fontWeight: 800, color: '#ffffff',
               }}>
                 {unreadCount}
               </span>
@@ -419,7 +420,7 @@ export default function AdminNotifications({ session }) {
               return (
                 <div key={group}>
                   <p style={{
-                    fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                    fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
                     letterSpacing: '0.12em', color: textMuted, margin: '0 0 10px 4px',
                     fontFamily: 'Sora, sans-serif',
                   }}>

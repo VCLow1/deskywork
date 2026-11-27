@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
+import { formatDateDMY } from '../utils/format';
 
 const ALERT_RULES = [
   {
@@ -138,7 +139,7 @@ export default function AdminNotificationsSupport({ session }) {
                   <h2 className="font-sora font-bold text-base text-primary">Alertes automatiques (In-App & E-mail)</h2>
                   <p className="text-xs text-on-surface-variant">Notifications in-app et alertes e-mail</p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold">
+                <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold">
                   In-App + E-mail
                 </span>
               </div>
@@ -151,8 +152,8 @@ export default function AdminNotificationsSupport({ session }) {
                   >
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-semibold text-primary">{rule.label}</p>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">
+                        <p className="text-sm font-semibold text-[#100f0d]">{rule.label}</p>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">
                           {rule.channel}
                         </span>
                       </div>
@@ -175,7 +176,8 @@ export default function AdminNotificationsSupport({ session }) {
                     type="button"
                     disabled={savingAlerts}
                     onClick={handleSaveAlerts}
-                    className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50"
                   >
                     {savingAlerts ? 'Enregistrement…' : 'Enregistrer les alertes'}
                   </button>
@@ -184,7 +186,7 @@ export default function AdminNotificationsSupport({ session }) {
             </div>
 
             <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15">
-              <h2 className="font-sora font-bold text-base text-primary mb-3">Dernières notifications In-App ({notifications.length})</h2>
+              <h2 className="font-sora font-bold text-base text-[#100f0d] mb-3">Dernières notifications In-App ({notifications.length})</h2>
               {notifications.length === 0 ? (
                 <p className="text-xs text-on-surface-variant py-6 text-center">Aucune notification récente.</p>
               ) : (
@@ -192,11 +194,11 @@ export default function AdminNotificationsSupport({ session }) {
                   {notifications.map((n) => (
                     <div key={n.id} className="py-2.5 flex items-start justify-between gap-2 text-xs">
                       <div>
-                        <p className="font-semibold text-primary">{n.titre}</p>
+                        <p className="font-semibold text-[#100f0d]">{n.titre}</p>
                         <p className="text-on-surface-variant">{n.message}</p>
                       </div>
-                      <span className="text-[10px] text-on-surface-variant shrink-0">
-                        {n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : ''}
+                      <span className="text-xs text-on-surface-variant shrink-0">
+                        {n.created_at ? formatDateDMY(n.created_at) : ''}
                       </span>
                     </div>
                   ))}
@@ -281,7 +283,7 @@ export default function AdminNotificationsSupport({ session }) {
                     <div key={t.id} className="p-3 rounded-2xl bg-surface-container-low/60 border border-outline-variant/10 text-xs">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="font-mono font-bold text-[#f95d00]">{t.id}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold uppercase">
                           {t.statut || 'ouvert'}
                         </span>
                       </div>

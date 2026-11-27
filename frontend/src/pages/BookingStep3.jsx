@@ -6,9 +6,11 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { useTheme } from '../context/ThemeContext';
 import { bookingApi, paymentApi, memberApi } from '../services/api';
 import { getBookerNav } from '../utils/roles';
-import { formatDT, tunisLocalToISO } from '../utils/format';
+import { formatDT, formatDateDMY, tunisLocalToISO } from '../utils/format';
 import { spaceTypeLabel } from '../constants/spaceTypes';
 import { playNotificationSound } from '../utils/notificationSound';
+import { validateTunisianPhone, normalizeTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 import BookingShell from '../components/booking/BookingShell';
 
 export default function BookingStep3({ session }) {
@@ -28,7 +30,8 @@ export default function BookingStep3({ session }) {
   const [coworking, setCoworking] = useState(null);
   const [durationHours, setDurationHours] = useState(0);
   const [totalPrice, setTotalPrice] = useState(0);
-  const [paymentMode] = useState('sur_place'); // CDC v3.0 D1 : 100 % sur place
+  const [paymentMode] = useState('sur_place'); // 100 % sur place
+  const [nbParticipants, setNbParticipants] = useState('');
   const [isEntreprise, setIsEntreprise] = useState(false);
   const [entrepriseInfo, setEntrepriseInfo] = useState({
     raison_sociale: '',
@@ -171,6 +174,21 @@ export default function BookingStep3({ session }) {
 
   const handleConfirmBooking = async () => {
     setErrorMsg('');
+    if (space?.type === 'meeting_room') {
+      const cap = Math.max(1, Number(space.capacite || 1));
+      const n = Number(nbParticipants);
+      if (!nbParticipants || !Number.isInteger(n) || n < 1 || n > cap) {
+        setErrorMsg(`Veuillez indiquer un nombre de participants valide entre 1 et ${cap} pour cette salle de réunion.`);
+        return;
+      }
+    }
+    if (isEntreprise && entrepriseInfo.telephone_pro?.trim()) {
+      const telCheck = validateTunisianPhone(entrepriseInfo.telephone_pro);
+      if (!telCheck.valid) {
+        setErrorMsg(telCheck.error);
+        return;
+      }
+    }
     if (isEntreprise) {
       const { raison_sociale, matricule_fiscal, contact_nom, telephone_pro, email_facturation, besoin_description } = entrepriseInfo;
       if (!raison_sociale?.trim() || !matricule_fiscal?.trim() || !contact_nom?.trim() || !telephone_pro?.trim() || !email_facturation?.trim() || !besoin_description?.trim()) {
@@ -209,7 +227,8 @@ export default function BookingStep3({ session }) {
         client_type: isEntreprise ? 'entreprise' : 'particulier',
         ...(itemId ? { floor_plan_item_id: itemId } : {}),
         ...(itemLabel ? { floor_plan_item_label: itemLabel } : {}),
-        ...(isEntreprise ? { entreprise_info: entrepriseInfo } : {}),
+        ...(space?.type === 'meeting_room' ? { nb_participants: Number(nbParticipants) } : {}),
+        ...(isEntreprise ? { entreprise_info: { ...entrepriseInfo, telephone_pro: entrepriseInfo.telephone_pro?.trim() ? normalizeTunisianPhone(entrepriseInfo.telephone_pro) : '' } } : {}),
       });
 
       const newBooking = res.reservation;
@@ -277,7 +296,7 @@ export default function BookingStep3({ session }) {
             </div>
 
             <span
-              className="inline-block px-3.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wide mb-3"
+              className="inline-block px-3.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide mb-3"
               style={{ backgroundColor: dark ? 'rgba(245,158,11,0.18)' : '#fef3c7', color: dark ? '#fcd34d' : '#b45309' }}
             >
               Demande enregistrée · En attente de validation accueil
@@ -314,7 +333,7 @@ export default function BookingStep3({ session }) {
               <div className="flex justify-between gap-2">
                 <span style={{ color: textMuted }}>Date :</span>
                 <strong style={{ color: textMain }}>
-                  {new Date(date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}
+                  {formatDateDMY(date)}
                 </strong>
               </div>
               <div className="flex justify-between gap-2">
@@ -442,13 +461,13 @@ export default function BookingStep3({ session }) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span
-                      className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase"
+                      className="px-2.5 py-0.5 rounded-full text-xs font-extrabold uppercase"
                       style={{ backgroundColor: dark ? 'rgba(249,93,0,0.18)' : '#ffedd8', color: '#f95d00' }}
                     >
                       {spaceTypeLabel(space.type)}
                     </span>
                     {itemLabel && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
                         Plan 2D · {itemLabel}
                       </span>
                     )}
@@ -469,7 +488,7 @@ export default function BookingStep3({ session }) {
                 <div className="flex justify-between">
                   <span style={{ color: textMuted }}>Date</span>
                   <strong style={{ color: textMain }}>
-                    {new Date(date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    {formatDateDMY(date)}
                   </strong>
                 </div>
                 <div className="flex justify-between">
@@ -495,7 +514,39 @@ export default function BookingStep3({ session }) {
               </div>
             </div>
 
-            {/* Option Entreprise (B2B) */}
+            {space?.type === 'meeting_room' && (
+              <div
+                className="rounded-3xl p-6 space-y-3"
+                style={{ backgroundColor: cardBg, border: `1px solid ${cardBorder}` }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="booking-nb-participants" className="font-sora font-bold text-sm" style={{ color: textMain }}>
+                    Nombre de participants <span className="text-[#f95d00]">*</span>
+                  </label>
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-orange-500/12 text-[#f95d00]">
+                    Capacité : 1 à {space.capacite || 1} pers.
+                  </span>
+                </div>
+                <input
+                  id="booking-nb-participants"
+                  type="number"
+                  min={1}
+                  max={space.capacite || 1}
+                  step={1}
+                  required
+                  value={nbParticipants}
+                  onChange={(e) => setNbParticipants(e.target.value)}
+                  placeholder={`Ex : 4 (max ${space.capacite || 1})`}
+                  className="w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold outline-none"
+                  style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
+                />
+                <p className="text-xs m-0" style={{ color: textMuted }}>
+                  Champ obligatoire pour les salles de réunion (entre 1 et {space.capacite || 1} participant{(space.capacite || 1) > 1 ? 's' : ''}).
+                </p>
+              </div>
+            )}
+
+            {/* Profil Entreprise (B2B) */}
             <div
               className="rounded-3xl p-6 space-y-4"
               style={{ backgroundColor: cardBg, border: `1px solid ${cardBorder}` }}
@@ -521,7 +572,7 @@ export default function BookingStep3({ session }) {
                 <div className="pt-3 grid gap-3" style={{ borderTop: `1px solid ${cardBorder}` }}>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Raison sociale *</label>
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Raison sociale *</label>
                       <input
                         type="text"
                         value={entrepriseInfo.raison_sociale}
@@ -532,7 +583,7 @@ export default function BookingStep3({ session }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Matricule fiscal / TVA *</label>
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Matricule fiscal / TVA *</label>
                       <input
                         type="text"
                         value={entrepriseInfo.matricule_fiscal}
@@ -545,7 +596,7 @@ export default function BookingStep3({ session }) {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Personne de contact *</label>
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Personne de contact *</label>
                       <input
                         type="text"
                         value={entrepriseInfo.contact_nom}
@@ -555,19 +606,17 @@ export default function BookingStep3({ session }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Téléphone professionnel *</label>
-                      <input
-                        type="tel"
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Téléphone professionnel *</label>
+                      <TunisianPhoneInput
                         value={entrepriseInfo.telephone_pro}
-                        onChange={(e) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: e.target.value }))}
+                        onChange={(val) => setEntrepriseInfo((p) => ({ ...p, telephone_pro: val }))}
                         className="w-full px-3 py-2.5 rounded-xl text-xs sm:text-sm outline-none"
-                        style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
                       />
                     </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Email de facturation *</label>
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Email de facturation *</label>
                       <input
                         type="email"
                         value={entrepriseInfo.email_facturation}
@@ -577,7 +626,7 @@ export default function BookingStep3({ session }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Nb personnes</label>
+                      <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Nb personnes</label>
                       <input
                         type="number"
                         min="1"
@@ -592,7 +641,7 @@ export default function BookingStep3({ session }) {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold mb-1" style={{ color: textMuted }}>Objet du besoin / Description *</label>
+                    <label className="block text-xs font-bold mb-1" style={{ color: textMuted }}>Objet du besoin / Description *</label>
                     <textarea
                       rows={2}
                       value={entrepriseInfo.besoin_description}

@@ -1,6 +1,6 @@
 // controllers/bookingsController.js — MODULE B : Réservations
 const { supabaseAdmin } = require('../config/supabase');
-const { getBookingAvailability, getCancellationPolicy, getCancellationPolicyForEspace, buildCancellationInfo, todayISO, insertWithColumnFallback } = require('../models/helpers');
+const { getBookingAvailability, getCancellationPolicy, getCancellationPolicyForEspace, buildCancellationInfo, canMarkReservationNoShow, todayISO, insertWithColumnFallback } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 const { notifyConfirmationReservation, notifyAnnulationReservation } = require('../services/notificationService');
 const { sendEmailUniversal } = require('../utils/sendEmail');
@@ -18,8 +18,7 @@ async function getBookingsCalendar(req, res) {
 
     let query = supabaseAdmin
       .from('reservations')
-      .select('id, espace_id, user_id, date_debut, date_fin, statut, mode, tenant_id, espaces(nom, type, tenant_id), profiles!user_id(nom, prenom, email)')
-      .in('statut', ['confirmed', 'pending'])  // Affiche les réservations confirmées ET en attente (formations incluses)
+      .select('id, espace_id, user_id, guest_id, date_debut, date_fin, statut, mode, notes, tenant_id, espaces(nom, type, tenant_id), profiles!user_id(nom, prenom, email), guests(nom, prenom, email, telephone), paiements(id, statut, mode, montant, numero_recu)')
       .lt('date_debut', to)
       .gt('date_fin', from)
       .order('date_debut', { ascending: true });
@@ -57,7 +56,6 @@ async function getBookingsCalendar(req, res) {
       let fb = supabaseAdmin
         .from('reservations')
         .select('id, espace_id, date_debut, date_fin, statut, reference, tenant_id, espaces(nom, type, tenant_id)')
-        .in('statut', ['confirmed', 'pending'])
         .lt('date_debut', to)
         .gt('date_fin', from)
         .order('date_debut', { ascending: true });
@@ -174,9 +172,23 @@ async function createBooking(req, res) {
     // Calcul automatique du montant total selon le tarif horaire de l'espace
     const { data: espData } = await req.db
       .from('espaces')
-      .select('tarif_horaire, tenant_id, type')
+      .select('tarif_horaire, tenant_id, type, capacite')
       .eq('id', espace_id)
       .single();
+
+    const rawNbParticipants = req.body.nb_participants ?? entreprise_info?.nb_personnes;
+    let parsedParticipants = null;
+    if (rawNbParticipants !== undefined && rawNbParticipants !== null && rawNbParticipants !== '') {
+      parsedParticipants = parseInt(rawNbParticipants, 10);
+    }
+    if (espData?.type === 'meeting_room') {
+      const maxCap = Math.max(1, parseInt(espData.capacite, 10) || 1);
+      if (!Number.isInteger(parsedParticipants) || parsedParticipants < 1 || parsedParticipants > maxCap) {
+        return res.status(400).json({
+          error: `Pour une salle de réunion, le nombre de participants est obligatoire et doit être compris entre 1 et ${maxCap}.`,
+        });
+      }
+    }
 
     // Tâche 5 — Type d'espace lié à la tarification :
     // si l'abonnement actif du membre provient d'une formule restreinte à un
@@ -239,6 +251,7 @@ async function createBooking(req, res) {
         besoin_description: info.besoin_description.trim(),
       };
     }
+    if (parsedParticipants !== null) notesObj.nb_participants = parsedParticipants;
     if (floor_plan_item_id) notesObj.floor_plan_item_id = String(floor_plan_item_id);
     if (floor_plan_item_label) notesObj.floor_plan_item_label = String(floor_plan_item_label).trim();
     const combinedNotes = Object.keys(notesObj).length > 0 ? JSON.stringify(notesObj) : null;
@@ -786,6 +799,13 @@ async function updateBooking(req, res) {
       ];
       if (!VALID_BOOKING_STATUSES.includes(statut)) {
         return res.status(400).json({ error: 'statut invalide.' });
+      }
+      if (statut === 'no_show') {
+        const noShowCheck = await canMarkReservationNoShow(id);
+        if (!noShowCheck.allowed) {
+          return res.status(400).json({ error: noShowCheck.reason });
+        }
+        updates.no_show = true;
       }
       updates.statut = statut;
     }

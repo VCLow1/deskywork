@@ -4,15 +4,16 @@ import { supabase } from '../supabaseClient';
 import { settingsApi, cancellationAdvancedApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
+import { buildCancellationPolicyMessage, formatDateTimeDMY } from '../utils/format';
 
 const SPACE_TYPES = [
-  { key: 'open_space',          label: 'Open Space' },
+  { key: 'open_space',          label: 'Open space' },
   { key: 'private_office',      label: 'Bureau privé' },
   { key: 'meeting_room',        label: 'Salle de réunion' },
   { key: 'training_room',       label: 'Salle de formation' },
   { key: 'event_space',         label: 'Espace événementiel' },
-  { key: 'hot_desk',            label: 'Poste nomade (Hot Desk)' },
-  { key: 'dedicated_desk',      label: 'Poste fixe (Dedicated Desk)' },
+  { key: 'hot_desk',            label: 'Poste nomade' },
+  { key: 'dedicated_desk',      label: 'Poste fixe' },
 ];
 
 function Toggle({ checked, onChange, label, sub }) {
@@ -33,7 +34,7 @@ function Toggle({ checked, onChange, label, sub }) {
 function NumInput({ label, value, onChange, min = 0, max = 100, step = 1, suffix = '' }) {
   return (
     <div>
-      <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">{label}</label>
+      <label className="block text-xs font-semibold uppercase tracking-wider text-on-surface-variant mb-1.5">{label}</label>
       <div className="flex items-center gap-2">
         <input type="number" value={value} min={min} max={max} step={step}
           onChange={e => onChange(Number(e.target.value))}
@@ -78,8 +79,10 @@ export default function AdminCancellationPolicy({ session }) {
     try {
       setLoading(true);
       const { policy } = await settingsApi.getCancellationPolicy();
+      const delai = policy.delai_annulation_gratuite ?? policy.delai_heures ?? 24;
       setForm({
-        delai_heures: policy.delai_heures ?? 24, penalite_pct: policy.penalite_pct ?? 0,
+        delai_heures: delai,
+        penalite_pct: policy.penalite_pct ?? 0,
         annulation_membre_autorisee: policy.annulation_membre_autorisee ?? true,
         remboursement_auto: policy.remboursement_auto ?? false,
         message_membre: policy.message_membre ?? '',
@@ -108,7 +111,11 @@ export default function AdminCancellationPolicy({ session }) {
   const handleSaveGlobal = async () => {
     setSaving(true); setMsg(null);
     try {
-      const { policy } = await settingsApi.updateCancellationPolicy(form);
+      const payload = {
+        ...form,
+        delai_annulation_gratuite: form.delai_heures,
+      };
+      const { policy } = await settingsApi.updateCancellationPolicy(payload);
       setUpdatedAt(policy.updated_at);
       setMsg({ type: 'success', text: 'Politique globale mise à jour.' });
     } catch (e) { setMsg({ type: 'error', text: e.message }); }
@@ -170,8 +177,10 @@ export default function AdminCancellationPolicy({ session }) {
           ].map(({ key, label, icon }) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-                tab === key ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-primary'
-              }`}>
+                tab === key ? 'shadow-sm' : 'text-on-surface-variant hover:text-primary'
+              }`}
+              style={tab === key ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+            >
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{icon}</span>
               {label}
             </button>
@@ -187,7 +196,7 @@ export default function AdminCancellationPolicy({ session }) {
                 Délais et pénalités généraux
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-5 mb-6">
-                <NumInput label="Délai libre (heures)" value={form.delai_heures} max={168}
+                <NumInput label="Délai d'annulation gratuite (heures)" value={form.delai_heures} max={168}
                   onChange={v => setForm(f => ({ ...f, delai_heures: v }))} suffix="h" />
                 <NumInput label="Pénalité tardive" value={form.penalite_pct} step={5}
                   onChange={v => setForm(f => ({ ...f, penalite_pct: v }))} suffix="%" />
@@ -203,14 +212,34 @@ export default function AdminCancellationPolicy({ session }) {
                   sub="Rembourse automatiquement en cas d'annulation dans les délais." />
               </div>
               <div className="mb-5">
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">Message affiché aux membres</label>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Message affiché aux membres</label>
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({
+                      ...f,
+                      message_membre: buildCancellationPolicyMessage({
+                        delai_annulation_gratuite: f.delai_heures,
+                        penalite_pct: f.penalite_pct,
+                        annulation_membre_autorisee: f.annulation_membre_autorisee,
+                      }),
+                    }))}
+                    className="text-xs font-bold text-[#f95d00] hover:underline"
+                  >
+                    Régénérer selon le délai ({form.delai_heures}h)
+                  </button>
+                </div>
                 <textarea rows={3} value={form.message_membre}
                   onChange={e => setForm(f => ({ ...f, message_membre: e.target.value }))}
-                  placeholder="Ex : Annulation gratuite jusqu'à 24h avant le début."
+                  placeholder={buildCancellationPolicyMessage({
+                    delai_annulation_gratuite: form.delai_heures,
+                    penalite_pct: form.penalite_pct,
+                    annulation_membre_autorisee: form.annulation_membre_autorisee,
+                  })}
                   className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-low px-4 py-2.5 text-sm outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15 resize-none" />
               </div>
               <div className="flex justify-between items-center">
-                {updatedAt && <p className="text-xs text-on-surface-variant">Mis à jour : {new Date(updatedAt).toLocaleString('fr-FR')}</p>}
+                {updatedAt && <p className="text-xs text-on-surface-variant">Mis à jour : {formatDateTimeDMY(updatedAt)}</p>}
                 <button onClick={handleSaveGlobal} disabled={saving}
                   className="px-5 py-2.5 bg-secondary text-white rounded-xl font-bold text-sm hover:bg-secondary/90 disabled:opacity-50">
                   {saving ? 'Sauvegarde…' : 'Sauvegarder'}
@@ -222,19 +251,47 @@ export default function AdminCancellationPolicy({ session }) {
             <div className="bg-white rounded-3xl border border-outline-variant/20 p-6 shadow-sm">
               <h2 className="font-sora font-bold text-primary text-base mb-4 flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>preview</span>
-                Aperçu du comportement
+                Aperçu dynamique du comportement
               </h2>
               <div className="space-y-3">
                 {[
-                  { color: 'emerald', icon: 'check_circle', title: `Annulation ≥ ${form.delai_heures}h avant`, desc: form.penalite_pct === 0 ? 'Remboursement complet, aucune pénalité.' : `Pénalité de ${form.penalite_pct}% retenue.` },
-                  { color: 'red', icon: 'cancel', title: `Annulation < ${form.delai_heures}h avant`, desc: !form.annulation_membre_autorisee ? 'Refusée — contacter l\'accueil.' : `100% retenu.` },
-                  { color: 'amber', icon: 'person_off', title: 'No-show (absent sans annulation)', desc: '100% retenu + note sur le profil.' },
+                  {
+                    bg: 'bg-emerald-50 border-emerald-200',
+                    iconCls: 'text-emerald-600',
+                    titleCls: 'text-emerald-800',
+                    descCls: 'text-emerald-700',
+                    icon: 'check_circle',
+                    title: `Annulation ≥ ${form.delai_heures}h avant le début`,
+                    desc: buildCancellationPolicyMessage({
+                      delai_annulation_gratuite: form.delai_heures,
+                      penalite_pct: 0,
+                      annulation_membre_autorisee: form.annulation_membre_autorisee,
+                    }),
+                  },
+                  {
+                    bg: 'bg-red-50 border-red-200',
+                    iconCls: 'text-red-600',
+                    titleCls: 'text-red-800',
+                    descCls: 'text-red-700',
+                    icon: 'cancel',
+                    title: `Annulation < ${form.delai_heures}h avant le début`,
+                    desc: !form.annulation_membre_autorisee ? "Refusée — contacter l'accueil." : `Pénalité appliquée (${form.penalite_pct}%).`,
+                  },
+                  {
+                    bg: 'bg-amber-50 border-amber-200',
+                    iconCls: 'text-amber-600',
+                    titleCls: 'text-amber-800',
+                    descCls: 'text-amber-700',
+                    icon: 'person_off',
+                    title: 'No-show (Absent sans annulation)',
+                    desc: '100% retenu + note sur le profil.',
+                  },
                 ].map((item, i) => (
-                  <div key={i} className={`flex items-start gap-3 p-3 rounded-xl bg-${item.color}-50 border border-${item.color}-200`}>
-                    <span className={`material-symbols-outlined text-${item.color}-600 shrink-0 mt-0.5`} style={{ fontSize: 18 }}>{item.icon}</span>
+                  <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${item.bg}`}>
+                    <span className={`material-symbols-outlined shrink-0 mt-0.5 ${item.iconCls}`} style={{ fontSize: 18 }}>{item.icon}</span>
                     <div>
-                      <p className={`text-sm font-semibold text-${item.color}-800`}>{item.title}</p>
-                      <p className={`text-xs text-${item.color}-700 mt-0.5`}>{item.desc}</p>
+                      <p className={`text-sm font-semibold ${item.titleCls}`}>{item.title}</p>
+                      <p className={`text-xs mt-0.5 ${item.descCls}`}>{item.desc}</p>
                     </div>
                   </div>
                 ))}

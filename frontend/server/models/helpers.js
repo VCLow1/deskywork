@@ -107,17 +107,109 @@ function sanitizeProfileForClient(profile, isStaff) {
   return copy;
 }
 
+function buildDynamicCancellationMessage({
+  delai_annulation_gratuite,
+  delai_heures,
+  penalite_pct = 0,
+  annulation_membre_autorisee = true,
+} = {}) {
+  if (annulation_membre_autorisee === false) {
+    return "Les annulations en ligne sont désactivées. Contactez l'accueil.";
+  }
+  const h = Math.max(0, Number(delai_annulation_gratuite ?? delai_heures ?? 24));
+  const base = `Annulation gratuite jusqu'à ${h} heure${h > 1 ? 's' : ''} avant le début du créneau.`;
+  const pen = Number(penalite_pct || 0);
+  return pen > 0 ? `${base} Passé ce délai, pénalité de ${pen}%.` : base;
+}
+
 async function getCancellationPolicy(tenantId) {
   let q = supabaseAdmin.from('politique_annulation').select('*');
   if (tenantId) q = q.eq('tenant_id', tenantId);
   const { data } = await q.order('updated_at', { ascending: false }).limit(1).maybeSingle();
-  return data || {
+
+  let tenantFreeHours = null;
+  if (tenantId) {
+    try {
+      const { data: tRow } = await supabaseAdmin
+        .from('tenants')
+        .select('settings')
+        .eq('id', tenantId)
+        .maybeSingle();
+      const raw = tRow?.settings?.delai_annulation_gratuite;
+      if (raw !== undefined && raw !== null && raw !== '') {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed >= 0) tenantFreeHours = parsed;
+      }
+    } catch (_) {}
+  }
+
+  const base = data || {
     delai_heures: 24,
     penalite_pct: 0,
     annulation_membre_autorisee: true,
     remboursement_auto: false,
-    message_membre: "Annulation gratuite jusqu'à 24 h avant le début du créneau.",
+    message_membre: '',
   };
+  const delaiEffectif = tenantFreeHours != null ? tenantFreeHours : Number(base.delai_heures ?? 24);
+  const dynamicMsg = buildDynamicCancellationMessage({
+    delai_annulation_gratuite: delaiEffectif,
+    penalite_pct: base.penalite_pct,
+    annulation_membre_autorisee: base.annulation_membre_autorisee,
+  });
+
+  return {
+    ...base,
+    delai_heures: delaiEffectif,
+    delai_annulation_gratuite: delaiEffectif,
+    message_membre: (base.message_membre && String(base.message_membre).trim()) || dynamicMsg,
+    dynamic_message: dynamicMsg,
+  };
+}
+
+/**
+ * Règle No-show :
+ * Une réservation ayant reçu un paiement (partiel ou total) OU ayant un check-in validé
+ * ne peut JAMAIS basculer en No-show (Absent).
+ */
+async function canMarkReservationNoShow(reservationId) {
+  if (!reservationId) return { allowed: false, reason: 'Identifiant de réservation manquant.' };
+
+  try {
+    const [payRes, sesRes] = await Promise.all([
+      supabaseAdmin
+        .from('paiements')
+        .select('id, statut, montant, montant_encaisse')
+        .eq('reservation_id', reservationId),
+      supabaseAdmin
+        .from('sessions')
+        .select('id, check_in, statut')
+        .eq('reservation_id', reservationId)
+        .not('check_in', 'is', null)
+        .limit(1),
+    ]);
+
+    const hasPaidOrPartial = (payRes?.data || []).some((p) => {
+      const st = String(p.statut || '').toLowerCase();
+      return st === 'paid' || st === 'partial' || Number(p.montant_encaisse || 0) > 0;
+    });
+    if (hasPaidOrPartial) {
+      return {
+        allowed: false,
+        reason: "Impossible de passer en No-show (Absent) : un paiement (partiel ou total) est déjà enregistré pour cette réservation.",
+      };
+    }
+
+    if ((sesRes?.data || []).length > 0) {
+      return {
+        allowed: false,
+        reason: "Impossible de passer en No-show (Absent) : un check-in a déjà été validé pour cette réservation.",
+      };
+    }
+  } catch (err) {
+    console.warn('⚠️ Vérification canMarkReservationNoShow:', err.message);
+  }
+
+  return { allowed: true };
 }
 
 function evaluateCancellation(reservation, policy, isStaff) {
@@ -552,6 +644,8 @@ module.exports = {
   findValidPromoCode,
   sanitizeProfileForClient,
   getCancellationPolicy,
+  buildDynamicCancellationMessage,
+  canMarkReservationNoShow,
   evaluateCancellation,
   getCancellationPolicyForEspace,
   buildCancellationInfo,

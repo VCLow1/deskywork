@@ -7,7 +7,7 @@
  * MODULE N — Multi-sites
  */
 const express = require('express');
-const { getBookingAvailability, insertWithColumnFallback } = require('../models/helpers');
+const { getBookingAvailability, canMarkReservationNoShow, insertWithColumnFallback } = require('../models/helpers');
 
 // ─── Factory : reçoit les dépendances au moment du require() ─────────────
 module.exports = function createRouter({ supabaseAdmin, authenticate, requireRoles, applyTenantFilter }) {
@@ -90,12 +90,26 @@ router.post('/guests/booking', async (req, res) => {
     // Le tenant est TOUJOURS déduit de l'espace (le client ne peut pas forcer un autre établissement)
     const { data: espace, error: espErr } = await supabaseAdmin
       .from('espaces')
-      .select('id, nom, type, tenant_id, tarif_horaire')
+      .select('id, nom, type, capacite, tenant_id, tarif_horaire')
       .eq('id', espace_id)
       .maybeSingle();
     if (espErr || !espace) {
       return res.status(404).json({ error: "Espace introuvable. Veuillez choisir un espace dans la liste de l'établissement." });
     }
+    const rawNbPart = req.body.nb_participants ?? req.body.entreprise_info?.nb_personnes;
+    const parsedPart = rawNbPart !== undefined && rawNbPart !== null && rawNbPart !== '' ? parseInt(rawNbPart, 10) : null;
+    if (espace.type === 'meeting_room') {
+      const maxCap = Math.max(1, parseInt(espace.capacite, 10) || 1);
+      if (!Number.isInteger(parsedPart) || parsedPart < 1 || parsedPart > maxCap) {
+        return res.status(400).json({
+          error: `Pour une salle de réunion, le nombre de participants est obligatoire et doit être compris entre 1 et ${maxCap}.`,
+        });
+      }
+    }
+    if (parsedPart !== null) {
+      notesObj.nb_participants = parsedPart;
+    }
+    const finalNotes = Object.keys(notesObj).length > 0 ? JSON.stringify(notesObj) : null;
     const tenantId = espace.tenant_id || req.body.tenant_id || null;
     if (req.body.tenant_id && espace.tenant_id && req.body.tenant_id !== espace.tenant_id) {
       return res.status(400).json({ error: "Cet espace n'appartient pas à l'établissement sélectionné." });
@@ -152,7 +166,7 @@ router.post('/guests/booking', async (req, res) => {
         mode: 'on_site',
         mode_reservation: client_type === 'entreprise' ? 'entreprise' : 'guest',
         ...(floor_plan_item_id ? { floor_plan_item_id } : {}),
-        ...(combinedNotes ? { notes: combinedNotes } : {}),
+        ...(finalNotes ? { notes: finalNotes } : {}),
         source: 'marketplace',
       },
       { aliases: { user_id: 'membre_id' } },
@@ -1079,6 +1093,11 @@ router.post('/bookings/:id/noshow', authenticate, requireRoles('super_admin', 'a
       .eq('id', req.params.id).single();
     if (rErr || !reservation) return res.status(404).json({ error: 'Réservation introuvable.' });
 
+    const noShowCheck = await canMarkReservationNoShow(req.params.id);
+    if (!noShowCheck.allowed) {
+      return res.status(400).json({ error: noShowCheck.reason });
+    }
+
     // Récupérer la politique pour ce type d'espace
     const { data: policy } = await supabaseAdmin
       .from('politique_annulation_espaces')
@@ -1091,7 +1110,7 @@ router.post('/bookings/:id/noshow', authenticate, requireRoles('super_admin', 'a
 
     // Marquer no-show
     await supabaseAdmin.from('reservations').update({
-      no_show: true, statut: 'cancelled', penalite_pct: penalite
+      no_show: true, statut: 'no_show', penalite_pct: penalite
     }).eq('id', req.params.id);
 
     // Ajouter note sur le profil si configuré

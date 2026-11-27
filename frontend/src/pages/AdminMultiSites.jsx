@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { sitesApi, memberApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
+import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 
 export default function AdminMultiSites({ session }) {
   const userId = session?.user?.id;
@@ -46,13 +48,21 @@ export default function AdminMultiSites({ session }) {
 
   const handleSave = async () => {
     if (!form.nom.trim()) { setError('Le nom est requis.'); return; }
+    if (form.telephone && form.telephone.trim()) {
+      const check = validateTunisianPhone(form.telephone);
+      if (!check.valid) { setError(check.error); return; }
+    }
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        telephone: form.telephone?.trim() ? normalizeTunisianPhone(form.telephone) : '',
+      };
       if (editId) {
-        await sitesApi.update(editId, form);
+        await sitesApi.update(editId, payload);
         setSuccess('Site mis à jour.');
       } else {
-        await sitesApi.create(form);
+        await sitesApi.create(payload);
         setSuccess('Site créé.');
       }
       setForm({ nom: '', adresse: '', ville: '', telephone: '', email: '' });
@@ -118,7 +128,7 @@ export default function AdminMultiSites({ session }) {
         <div className="mb-5 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3 text-sm">
           <span className="material-symbols-outlined text-amber-700">lock_clock</span>
           <div>
-            <strong>Option Phase 2 :</strong> Conformément au CDC DeskyWork v3.0, la gestion Multi-sites est réservée aux évolutions Phase 2. Votre établissement v1 fonctionne en mode mono-site.
+            <strong>Offre Pro :</strong> La gestion multi-sites est réservée aux établissements disposant de l&apos;abonnement Pro. Votre établissement fonctionne actuellement en mode mono-site.
           </div>
         </div>
 
@@ -153,10 +163,19 @@ export default function AdminMultiSites({ session }) {
                 { key: 'email',     label: 'Email du site',  placeholder: 'site@coworking.tn' },
               ].map(({ key, label, placeholder }) => (
                 <div key={key}>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">{label}</label>
-                  <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                    placeholder={placeholder}
-                    className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-low px-4 py-2.5 text-sm outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15" />
+                  <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">{label}</label>
+                  {key === 'telephone' ? (
+                    <TunisianPhoneInput
+                      value={form.telephone}
+                      onChange={(val) => setForm((f) => ({ ...f, telephone: val }))}
+                      placeholder={placeholder}
+                      className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-low px-4 py-2.5 text-sm outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15"
+                    />
+                  ) : (
+                    <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-low px-4 py-2.5 text-sm outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/15" />
+                  )}
                 </div>
               ))}
             </div>
@@ -201,7 +220,7 @@ export default function AdminMultiSites({ session }) {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${site.actif ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${site.actif ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-container-high text-on-surface-variant'}`}>
                           {site.actif ? 'Actif' : 'Inactif'}
                         </span>
                       </div>
@@ -272,7 +291,7 @@ export default function AdminMultiSites({ session }) {
 
                 {/* Ajouter un membre */}
                 <div className="border-t border-outline-variant/10 pt-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-2">Ajouter un membre</p>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-2">Ajouter un membre</p>
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Rechercher par nom ou email…"
                     className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm outline-none focus:border-secondary mb-2" />
@@ -280,12 +299,12 @@ export default function AdminMultiSites({ session }) {
                     {filteredAll.slice(0, 10).map((m) => (
                       <button key={m.id} onClick={() => handleAddMember(m.id)}
                         className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-secondary/5 transition-colors text-left">
-                        <div className="w-6 h-6 rounded-full bg-secondary/10 flex items-center justify-center font-bold text-[10px] text-secondary shrink-0">
+                        <div className="w-6 h-6 rounded-full bg-secondary/10 flex items-center justify-center font-bold text-xs text-secondary shrink-0">
                           {(m.prenom?.[0] || '') + (m.nom?.[0] || '')}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-primary text-xs truncate">{m.prenom} {m.nom}</p>
-                          <p className="text-[10px] text-on-surface-variant truncate">{m.email}</p>
+                          <p className="text-xs text-on-surface-variant truncate">{m.email}</p>
                         </div>
                         <span className="material-symbols-outlined text-secondary shrink-0" style={{ fontSize: 16 }}>add_circle</span>
                       </button>

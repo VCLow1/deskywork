@@ -14,21 +14,29 @@ const {
 
 // ─── Helpers de présentation ────────────────────────────────────────────────
 function round2(n) {
-  return Math.round(n * 100) / 100;
+  return Math.round(n * 1000) / 1000;
 }
 
 function fmtDT(n) {
-  return `${round2(n).toLocaleString('fr-FR')} DT`;
+  const num = Number(n || 0);
+  const safe = Number.isFinite(num) ? Math.round(num * 1000) / 1000 : 0;
+  const sign = safe < 0 ? '-' : '';
+  const fixed = Math.abs(safe).toFixed(3);
+  const [i, d] = fixed.split('.');
+  return `${sign}${i.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0')},${d} DT`;
 }
 
 function periodLabel(win) {
   if (win.period === 'tout') return 'la totalité de l\'historique de la plateforme';
-  const fmt = (d) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  const fmt = (d) => d.toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis', day: '2-digit', month: '2-digit', year: 'numeric' });
   return `la période du ${fmt(win.fromJ)} au ${fmt(win.toJ)}`;
 }
 
 function evolutionText(cur, prev, unit = '') {
   const evo = pctChange(cur, prev);
+  if (evo === null) {
+    return cur > 0 ? `Nouveau vs période précédente${unit}` : `- vs période précédente${unit}`;
+  }
   if (cur > prev) return `▲ +${evo}% vs période précédente${unit}`;
   if (cur < prev) return `▼ ${evo}% vs période précédente${unit}`;
   return `→ Stable vs période précédente${unit}`;
@@ -289,7 +297,10 @@ async function getAdminReport(req, res) {
 
     // ── Rédaction du rapport ─────────────────────────────────────────────
     const verdict = computeVerdict(anomalies);
-    const intro = `Sur ${label}, le coworking a généré ${fmtDT(ca)} de chiffre d'affaires (${transactions} transaction(s), ${caEvo >= 0 ? '+' : ''}${caEvo}% vs période précédente) pour ${bookings.count} réservation(s) et un taux d'occupation moyen de ${occMoyen}%. ${nouveauxMembres} nouveau(x) membre(s) ont rejoint la plateforme${membresEvo < 0 ? ' (légère baisse)' : membresEvo > 0 ? ' (en croissance)' : ''}.`;
+    const caEvoLabel = caEvo === null
+      ? (ca > 0 ? 'Nouveau vs période précédente' : '- vs période précédente')
+      : `${caEvo >= 0 ? '+' : ''}${caEvo}% vs période précédente`;
+    const intro = `Sur ${label}, le coworking a généré ${fmtDT(ca)} de chiffre d'affaires (${transactions} transaction(s), ${caEvoLabel}) pour ${bookings.count} réservation(s) et un taux d'occupation moyen de ${occMoyen}%. ${nouveauxMembres} nouveau(x) membre(s) ont rejoint la plateforme${membresEvo != null && membresEvo < 0 ? ' (légère baisse)' : membresEvo != null && membresEvo > 0 ? ' (en croissance)' : ''}.`;
     let conclusion = '';
     const worst = anomalies.find((a) => a.severite === 'high');
     if (worst) {
@@ -944,14 +955,14 @@ async function downloadAdminReportPdf(req, res) {
       };
 
       drawSection('1. Chiffre d\'affaires & Encaissements', [
-        `Total encaissé : ${report.ca.total.toFixed(3)} DT (${report.ca.transactions} transaction(s))`,
-        `Panier moyen : ${report.ca.panier_moyen.toFixed(3)} DT`,
-        `Répartition par mode : ${Object.entries(report.ca.par_mode).map(([m, v]) => `${m}: ${Number(v).toFixed(3)} DT`).join(' · ') || 'Aucune transaction'}`,
+        `Total encaissé : ${fmtDT(report.ca.total)} (${report.ca.transactions} transaction(s))`,
+        `Panier moyen : ${fmtDT(report.ca.panier_moyen)}`,
+        `Répartition par mode : ${Object.entries(report.ca.par_mode).map(([m, v]) => `${m}: ${fmtDT(v)}`).join(' · ') || 'Aucune transaction'}`,
       ]);
 
       drawSection('2. Occupation des espaces', [
         `Taux d'occupation moyen : ${report.occupation.taux_moyen}% · Réservations totales : ${report.occupation.total_reservations}`,
-        ...report.occupation.par_espace.slice(0, 12).map((o) => `• ${o.nom} (${o.type}) : ${o.reservations} résa(s), ${o.heures_reservees}h, occupation ${o.taux_occupation}%, CA ${o.ca.toFixed(3)} DT`),
+        ...report.occupation.par_espace.slice(0, 12).map((o) => `• ${o.nom} (${o.type}) : ${o.reservations} résa(s), ${o.heures_reservees}h, occupation ${o.taux_occupation}%, CA ${fmtDT(o.ca)}`),
       ]);
 
       drawSection('3. Présence & Sessions de travail', [
@@ -965,13 +976,13 @@ async function downloadAdminReportPdf(req, res) {
       ]);
 
       drawSection('5. Impayés (Montants dus en attente)', [
-        `Total impayés : ${report.impayes.total.toFixed(3)} DT (${report.impayes.count} dossier(s) en attente)`,
-        ...report.impayes.liste.slice(0, 8).map((p) => `• ${p.profiles?.prenom || ''} ${p.profiles?.nom || p.profiles?.email || 'Client'} : ${parseFloat(p.montant || 0).toFixed(3)} DT (${p.reference_externe || 'À encaisser'})`),
+        `Total impayés : ${fmtDT(report.impayes.total)} (${report.impayes.count} dossier(s) en attente)`,
+        ...report.impayes.liste.slice(0, 8).map((p) => `• ${p.profiles?.prenom || ''} ${p.profiles?.nom || p.profiles?.email || 'Client'} : ${fmtDT(p.montant)} (${p.reference_externe || 'À encaisser'})`),
       ]);
 
       drawSection('6. Formations', [
         `Total formations : ${report.formations.total} · Total inscrits : ${report.formations.total_inscrits}`,
-        ...report.formations.liste.slice(0, 8).map((f) => `• ${f.titre} : ${f.inscrits}/${f.capacite || 'illimité'} inscrit(s) (${f.taux_remplissage}%), CA estimé ${f.ca_estime.toFixed(3)} DT`),
+        ...report.formations.liste.slice(0, 8).map((f) => `• ${f.titre} : ${f.inscrits}/${f.capacite || 'illimité'} inscrit(s) (${f.taux_remplissage}%), CA estimé ${fmtDT(f.ca_estime)}`),
       ]);
 
       doc.end();

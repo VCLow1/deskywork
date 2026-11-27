@@ -3,15 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { tenantAdminApi, bookingApi } from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
+import { validateTunisianPhone, normalizeTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
 
 const ESPACE_TYPES = [
-  { value: 'open_space', label: 'Open Space' },
+  { value: 'open_space', label: 'Open space' },
   { value: 'private_office', label: 'Bureau privé' },
   { value: 'meeting_room', label: 'Salle de réunion' },
   { value: 'training_room', label: 'Salle de formation' },
   { value: 'event_space', label: 'Espace événementiel' },
-  { value: 'hot_desk', label: 'Poste nomade (Hot Desk)' },
-  { value: 'dedicated_desk', label: 'Poste fixe (Dedicated Desk)' },
+  { value: 'hot_desk', label: 'Poste nomade' },
+  { value: 'dedicated_desk', label: 'Poste fixe' },
 ];
 
 function fileToBase64(file) {
@@ -102,10 +104,18 @@ export default function AdminOnboarding({ session }) {
   };
 
   const handleSaveTenant = async () => {
-    setSaving(true);
     setError('');
+    if (tenantForm.telephone && tenantForm.telephone.trim()) {
+      const check = validateTunisianPhone(tenantForm.telephone);
+      if (!check.valid) { setError(check.error); return; }
+    }
+    setSaving(true);
     try {
-      const { tenant: updated } = await tenantAdminApi.updateTenant(tenantForm);
+      const payload = {
+        ...tenantForm,
+        telephone: tenantForm.telephone?.trim() ? normalizeTunisianPhone(tenantForm.telephone) : '',
+      };
+      const { tenant: updated } = await tenantAdminApi.updateTenant(payload);
       setTenant(updated);
       setStep(2);
     } catch (e) {
@@ -262,11 +272,10 @@ export default function AdminOnboarding({ session }) {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-label-sm font-semibold text-on-surface-variant">Téléphone</label>
-                    <input
+                    <TunisianPhoneInput
                       value={tenantForm.telephone}
-                      onChange={(e) => setTenantForm({ ...tenantForm, telephone: e.target.value })}
+                      onChange={(val) => setTenantForm({ ...tenantForm, telephone: val })}
                       className="form-input mt-1"
-                      placeholder="+216 99 999 999"
                     />
                   </div>
                   <div>

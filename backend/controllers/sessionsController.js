@@ -1,6 +1,6 @@
 // controllers/sessionsController.js — MODULE B : Politique d'annulation & Sessions check-in/out
 const { supabaseAdmin } = require('../config/supabase');
-const { getCancellationPolicy, hasActiveSubscription, computeRemainingMinutes } = require('../models/helpers');
+const { getCancellationPolicy, buildDynamicCancellationMessage, hasActiveSubscription, computeRemainingMinutes } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 const { emitSessionStarted, emitSessionEnded, emitSessionOvertime } = require('../services/socketService');
 
@@ -17,6 +17,7 @@ async function updateCancellationPolicyRoute(req, res) {
   try {
     const {
       delai_heures,
+      delai_annulation_gratuite,
       penalite_pct,
       annulation_membre_autorisee,
       remboursement_auto,
@@ -24,14 +25,30 @@ async function updateCancellationPolicyRoute(req, res) {
     } = req.body;
 
     const current = await getCancellationPolicy(req.tenantId);
+    const effectiveDelay = delai_annulation_gratuite ?? delai_heures ?? current.delai_heures ?? 24;
+    const effectivePenalty = penalite_pct ?? current.penalite_pct ?? 0;
+    const effectiveAllowed = annulation_membre_autorisee ?? current.annulation_membre_autorisee ?? true;
+    const dynamicMsg = buildDynamicCancellationMessage({
+      delai_annulation_gratuite: effectiveDelay,
+      penalite_pct: effectivePenalty,
+      annulation_membre_autorisee: effectiveAllowed,
+    });
     const values = {
-      delai_heures: delai_heures ?? current.delai_heures,
-      penalite_pct: penalite_pct ?? current.penalite_pct,
-      annulation_membre_autorisee: annulation_membre_autorisee ?? current.annulation_membre_autorisee,
+      delai_heures: Number(effectiveDelay),
+      penalite_pct: effectivePenalty,
+      annulation_membre_autorisee: effectiveAllowed,
       remboursement_auto: remboursement_auto ?? current.remboursement_auto,
-      message_membre: message_membre ?? current.message_membre,
+      message_membre: (message_membre && String(message_membre).trim()) ? String(message_membre).trim() : dynamicMsg,
       updated_at: new Date().toISOString(),
     };
+
+    if (req.tenantId) {
+      try {
+        const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
+        const nextSettings = { ...(tRow?.settings || {}), delai_annulation_gratuite: Number(effectiveDelay) };
+        await supabaseAdmin.from('tenants').update({ settings: nextSettings }).eq('id', req.tenantId);
+      } catch (_) {}
+    }
 
     let data, error;
     if (current.id) {

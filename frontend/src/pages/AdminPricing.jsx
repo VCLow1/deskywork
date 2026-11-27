@@ -4,12 +4,15 @@ import { supabase } from '../supabaseClient';
 import { pricingApi, bookingApi, tenantAdminApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import { formatDT } from '../utils/format';
+import { SPACE_TYPE_LABELS } from '../constants/spaceTypes';
+import Money from '../components/common/Money';
 
 const ITEMS_PER_PAGE = 10;
 
 const SUBSCRIPTION_LABELS = {
-  day_pass: 'Day Pass',
-  week_pass: 'Week Pass',
+  day_pass: 'Pass journée',
+  week_pass: 'Pass semaine',
   mensuel: 'Mensuel',
   trimestriel: 'Trimestriel',
   annuel: 'Annuel',
@@ -22,15 +25,7 @@ const PLAN_LABELS = {
   entreprise: 'Entreprise',
 };
 
-const ESPACE_TYPE_LABELS = {
-  open_space: 'Open space',
-  private_office: 'Bureau privé',
-  meeting_room: 'Salle de réunion',
-  training_room: 'Salle de formation',
-  event_space: 'Espace événementiel',
-  hot_desk: 'Poste nomade (Hot Desk)',
-  dedicated_desk: 'Poste fixe (Dedicated Desk)',
-};
+const ESPACE_TYPE_LABELS = SPACE_TYPE_LABELS;
 
 export default function AdminPricing({ session }) {
   const [profile, setProfile] = useState(null);
@@ -230,7 +225,7 @@ export default function AdminPricing({ session }) {
       {tab === 'types_espaces' && (
         <div className="bg-white rounded-2xl p-5 sm:p-6 custom-shadow border border-outline-variant/10 space-y-4">
           <div>
-            <h2 className="font-sora font-bold text-base text-primary">Grille tarifaire horaire par type d'espace (7 catégories CDC v3.0)</h2>
+            <h2 className="font-sora font-bold text-base text-[#100f0d]">Grille tarifaire horaire par catégorie d'espace</h2>
             <p className="text-xs text-on-surface-variant mt-0.5">
               Définissez le tarif horaire de référence pour chaque type d'espace et appliquez-le à vos salles existantes en un clic.
             </p>
@@ -266,7 +261,7 @@ export default function AdminPricing({ session }) {
                         setError('');
                         try {
                           await Promise.all(matching.map((esp) => tenantAdminApi.updateEspace(esp.id, { tarif_horaire: rate })));
-                          setRateSuccess(`Tarif horaire (${rate.toFixed(3)} DT/h) appliqué à ${matching.length} espace(s) "${label}".`);
+                          setRateSuccess(`Tarif horaire (${formatDT(rate)}/h) appliqué à ${matching.length} espace(s) "${label}".`);
                           await loadData();
                         } catch (err) {
                           setError(err.message);
@@ -377,7 +372,7 @@ export default function AdminPricing({ session }) {
                         ? (ESPACE_TYPE_LABELS[t.type_espace] || t.type_espace)
                         : 'Tous les espaces'}
                     </td>
-                    <td className="p-sm font-semibold">{Number(t.prix).toFixed(3)} DT</td>
+                    <td className="p-sm font-semibold"><Money amount={t.prix} /></td>
                     <td className="p-sm">{t.tva_pct}%</td>
                     <td className="p-sm">
                       <span className={`px-2 py-0.5 rounded-full text-label-sm ${t.actif ? 'bg-secondary-fixed' : 'bg-surface-container-high'}`}>
@@ -477,7 +472,7 @@ export default function AdminPricing({ session }) {
                     <tr key={p.id} className="border-t border-outline-variant/10">
                       <td className="p-3 font-mono font-semibold">{p.code}</td>
                       <td className="p-3">
-                        {p.type_reduction === 'percent' ? `${p.valeur}%` : `${p.valeur} DT`}
+                        {p.type_reduction === 'percent' ? `${p.valeur}%` : <Money amount={p.valeur} />}
                       </td>
                       <td className="p-3">
                         {p.utilisations_count}
@@ -530,7 +525,7 @@ export default function AdminPricing({ session }) {
                 {pagedOccupation.map((row) => (
                   <tr key={row.espace_id} className="border-t border-outline-variant/10">
                     <td className="p-3 font-semibold">{row.nom}</td>
-                    <td className="p-3 capitalize">{row.type.replace('_', ' ')}</td>
+                    <td className="p-3">{ESPACE_TYPE_LABELS[row.type] || row.type.replace('_', ' ')}</td>
                     <td className="p-3">{row.capacite}</td>
                     <td className="p-3">{row.reservations_count}</td>
                     <td className="p-3">

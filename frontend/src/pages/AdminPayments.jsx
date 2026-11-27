@@ -4,7 +4,8 @@ import { paymentApi, memberApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import { exportPaymentsToExcel } from '../utils/exportPaymentsExcel';
-import { formatDT } from '../utils/format';
+import { formatDT, formatDateDMY } from '../utils/format';
+import Money from '../components/common/Money';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -32,9 +33,9 @@ const FILTER_TABS = [
 
 const MODE_LABELS = {
   cash: 'Espèces',
-  bank_transfer: 'Virement',
+  bank_transfer: 'Virement bancaire',
   check: 'Chèque',
-  online: 'Sur place (legacy)',
+  online: 'Sur place',
 };
 
 function computePaymentStats(payments) {
@@ -68,6 +69,7 @@ export default function AdminPayments({ session }) {
   const [collectAmount, setCollectAmount] = useState('');
   const [collecting, setCollecting] = useState(false);
   const [collectFeedback, setCollectFeedback] = useState('');
+  const [lastPaidId, setLastPaidId] = useState(null);
   const [showAddDuModal, setShowAddDuModal] = useState(false);
   const [duMembers, setDuMembers] = useState([]);
   const [newDuForm, setNewDuForm] = useState({ user_id: '', categorie: 'penalite', motif: '', montant: '' });
@@ -85,7 +87,7 @@ export default function AdminPayments({ session }) {
         const recu = (p.numero_recu || '').toLowerCase();
         const mode = (MODE_LABELS[p.mode] || p.mode || '').toLowerCase();
         const montant = String(p.montant || '');
-        const dateStr = p.date_paiement ? new Date(p.date_paiement).toLocaleDateString('fr-FR') : '';
+        const dateStr = p.date_paiement ? formatDateDMY(p.date_paiement) : '';
         return (
           memberName.includes(q) ||
           recu.includes(q) ||
@@ -155,11 +157,9 @@ export default function AdminPayments({ session }) {
         montant_encaisse: parseFloat(collectAmount),
       });
       setCollectFeedback(res.message || 'Encaissement enregistré.');
+      setLastPaidId(res.paid_payment?.id || null);
       setCollectTarget(null);
       await fetchProfileAndPayments();
-      if (res.paid_payment?.id) {
-        try { await paymentApi.downloadReceipt(res.paid_payment.id); } catch (_) {}
-      }
     } catch (err) {
       alert(err.message || "Erreur lors de l'encaissement.");
     } finally {
@@ -211,37 +211,37 @@ export default function AdminPayments({ session }) {
         </button>
       </div>
 
-      {/* Cartes de statistiques (KPIs) */}
+      {/* Cartes de statistiques (KPIs) — un seul filet neutre */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
-        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/30 shadow-sm flex items-center gap-3 sm:gap-4">
+        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/25 shadow-sm flex items-center gap-3 sm:gap-4">
           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#D1FAE5] text-[#065F46] flex items-center justify-center shrink-0">
             <span className="material-symbols-outlined filled text-[22px] sm:text-[24px]">account_balance_wallet</span>
           </div>
           <div>
-            <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Recettes Encaissées</p>
-            <p className="text-lg sm:text-2xl font-bold text-primary">{formatDT(stats.totalRevenue)}</p>
+            <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Recettes Encaissées</p>
+            <p className="text-lg sm:text-2xl font-bold text-primary"><Money amount={stats.totalRevenue} /></p>
           </div>
         </div>
 
-        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/30 shadow-sm flex items-center gap-3 sm:gap-4">
+        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/25 shadow-sm flex items-center gap-3 sm:gap-4">
           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#FEF3C7] text-[#92400E] flex items-center justify-center shrink-0">
             <span className="material-symbols-outlined filled text-[22px] sm:text-[24px]">pending_actions</span>
           </div>
           <div>
-            <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Montants dus sur place</p>
-            <p className="text-lg sm:text-2xl font-bold text-primary">{formatDT(stats.pendingAmount)}</p>
+            <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Montants dus sur place</p>
+            <p className="text-lg sm:text-2xl font-bold text-primary"><Money amount={stats.pendingAmount} /></p>
           </div>
         </div>
 
-        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/30 shadow-sm flex items-center gap-3 sm:gap-4 sm:col-span-1 col-span-1">
+        <div className="bg-surface-container-lowest p-4 rounded-2xl sm:rounded-3xl border border-outline-variant/25 shadow-sm flex items-center gap-3 sm:gap-4 sm:col-span-1 col-span-1">
           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-secondary-fixed text-on-secondary-fixed flex items-center justify-center shrink-0">
             <span className="material-symbols-outlined filled text-[22px] sm:text-[24px]">monitoring</span>
           </div>
           <div>
-            <p className="text-[10px] sm:text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Taux de Recouvrement</p>
+            <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider mb-0.5">Taux de Recouvrement</p>
             <div className="flex items-end gap-2">
               <p className="text-lg sm:text-2xl font-bold text-primary">{recoveryRate}%</p>
-              <p className="text-[11px] text-on-surface-variant mb-0.5">({stats.paidCount}/{totalInvoices})</p>
+              <p className="text-xs text-on-surface-variant mb-0.5">({stats.paidCount}/{totalInvoices})</p>
             </div>
           </div>
         </div>
@@ -254,13 +254,27 @@ export default function AdminPayments({ session }) {
       )}
 
       {collectFeedback && (
-        <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 flex items-center justify-between">
+        <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 flex flex-wrap items-center justify-between gap-2">
           <span>{collectFeedback}</span>
-          <button type="button" onClick={() => setCollectFeedback('')} className="ml-3 text-xs underline">Fermer</button>
+          <div className="flex items-center gap-3">
+            {lastPaidId && (
+              <button
+                type="button"
+                onClick={() => handleDownload(lastPaidId)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500]"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>receipt_long</span>
+                Télécharger le reçu
+              </button>
+            )}
+            <button type="button" onClick={() => { setCollectFeedback(''); setLastPaidId(null); }} className="text-xs underline">
+              Fermer
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Entité unifiée « Montant dû » à encaisser sur place (CDC v3.0 Chantier 4.2) */}
+      {/* Entité unifiée « Montant dû » à encaisser sur place */}
       <div className="mb-6 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
@@ -269,7 +283,7 @@ export default function AdminPayments({ session }) {
               Montants dus à encaisser sur place
             </h2>
             <p className="text-xs text-on-surface-variant">
-              Réservations, dépassements auto, prolongations, pénalités, inscriptions aux formations et abonnements
+              Réservations, dépassements, prolongations, pénalités, inscriptions aux formations et abonnements
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -290,7 +304,7 @@ export default function AdminPayments({ session }) {
               Pénalité / Frais
             </button>
             <span className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-1.5 text-sm font-extrabold text-amber-900">
-              Total dû : {formatDT(montantDuData.total_du)}
+              Total dû : <Money amount={montantDuData.total_du} />
             </span>
           </div>
         </div>
@@ -306,7 +320,7 @@ export default function AdminPayments({ session }) {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-primary">{cliName}</span>
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                      <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${
                         item.categorie === 'penalite'
                           ? 'bg-red-100 text-red-700'
                           : item.categorie === 'depassement'
@@ -319,7 +333,7 @@ export default function AdminPayments({ session }) {
                     <p className="text-xs text-on-surface-variant">{item.libelle}</p>
                   </div>
                   <div className="flex items-center gap-3 ml-auto">
-                    <span className="font-sora text-sm font-extrabold text-[#f95d00]">{formatDT(item.montant_du)}</span>
+                    <span className="font-sora text-sm font-extrabold text-[#f95d00]"><Money amount={item.montant_du} /></span>
                     <button
                       type="button"
                       onClick={() => openCollectModal(item)}
@@ -388,7 +402,7 @@ export default function AdminPayments({ session }) {
               >
                 <span>{tab.label}</span>
                 <span
-                  className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${
+                  className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
                     isActive
                       ? 'bg-white/20 text-white'
                       : 'bg-outline-variant/30 text-on-surface-variant'
@@ -419,7 +433,7 @@ export default function AdminPayments({ session }) {
             <tbody className="text-sm">
               {paginatedPayments.map((p) => {
                 const memberName = p.profiles ? `${p.profiles.prenom} ${p.profiles.nom}` : (p.user_id ? p.user_id.slice(0, 8) : '—');
-                const dateP = p.date_paiement ? new Date(p.date_paiement) : new Date(p.created_at);
+                const dateP = p.date_paiement || p.created_at;
 
                 return (
                   <tr key={p.id} className="border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors">
@@ -428,10 +442,10 @@ export default function AdminPayments({ session }) {
                     </td>
                     <td className="px-4 py-3 text-on-surface-variant">
                       <div className="font-mono text-xs mb-0.5 text-primary">{p.numero_recu || '—'}</div>
-                      <div className="text-[11px]">{dateP.toLocaleDateString()}</div>
+                      <div className="text-xs">{formatDateDMY(dateP)}</div>
                     </td>
                     <td className="px-4 py-3 font-bold text-secondary">
-                      {formatDT(p.montant)}
+                      <Money amount={p.montant} />
                     </td>
                     <td className="px-4 py-3">
                       <span className="bg-surface-container-high px-2 py-1 rounded-md text-xs font-medium">
@@ -439,17 +453,18 @@ export default function AdminPayments({ session }) {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${STATUT_STYLES[p.statut] || 'bg-gray-200 text-gray-800'}`}>
+                      <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${STATUT_STYLES[p.statut] || 'bg-gray-200 text-gray-800'}`}>
                         {STATUT_LABELS[p.statut] || p.statut}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
                         onClick={() => handleDownload(p.id)}
-                        className="p-1.5 text-on-surface-variant hover:text-secondary hover:bg-secondary/10 rounded transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#f95d00] hover:bg-orange-50 rounded-lg transition-colors"
                         title="Télécharger le reçu PDF"
                       >
-                        <span className="material-symbols-outlined text-[18px]">download</span>
+                        <span className="material-symbols-outlined text-[16px]">download</span>
+                        <span className="hidden sm:inline">Télécharger le reçu</span>
                       </button>
                     </td>
                   </tr>
@@ -494,7 +509,7 @@ export default function AdminPayments({ session }) {
               <p className="text-slate-600">
                 Client : {collectTarget.profiles ? `${collectTarget.profiles.prenom || ''} ${collectTarget.profiles.nom || ''}`.trim() : 'Client'}
               </p>
-              <p className="text-slate-700 font-semibold">Solde dû : {formatDT(collectTarget.montant_du)}</p>
+              <p className="text-slate-700 font-semibold">Solde dû : <Money amount={collectTarget.montant_du} /></p>
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Mode de règlement sur place *</label>
@@ -523,8 +538,8 @@ export default function AdminPayments({ session }) {
                 className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-mono font-bold"
               />
             </div>
-            <p className="text-[11px] text-slate-500">
-              Un Reçu de paiement PDF numéroté (Hors Facture) sera généré et transmis automatiquement par e-mail au client.
+            <p className="text-xs text-slate-500">
+              Un reçu de paiement numéroté sera généré et transmis par e-mail au client. Vous pourrez également le télécharger manuellement.
             </p>
             <div className="flex gap-2 pt-2">
               <button
@@ -539,7 +554,7 @@ export default function AdminPayments({ session }) {
                 disabled={collecting}
                 className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white hover:bg-[#e55500] disabled:opacity-50"
               >
-                {collecting ? 'Encaissement…' : 'Valider & Générer le Reçu'}
+                {collecting ? 'Encaissement…' : "Valider l'encaissement"}
               </button>
             </div>
           </form>

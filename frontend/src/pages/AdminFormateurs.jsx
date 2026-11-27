@@ -4,6 +4,10 @@ import { formationApi, bookingApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import { formatDT, formatDateDMY } from '../utils/format';
+import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
+import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
+import Money from '../components/common/Money';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -16,7 +20,7 @@ const inputCls =
 function Field({ label, required, children }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+      <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
         {label}
         {required && <span className="text-orange-500 ml-0.5">*</span>}
       </label>
@@ -186,9 +190,21 @@ export default function AdminFormateurs({ session }) {
 
   /* ─── Actions ─── */
   const handleCreateFormateur = async (e) => {
-    e.preventDefault(); setError(''); setSaving(true);
+    e.preventDefault(); setError('');
+    if (formateurForm.telephone && formateurForm.telephone.trim()) {
+      const check = validateTunisianPhone(formateurForm.telephone);
+      if (!check.valid) {
+        setError(check.error);
+        return;
+      }
+    }
+    setSaving(true);
     try {
-      await formationApi.createFormateur(formateurForm);
+      const payload = {
+        ...formateurForm,
+        telephone: formateurForm.telephone?.trim() ? normalizeTunisianPhone(formateurForm.telephone) : '',
+      };
+      await formationApi.createFormateur(payload);
       setSuccess(`Formateur ${formateurForm.prenom} ${formateurForm.nom} créé avec succès.`);
       setFormateurForm(emptyFormateur);
       setShowCreateModal(false);
@@ -276,15 +292,15 @@ export default function AdminFormateurs({ session }) {
           {[
             { label: 'Total formateurs', value: formateurs.length, icon: 'group', color: 'text-slate-800 bg-slate-100' },
             { label: 'Comptes actifs', value: actifs, icon: 'check_circle', color: 'text-emerald-700 bg-emerald-50' },
-            { label: 'Payouts en attente', value: `${pending.toFixed(3)} DT`, icon: 'pending_actions', color: 'text-amber-700 bg-amber-50' },
-            { label: 'Payouts payés', value: `${paid.toFixed(3)} DT`, icon: 'payments', color: 'text-slate-800 bg-slate-100' },
+            { label: 'Versements en attente', value: <Money amount={pending} />, icon: 'pending_actions', color: 'text-amber-700 bg-amber-50' },
+            { label: 'Versements payés', value: <Money amount={paid} />, icon: 'payments', color: 'text-slate-800 bg-slate-100' },
           ].map(({ label, value, icon, color }) => (
             <div key={label} className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-outline-variant/20 shadow-sm flex items-center gap-3">
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${color}`}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20 }}>{icon}</span>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant leading-tight">{label}</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant leading-tight">{label}</p>
                 <p className="font-sora font-bold text-slate-900 text-xl leading-tight mt-0.5">{value}</p>
               </div>
             </div>
@@ -323,7 +339,7 @@ export default function AdminFormateurs({ session }) {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-surface-container-low text-[11px] font-bold uppercase tracking-wider text-on-surface-variant border-b border-outline-variant/20">
+                    <tr className="bg-surface-container-low text-xs font-bold uppercase tracking-wider text-on-surface-variant border-b border-outline-variant/20">
                       <th className="p-4">Formateur</th>
                       <th className="p-4">Contact</th>
                       <th className="p-4">Spécialité</th>
@@ -364,8 +380,8 @@ export default function AdminFormateurs({ session }) {
                           </td>
 
                           <td className="p-4">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-800 px-2.5 py-1 text-[10px] font-semibold">
-                              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>star</span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-800 px-2.5 py-1 text-xs font-semibold">
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>star</span>
                               {t.specialite || '—'}
                             </span>
                           </td>
@@ -374,22 +390,22 @@ export default function AdminFormateurs({ session }) {
                             <div className="inline-flex items-center gap-2 rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2 text-orange-800 shadow-sm">
                               <span className="material-symbols-outlined text-base" style={{ fontSize: 16 }}>event</span>
                               <div>
-                                <div className="text-[9px] font-bold uppercase tracking-[0.12em] opacity-75">Réservations</div>
+                                <div className="text-xs font-bold uppercase tracking-[0.12em] opacity-75">Réservations</div>
                                 <div className="text-sm font-bold leading-tight">{reservations.length}</div>
                               </div>
                             </div>
                           </td>
 
                           <td className="p-4">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
                               t.statut_compte === 'actif' ? 'bg-emerald-100 text-emerald-800'
                                 : t.statut_compte === 'en_attente' ? 'bg-amber-100 text-amber-800'
                                   : 'bg-red-100 text-red-800'
                             }`}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 11 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
                                 {t.statut_compte === 'actif' ? 'check_circle' : t.statut_compte === 'en_attente' ? 'hourglass_top' : 'block'}
                               </span>
-                              {t.statut_compte === 'actif' ? 'Validé' : t.statut_compte === 'en_attente' ? 'En attente (Pending)' : 'Suspendu'}
+                              {t.statut_compte === 'actif' ? 'Validé' : t.statut_compte === 'en_attente' ? 'En attente' : 'Suspendu'}
                             </span>
                           </td>
 
@@ -397,7 +413,7 @@ export default function AdminFormateurs({ session }) {
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 onClick={() => handleOpenRemu(t.id)}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                               >
                                 <span className="material-symbols-outlined" style={{ fontSize: 13 }}>payments</span>
                                 Rémunérer
@@ -460,12 +476,12 @@ export default function AdminFormateurs({ session }) {
                     <div key={r.id} className="bg-white rounded-3xl border border-outline-variant/20 p-4 shadow-sm">
                       <div className="flex justify-between items-start mb-1.5">
                         <p className="font-semibold text-slate-900 text-sm">{r.profiles?.prenom} {r.profiles?.nom}</p>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                           {r.statut === 'paye' ? 'Payé' : 'En attente'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant mb-1">{r.formations?.titre || 'Honoraires'}</p>
-                      <p className="font-bold text-emerald-700 text-lg mb-2">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
+                      <p className="font-bold text-emerald-700 text-lg mb-2"><Money amount={r.montant} /></p>
                       {r.statut === 'en_attente' && (
                         <button onClick={() => handleMarkPaid(r.id)} className="w-full py-2 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700">
                           Marquer comme payé
@@ -494,7 +510,7 @@ export default function AdminFormateurs({ session }) {
                         <tr key={r.id} className="hover:bg-surface-container-lowest transition-colors group">
                           <td className="p-4 font-semibold text-slate-900">{r.profiles?.prenom} {r.profiles?.nom}</td>
                           <td className="p-4 text-xs text-on-surface-variant">{r.formations?.titre || '—'}</td>
-                          <td className="p-4 font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</td>
+                          <td className="p-4 font-bold text-emerald-700"><Money amount={r.montant} /></td>
                           <td className="p-4">
                             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold border ${r.statut === 'paye'
                               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -504,7 +520,7 @@ export default function AdminFormateurs({ session }) {
                             </span>
                           </td>
                           <td className="p-4 text-xs text-on-surface-variant">
-                            {r.date_versement ? new Date(r.date_versement).toLocaleDateString('fr-FR') : '—'}
+                            {r.date_versement ? formatDateDMY(r.date_versement) : '—'}
                           </td>
                           <td className="p-4 text-xs italic text-on-surface-variant max-w-[140px]">
                             <div className="truncate">{r.note || '—'}</div>
@@ -570,8 +586,8 @@ export default function AdminFormateurs({ session }) {
         }
       >
         <form id="createFormateurForm" onSubmit={handleCreateFormateur} className="space-y-4">
-          <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-800 text-xs flex items-start gap-2">
-            <span className="material-symbols-outlined text-sky-500 shrink-0" style={{ fontSize: 16 }}>info</span>
+          <div className="p-3.5 rounded-2xl bg-[#fff4ed] border border-[#f95d00]/25 text-[#9a3412] text-xs flex items-start gap-2">
+            <span className="material-symbols-outlined text-[#f95d00] shrink-0" style={{ fontSize: 16 }}>info</span>
             Un email d'invitation sera envoyé au formateur avec ses informations de connexion.
           </div>
 
@@ -593,8 +609,11 @@ export default function AdminFormateurs({ session }) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Téléphone">
-              <input className={inputCls} placeholder="+216 XX XXX XXX" value={formateurForm.telephone}
-                onChange={e => setFormateurForm(p => ({ ...p, telephone: e.target.value }))} />
+              <TunisianPhoneInput
+                className={inputCls}
+                value={formateurForm.telephone}
+                onChange={(val) => setFormateurForm(p => ({ ...p, telephone: val }))}
+              />
             </Field>
             <Field label="Spécialité / Domaine">
               <input className={inputCls} placeholder="UX Design, React..." value={formateurForm.specialite}
@@ -728,28 +747,28 @@ export default function AdminFormateurs({ session }) {
             <div className="space-y-3">
               <div className="flex justify-between items-center p-3 bg-surface-container-low rounded-2xl text-sm">
                 <span className="text-on-surface-variant font-medium">Total cumulé</span>
-                <span className="font-sora font-bold text-primary">{total.toFixed(3)} DT</span>
+                <span className="font-sora font-bold text-[#100f0d]"><Money amount={total} /></span>
               </div>
               {myRemu.map(r => (
                 <div key={r.id} className="flex items-center justify-between p-3.5 border border-outline-variant/20 rounded-2xl">
                   <div>
-                    <p className="text-sm font-semibold text-primary">{r.formations?.titre || 'Honoraires'}</p>
+                    <p className="text-sm font-semibold text-[#100f0d]">{r.formations?.titre || 'Honoraires'}</p>
                     <p className="text-xs text-on-surface-variant">
                       {r.date_versement
-                        ? `Versé le ${new Date(r.date_versement).toLocaleDateString('fr-FR')}`
-                        : `Le ${new Date(r.created_at).toLocaleDateString('fr-FR')}`}
+                        ? `Versé le ${formatDateDMY(r.date_versement)}`
+                        : `Le ${formatDateDMY(r.created_at)}`}
                     </p>
                     {r.note && <p className="text-xs italic text-on-surface-variant mt-0.5">{r.note}</p>}
                   </div>
                   <div className="text-right ml-4">
-                    <p className="font-bold text-emerald-700">{parseFloat(r.montant || 0).toFixed(3)} DT</p>
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    <p className="font-bold text-emerald-700"><Money amount={r.montant} /></p>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${r.statut === 'paye' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                       }`}>
                       {r.statut === 'paye' ? 'Payé' : 'En attente'}
                     </span>
                     {r.statut === 'en_attente' && (
                       <button onClick={() => handleMarkPaid(r.id)}
-                        className="block mt-1 text-[10px] font-semibold text-emerald-700 hover:underline">
+                        className="block mt-1 text-xs font-semibold text-emerald-700 hover:underline">
                         Marquer payé
                       </button>
                     )}

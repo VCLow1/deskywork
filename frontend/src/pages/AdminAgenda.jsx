@@ -1,33 +1,37 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { bookingApi, sessionApi } from '../services/api';
+import { bookingApi, paymentApi, sessionApi } from '../services/api';
 import { connectSocket, joinStaff, onSessionStarted, onSessionEnded, onSessionOvertime, disconnectSocket } from '../services/socket';
 import PortalLayout from '../components/layout/PortalLayout';
 import FloorPlanLiveView from '../components/floorplan/FloorPlanLiveView';
+import Money from '../components/common/Money';
+import { formatDateDMY, formatTime24h, getTunisDateKey, getTunisHourMinute } from '../utils/format';
 
-const HOUR_START = 8;
-const HOUR_END = 20;
+const HOUR_START = 7;
+const HOUR_END = 22;
 const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
 
-const STATUT_LABELS = {
-  pending: 'En attente',
-  confirmed: 'Confirmée',
-  cancelled: 'Annulée',
+const STATUT_CONFIG = {
+  pending:    { label: 'En attente',        icon: 'hourglass_empty', bg: '#fef3c7', text: '#92400e' },
+  confirmed:  { label: 'Confirmée',         icon: 'check_circle',    bg: '#dcfce7', text: '#15803d' },
+  completed:  { label: 'Terminée',          icon: 'task_alt',        bg: '#ecfdf5', text: '#065f46' },
+  cancelled:  { label: 'Annulée',           icon: 'cancel',          bg: '#f1f5f9', text: '#475569' },
+  refused:    { label: 'Refusée',           icon: 'block',           bg: '#fee2e2', text: '#991b1b' },
+  no_show:    { label: 'No-show (Absent)',  icon: 'person_off',      bg: '#ffedd5', text: '#9a3412' },
+  waitlisted: { label: 'Liste d\'attente',  icon: 'queue',           bg: '#ede9fe', text: '#5b21b6' },
 };
 
-// Palette de couleurs distinctes par salle — bg, border, text
+// Palette de couleurs distinctes charte DeskyWork (sans bleu hors-charte)
 const SPACE_PALETTE = [
-  { bg: '#dbeafe', border: '#3b82f6', text: '#1e3a5f', badge: '#3b82f6' },  // bleu
-  { bg: '#dcfce7', border: '#22c55e', text: '#14532d', badge: '#22c55e' },  // vert
-  { bg: '#fef9c3', border: '#eab308', text: '#713f12', badge: '#ca8a04' },  // jaune
+  { bg: '#ffedd5', border: '#f95d00', text: '#7c2d12', badge: '#f95d00' },  // orange officiel
+  { bg: '#dcfce7', border: '#2fbe8f', text: '#14532d', badge: '#2fbe8f' },  // vert émeraude
+  { bg: '#fef9c3', border: '#eab308', text: '#713f12', badge: '#ca8a04' },  // ambre
   { bg: '#fce7f3', border: '#ec4899', text: '#831843', badge: '#ec4899' },  // rose
   { bg: '#ede9fe', border: '#8b5cf6', text: '#3b0764', badge: '#8b5cf6' },  // violet
-  { bg: '#ffedd5', border: '#f97316', text: '#7c2d12', badge: '#ea580c' },  // orange
-  { bg: '#cffafe', border: '#06b6d4', text: '#164e63', badge: '#0891b2' },  // cyan
-  { bg: '#fef2f2', border: '#ef4444', text: '#7f1d1d', badge: '#dc2626' },  // rouge
-  { bg: '#ecfdf5', border: '#10b981', text: '#064e3b', badge: '#059669' },  // émeraude
-  { bg: '#f5f3ff', border: '#a78bfa', text: '#2e1065', badge: '#7c3aed' },  // indigo
+  { bg: '#ccfbf1', border: '#0d9488', text: '#134e4a', badge: '#0d9488' },  // sarcelle
+  { bg: '#fef2f2', border: '#ba1a1a', text: '#7f1d1d', badge: '#ba1a1a' },  // rouge
+  { bg: '#f3f4f6', border: '#4e4a46', text: '#100f0d', badge: '#4e4a46' },  // neutre
 ];
 
 // Associer un index de couleur stable à chaque espace_id
@@ -118,30 +122,34 @@ function addDays(date, days) {
 }
 
 function formatDayLabel(date) {
-  return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+  return date.toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis', weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function bookingPosition(booking, dayDate) {
-  const dayStart = new Date(dayDate);
-  dayStart.setHours(HOUR_START, 0, 0, 0);
-  const dayEnd = new Date(dayDate);
-  dayEnd.setHours(HOUR_END, 0, 0, 0);
-
-  const start = new Date(booking.date_debut);
-  const end = new Date(booking.date_fin);
-
-  const visibleStart = start < dayStart ? dayStart : start;
-  const visibleEnd = end > dayEnd ? dayEnd : end;
-
-  if (visibleEnd <= dayStart || visibleStart >= dayEnd) return null;
+  const dayKey = getTunisDateKey(dayDate);
+  const startKey = getTunisDateKey(booking.date_debut);
+  const endKey = getTunisDateKey(booking.date_fin);
+  if (!dayKey || startKey > dayKey || endKey < dayKey) return null;
 
   const totalMinutes = (HOUR_END - HOUR_START) * 60;
-  const topMinutes = (visibleStart.getHours() - HOUR_START) * 60 + visibleStart.getMinutes();
-  const durationMinutes = (visibleEnd - visibleStart) / 60000;
+  let startMin = 0;
+  if (startKey === dayKey) {
+    const hm = getTunisHourMinute(booking.date_debut);
+    startMin = Math.max(0, (hm.hour - HOUR_START) * 60 + hm.minute);
+  }
+  let endMin = totalMinutes;
+  if (endKey === dayKey) {
+    const hm = getTunisHourMinute(booking.date_fin);
+    endMin = Math.min(totalMinutes, (hm.hour - HOUR_START) * 60 + hm.minute);
+  }
+
+  // Toujours afficher la réservation même si l'horaire est en dehors de la plage par défaut
+  const clampedStart = Math.min(Math.max(0, startMin), totalMinutes - 30);
+  const durationMinutes = Math.max(30, endMin - clampedStart);
 
   return {
-    top: `${(topMinutes / totalMinutes) * 100}%`,
-    height: `${Math.max((durationMinutes / totalMinutes) * 100, 4)}%`,
+    top: `${(clampedStart / totalMinutes) * 100}%`,
+    height: `${Math.max((durationMinutes / totalMinutes) * 100, 5)}%`,
   };
 }
 
@@ -455,9 +463,10 @@ export default function AdminAgenda({ session }) {
                 }}
                 className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold transition-colors ${
                   viewMode === mode.id
-                    ? mode.id === 'floorplan' ? 'bg-secondary text-white' : 'bg-primary text-white'
+                    ? ''
                     : 'bg-white text-on-surface-variant hover:text-primary'
                 }`}
+                style={viewMode === mode.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
               >
                 {mode.icon && <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{mode.icon}</span>}
                 {mode.label}
@@ -496,7 +505,7 @@ export default function AdminAgenda({ session }) {
             <input
               value={qrInput}
               onChange={(e) => setQrInput(e.target.value)}
-              placeholder="Coller le token QR ou scanner le payload JSON"
+              placeholder="Saisir le code court ou scanner le code QR"
               className="w-full border rounded-xl px-3 py-2 font-mono text-xs sm:text-sm"
             />
             <button
@@ -558,10 +567,11 @@ export default function AdminAgenda({ session }) {
             </div>
 
             {visibleDays.map((day) => {
+              const dayKey = getTunisDateKey(day);
               const dayBookings = bookings.filter((b) => {
-                const bDay = new Date(b.date_debut);
-                return bDay.toDateString() === day.toDateString()
-                  || (new Date(b.date_debut) <= day && new Date(b.date_fin) > day);
+                const startKey = getTunisDateKey(b.date_debut);
+                const endKey = getTunisDateKey(b.date_fin);
+                return startKey <= dayKey && endKey >= dayKey;
               });
               const overlapLayout = computeOverlapLayout(dayBookings);
 
@@ -576,16 +586,23 @@ export default function AdminAgenda({ session }) {
                     if (!pos) return null;
 
                     const active = isSessionActive(booking.id);
-                    const cancelled = booking.statut === 'cancelled';
+                    const cancelled = booking.statut === 'cancelled' || booking.statut === 'refused';
                     const isPending = booking.statut === 'pending';
                     const isFormation = Boolean(booking.is_formation);
+                    const statutMeta = STATUT_CONFIG[booking.statut] || {
+                      label: booking.statut || 'Confirmée',
+                      icon: 'info',
+                      bg: '#f1f5f9',
+                      text: '#334155',
+                    };
+                    const person = booking.profiles || booking.guests || {};
+                    const personName = [person.prenom, person.nom].filter(Boolean).join(' ') || (booking.guests ? 'Invité' : 'Membre');
                     const color = isFormation
                       ? { bg: '#f5f3ff', border: '#8b5cf6', text: '#4c1d95', badge: '#7c3aed' }
                       : getSpaceColor(booking.espace_id);
                     const { col, total } = overlapLayout[booking.id] || { col: 0, total: 1 };
 
-                    // Largeur et position horizontale pour l'affichage côte à côte
-                    const GAP = 2; // px entre colonnes
+                    const GAP = 2;
                     const widthPct = (100 / total);
                     const leftPct = col * widthPct;
 
@@ -598,7 +615,7 @@ export default function AdminAgenda({ session }) {
                           position: 'absolute',
                           top: pos.top,
                           height: pos.height,
-                          minHeight: '34px',
+                          minHeight: '42px',
                           left: `calc(${leftPct}% + ${GAP}px)`,
                           width: `calc(${widthPct}% - ${GAP * 2}px)`,
                           backgroundColor: cancelled ? '#f1f5f9' : isPending ? '#fffbeb' : color.bg,
@@ -607,23 +624,19 @@ export default function AdminAgenda({ session }) {
                           borderTop: isPending ? '1px dashed #f59e0b' : undefined,
                           borderBottom: isPending ? '1px dashed #f59e0b' : undefined,
                           borderRadius: '8px',
-                          opacity: cancelled ? 0.55 : 1,
+                          opacity: cancelled ? 0.65 : 1,
                           boxShadow: cancelled ? 'none' : '0 1px 4px rgba(0,0,0,0.10)',
-                          padding: '3px 5px',
+                          padding: '4px 6px',
                           textAlign: 'left',
                           overflow: 'hidden',
                           cursor: 'pointer',
                           transition: 'opacity 0.15s, box-shadow 0.15s',
                           zIndex: active ? 2 : 1,
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.opacity = cancelled ? '0.7' : '0.88'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.15)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.opacity = cancelled ? '0.55' : '1'; e.currentTarget.style.boxShadow = cancelled ? 'none' : '0 1px 4px rgba(0,0,0,0.10)'; }}
                       >
-                        {/* Type / Nom */}
                         <p
-                          className="font-bold truncate leading-tight flex items-center gap-1"
+                          className="font-bold truncate leading-tight flex items-center gap-1 text-xs"
                           style={{
-                            fontSize: '11px',
                             color: cancelled ? '#64748b' : color.text,
                             textDecoration: cancelled ? 'line-through' : 'none',
                           }}
@@ -632,53 +645,35 @@ export default function AdminAgenda({ session }) {
                           <span className="truncate">{isFormation ? (booking.formation_titre || 'Formation') : (booking.espaces?.nom || '—')}</span>
                         </p>
 
-                        {/* Salle & Formateur / Membre */}
                         <p
-                          className="truncate leading-tight font-medium"
-                          style={{ fontSize: '10px', color: cancelled ? '#94a3b8' : color.text, opacity: 0.85 }}
+                          className="truncate leading-tight font-medium text-xs"
+                          style={{ color: cancelled ? '#64748b' : color.text, opacity: 0.9 }}
                         >
                           {isFormation
-                            ? `${booking.espaces?.nom || 'Salle'} · ${booking.profiles?.prenom || ''} ${booking.profiles?.nom || ''}`
-                            : `${booking.profiles?.prenom || ''} ${booking.profiles?.nom || ''}`}
+                            ? `${booking.espaces?.nom || 'Salle'} · ${personName}`
+                            : personName}
                         </p>
 
-                        {/* Heure */}
                         <p
-                          className="truncate leading-tight"
-                          style={{ fontSize: '10px', color: cancelled ? '#94a3b8' : color.text, opacity: 0.65 }}
+                          className="truncate leading-tight text-xs"
+                          style={{ color: cancelled ? '#64748b' : color.text, opacity: 0.78 }}
                         >
-                          {new Date(booking.date_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                          {' → '}
-                          {new Date(booking.date_fin).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {formatTime24h(booking.date_debut)} → {formatTime24h(booking.date_fin)}
                         </p>
 
-                        {/* Badges statut + live */}
+                        {/* Badges statut icône + texte */}
                         <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                          {isFormation && (
-                            <span
-                              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.2 font-bold bg-purple-100 text-purple-800"
-                              style={{ fontSize: '8.5px' }}
-                            >
-                              Formation
-                            </span>
-                          )}
                           {active && (
-                            <span
-                              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-bold"
-                              style={{ fontSize: '9px', background: '#dcfce7', color: '#15803d' }}
-                            >
-                              <span style={{ fontSize: '7px' }}>●</span> Live
+                            <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-bold text-xs bg-[#dcfce7] text-[#15803d]">
+                              <span>●</span> En cours
                             </span>
                           )}
                           <span
-                            className="inline-flex items-center rounded-full px-1.5 py-0.5 font-semibold truncate"
-                            style={{
-                              fontSize: '9px',
-                              background: cancelled ? '#e2e8f0' : isPending ? '#fef3c7' : color.border + '22',
-                              color: cancelled ? '#64748b' : isPending ? '#b45309' : color.border,
-                            }}
+                            className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-semibold text-xs truncate"
+                            style={{ background: statutMeta.bg, color: statutMeta.text }}
                           >
-                            {STATUT_LABELS[booking.statut] || booking.statut}
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{statutMeta.icon}</span>
+                            <span>{statutMeta.label}</span>
                           </span>
                         </div>
                       </button>
@@ -713,7 +708,7 @@ export default function AdminAgenda({ session }) {
             {/* Encart titre si formation */}
             {selectedBooking.is_formation && (
               <div className="rounded-2xl p-3 bg-purple-50 border border-purple-200 text-purple-950">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-purple-700">Formation réservée</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-purple-700">Formation réservée</p>
                 <p className="font-bold text-sm text-purple-900 mt-0.5">{selectedBooking.formation_titre || selectedBooking.titre}</p>
               </div>
             )}
@@ -733,11 +728,11 @@ export default function AdminAgenda({ session }) {
             </div>
             <div className="space-y-xs text-body-sm">
               <p>
-                <strong>{selectedBooking.is_formation ? 'Formateur :' : 'Membre :'}</strong>{' '}
-                {selectedBooking.profiles?.prenom} {selectedBooking.profiles?.nom}
+                <strong>{selectedBooking.is_formation ? 'Formateur :' : selectedBooking.guests && !selectedBooking.profiles ? 'Invité :' : 'Membre :'}</strong>{' '}
+                {(selectedBooking.profiles || selectedBooking.guests)?.prenom} {(selectedBooking.profiles || selectedBooking.guests)?.nom}
               </p>
-              {selectedBooking.profiles?.email && (
-                <p><strong>Email :</strong> {selectedBooking.profiles?.email}</p>
+              {(selectedBooking.profiles || selectedBooking.guests)?.email && (
+                <p><strong>Email :</strong> {(selectedBooking.profiles || selectedBooking.guests)?.email}</p>
               )}
               {selectedBooking.capacite_max && (
                 <p><strong>Capacité :</strong> {selectedBooking.capacite_max} participants max</p>
@@ -746,30 +741,41 @@ export default function AdminAgenda({ session }) {
                 <p>
                   <strong>Tarif :</strong>{' '}
                   {selectedBooking.prix_inscription > 0
-                    ? `${Number(selectedBooking.prix_inscription).toFixed(3)} DT`
+                    ? <Money amount={selectedBooking.prix_inscription} />
                     : <span className="text-slate-400 font-medium italic">Non défini</span>}
                 </p>
               )}
               <p>
                 <strong>Créneau :</strong>{' '}
-                {new Date(selectedBooking.date_debut).toLocaleString('fr-FR')}
-                {' → '}
-                {new Date(selectedBooking.date_fin).toLocaleTimeString('fr-FR', { timeStyle: 'short' })}
+                {formatDateDMY(selectedBooking.date_debut)} · {formatTime24h(selectedBooking.date_debut)} → {formatTime24h(selectedBooking.date_fin)}
               </p>
               <p>
                 <strong>Statut :</strong>{' '}
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-                  style={{
-                    background: selectedBooking.statut === 'confirmed' ? '#dcfce7' : selectedBooking.statut === 'pending' ? '#fef9c3' : '#f1f5f9',
-                    color: selectedBooking.statut === 'confirmed' ? '#15803d' : selectedBooking.statut === 'pending' ? '#92400e' : '#64748b',
-                  }}
-                >
-                  {STATUT_LABELS[selectedBooking.statut] || selectedBooking.statut}
-                </span>
+                {(() => {
+                  const cfg = STATUT_CONFIG[selectedBooking.statut] || { label: selectedBooking.statut, icon: 'info', bg: '#f1f5f9', text: '#475569' };
+                  return (
+                    <span
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold"
+                      style={{ background: cfg.bg, color: cfg.text }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{cfg.icon}</span>
+                      {cfg.label}
+                    </span>
+                  );
+                })()}
               </p>
             </div>
             <div className="flex flex-wrap gap-2 pt-2 border-t border-outline-variant/15">
+              {(selectedBooking.paiements || []).find((p) => p.statut === 'paid') && (
+                <button
+                  type="button"
+                  onClick={() => paymentApi.downloadReceipt((selectedBooking.paiements || []).find((p) => p.statut === 'paid').id)}
+                  className="border border-[#f95d00]/40 text-[#f95d00] hover:bg-orange-50 px-3 py-2 rounded-xl font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>receipt_long</span>
+                  Télécharger le reçu
+                </button>
+              )}
               {selectedBooking.statut === 'pending' && (
                 <button
                   type="button"

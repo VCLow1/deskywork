@@ -193,9 +193,9 @@ export const ADMIN_NAV = [
   {
     group: 'Pilotage',
     items: [
-      { id: 'admin_dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/admin/dashboard' },
+      { id: 'admin_dashboard', label: "Aujourd'hui", icon: 'dashboard', to: '/admin/dashboard' },
       { id: 'admin_rapports', label: 'Rapports', icon: 'analytics', to: '/admin/rapports' },
-      { id: 'admin_statistiques', label: 'Statistiques', icon: 'monitoring', to: '/admin/statistiques', badge: 'Premium' },
+      { id: 'admin_statistiques', label: 'Visibilité Marketplace', icon: 'monitoring', to: '/admin/statistiques', badge: 'Premium' },
     ],
   },
   {
@@ -225,7 +225,7 @@ export const ADMIN_NAV = [
       { id: 'admin_profile_coworking', label: 'Profil & Activité', icon: 'tune', to: '/admin/profile-coworking' },
       { id: 'admin_team', label: 'Équipe (Staff)', icon: 'badge', to: '/admin/team' },
       { id: 'admin_subscription', label: 'Mon Abonnement', icon: 'workspace_premium', to: '/admin/subscription' },
-      { id: 'admin_sites', label: 'Multi-sites', icon: 'location_city', to: '/admin/sites', locked: true, badge: 'Phase 2 / Option' },
+      { id: 'admin_sites', label: 'Multi-sites', icon: 'location_city', to: '/admin/sites', locked: true, badge: 'Bientôt' },
       { id: 'admin_cancellation', label: 'Politique annulation', icon: 'gavel', to: '/admin/cancellation-policy' },
     ],
   },
@@ -233,7 +233,7 @@ export const ADMIN_NAV = [
     group: 'Formations',
     items: [
       { id: 'admin_formations', label: 'Formations & Apprenants', icon: 'school', to: '/admin/formations' },
-      { id: 'admin_formateurs', label: 'Formateurs & Payouts', icon: 'groups', to: '/admin/formateurs' },
+      { id: 'admin_formateurs', label: 'Formateurs & Versements', icon: 'groups', to: '/admin/formateurs' },
     ],
   },
   {
@@ -250,7 +250,7 @@ export const STAFF_NAV = [
   {
     group: 'Opérations',
     items: [
-      { id: 'staff_dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/admin/dashboard' },
+      { id: 'staff_dashboard', label: "Aujourd'hui", icon: 'dashboard', to: '/admin/dashboard' },
       { id: 'staff_agenda', label: 'Agenda & Check-in', icon: 'calendar_month', to: '/admin/agenda' },
       { id: 'staff_reservations', label: 'Réservations', icon: 'event_available', to: '/admin/reservations' },
       { id: 'staff_clients', label: 'Membres & Clients', icon: 'people', to: '/admin/clients' },
@@ -290,7 +290,7 @@ export const FORMATEUR_NAV = [
   {
     group: 'Finance',
     items: [
-      { id: 'trainer_payments', label: 'Mes Rémunérations (Payouts)', icon: 'payments', to: '/trainer/payments' },
+      { id: 'trainer_payments', label: 'Mes Versements', icon: 'payments', to: '/trainer/payments' },
     ],
   },
   {

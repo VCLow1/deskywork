@@ -2,6 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
+import { formatDateDMY } from '../utils/format';
+import Money from '../components/common/Money';
 
 function Gauge({ label, used, max, icon }) {
   const unlimited = max === null || max === undefined || Number(max) >= 9999;
@@ -128,7 +130,7 @@ export default function AdminSubscription({ session }) {
                 })()}
               </div>
               <div className="text-right text-xs text-on-surface-variant">
-                <p>Échéance suivante : <strong className="text-primary">{data?.tenant?.prochaine_echeance ? new Date(data.tenant.prochaine_echeance).toLocaleDateString('fr-FR') : 'Mensuelle'}</strong></p>
+                <p>Échéance suivante : <strong className="text-[#100f0d]">{data?.tenant?.prochaine_echeance ? formatDateDMY(data.tenant.prochaine_echeance) : 'Mensuelle'}</strong></p>
                 <p>Statut établissement : <strong className="text-emerald-700 uppercase">{data?.tenant?.statut || 'actif'}</strong></p>
               </div>
             </div>
@@ -142,7 +144,7 @@ export default function AdminSubscription({ session }) {
 
           {/* Packs disponibles (fonctionnalités supérieures verrouillées si pack inférieur) */}
           <div>
-            <h2 className="font-sora font-bold text-lg text-primary mb-3">Comparer les packs & évoluer</h2>
+            <h2 className="font-sora font-bold text-lg text-[#100f0d] mb-3">Comparer les packs & évoluer</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {(data?.all_packs || []).map((p) => {
                 const rank = PACK_RANK[p.key] || 1;
@@ -161,11 +163,11 @@ export default function AdminSubscription({ session }) {
                   >
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-sora font-bold text-lg text-primary">{p.name}</h3>
+                        <h3 className="font-sora font-bold text-lg text-[#100f0d]">{p.name}</h3>
                         {isCurrent ? (
-                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">Actuel</span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">Actuel</span>
                         ) : isHigher ? (
-                          <span className="px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1">
+                          <span className="px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1">
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>lock</span>
                             Pack supérieur
                           </span>
@@ -173,12 +175,12 @@ export default function AdminSubscription({ session }) {
                       </div>
                       <div className="mb-4">
                         <p className="font-sora font-extrabold text-2xl text-[#f95d00]">
-                          {p.key === 'premium' ? '220,000' : p.key === 'standard' ? '150,000' : '90,000'} DT <span className="text-xs font-normal text-on-surface-variant">/ mois HT</span>
+                          <Money amount={p.key === 'premium' ? 220 : p.key === 'standard' ? 150 : 90} showTaxType="HT" /> <span className="text-xs font-normal text-on-surface-variant">/ mois</span>
                         </p>
                       </div>
                       <ul className="space-y-2 mb-5">
                         {(p.features || []).map((f, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs text-primary">
+                          <li key={idx} className="flex items-start gap-2 text-xs text-[#100f0d]">
                             <span className="material-symbols-outlined text-xs mt-0.5" style={{ fontSize: 16, color: isHigher ? '#64748b' : '#2fbe8f' }}>
                               {isHigher ? 'lock_open' : 'check_circle'}
                             </span>
@@ -206,11 +208,11 @@ export default function AdminSubscription({ session }) {
 
           {/* Factures DeskyWork */}
           <div className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15">
-            <h2 className="font-sora font-bold text-base text-primary mb-3">Factures DeskyWork</h2>
+            <h2 className="font-sora font-bold text-base text-[#100f0d] mb-3">Factures DeskyWork</h2>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-outline-variant/15 text-[11px] uppercase tracking-wider text-on-surface-variant">
+                  <tr className="border-b border-outline-variant/15 text-xs uppercase tracking-wider text-on-surface-variant">
                     <th className="py-3 px-4">N° Facture</th>
                     <th className="py-3 px-4">Période</th>
                     <th className="py-3 px-4">Pack</th>
@@ -222,12 +224,12 @@ export default function AdminSubscription({ session }) {
                 <tbody className="divide-y divide-outline-variant/10">
                   {invoices.map((inv) => (
                     <tr key={inv.id} className="hover:bg-surface-container-low/40">
-                      <td className="py-3 px-4 font-mono font-bold text-primary">{inv.numero}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-[#100f0d]">{inv.numero}</td>
                       <td className="py-3 px-4 capitalize">{inv.periode}</td>
                       <td className="py-3 px-4">{inv.pack}</td>
-                      <td className="py-3 px-4 font-bold">{Number(inv.montant || 0).toFixed(3)} DT</td>
+                      <td className="py-3 px-4 font-bold"><Money amount={inv.montant} /></td>
                       <td className="py-3 px-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                           inv.statut === 'Payée'
                             ? 'bg-emerald-100 text-emerald-800'
                             : inv.statut === 'En retard'

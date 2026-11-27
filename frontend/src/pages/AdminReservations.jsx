@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { bookingApi, memberApi } from '../services/api';
+import { bookingApi, memberApi, paymentApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import { formatDateDMY, formatTime24h, tunisLocalToISO } from '../utils/format';
 
 const STATUT_CONFIG = {
   pending: {
@@ -29,11 +30,11 @@ const STATUT_CONFIG = {
   },
   completed: {
     label: 'Terminée',
-    badgeClass: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700/50',
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-700/50',
     icon: 'task_alt',
   },
   no_show: {
-    label: 'Absent (no-show)',
+    label: 'No-show (Absent)',
     badgeClass: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700/50',
     icon: 'person_off',
   },
@@ -75,6 +76,7 @@ export default function AdminReservations({ session }) {
       date: today,
       heure_debut: '09:00',
       heure_fin: '12:00',
+      nb_participants: 1,
       notes: '',
     };
   });
@@ -384,7 +386,7 @@ export default function AdminReservations({ session }) {
               <option value="confirmed">Confirmée</option>
               <option value="refused">Refusée</option>
               <option value="completed">Terminée</option>
-              <option value="no_show">Absent (no-show)</option>
+              <option value="no_show">No-show (Absent)</option>
               <option value="waitlisted">En liste d'attente</option>
               <option value="cancelled">Annulée</option>
             </select>
@@ -411,8 +413,8 @@ export default function AdminReservations({ session }) {
         <div className="table-responsive-wrapper">
           <table className="w-full min-w-[700px] text-left border-collapse">
             <thead>
-              <tr className="bg-surface-container-low border-b border-outline-variant/10 text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                <th className="py-3 px-3.5">Membre</th>
+              <tr className="bg-surface-container-low border-b border-outline-variant/10 text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                <th className="py-3 px-3.5">Membre / Invité</th>
                 <th className="py-3 px-3">Espace réservé</th>
                 <th className="py-3 px-3">Date & Créneau</th>
                 <th className="py-3 px-2.5 text-center">Paiement</th>
@@ -443,39 +445,41 @@ export default function AdminReservations({ session }) {
                     icon: 'info',
                   };
 
+                  const isGuestBooking = Boolean(b.guests && !b.profiles);
                   const member = b.profiles || b.guests || {};
-                  const memberName = [member.prenom || b.guests?.prenom, member.nom || b.guests?.nom].filter(Boolean).join(' ') || 'Guest';
+                  const memberName = [member.prenom || b.guests?.prenom, member.nom || b.guests?.nom].filter(Boolean).join(' ') || 'Invité';
                   const memberEmail = member.email || b.guests?.email || 'Sans email';
                   const memberPhone = member.telephone || b.guests?.telephone || '';
-                  const memberRole = member.role === 'formateur' ? 'Formateur' : 'Membre';
-                  const startDate = new Date(b.date_debut);
-                  const endDate = new Date(b.date_fin);
+                  const memberRole = isGuestBooking ? 'Invité' : (member.role === 'formateur' ? 'Formateur' : 'Membre');
                   const isActing = actionId === b.id;
+                  const paidPayment = (b.paiements || []).find((p) => p.statut === 'paid');
+                  const hasPaidOrPartial = (b.paiements || []).some((p) => p.statut === 'paid' || p.statut === 'partial');
+                  const noShowBlocked = hasPaidOrPartial || Boolean(b.checked_in_at || b.no_show_blocked);
 
                   return (
                     <tr key={b.id} className="hover:bg-surface-container-low/40 transition-colors">
-                      {/* Membre */}
+                      {/* Membre / Invité */}
                       <td className="py-2.5 px-3.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-secondary/10 text-secondary font-bold flex items-center justify-center text-[11px] shrink-0">
-                            {(member.prenom || b.guests?.prenom || 'G')?.[0] || 'G'}{(member.nom || b.guests?.nom || '')?.[0] || ''}
+                          <div className="w-8 h-8 rounded-full bg-secondary/10 text-secondary font-bold flex items-center justify-center text-xs shrink-0">
+                            {(member.prenom || b.guests?.prenom || 'I')?.[0] || 'I'}{(member.nom || b.guests?.nom || '')?.[0] || ''}
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <p className="font-semibold text-primary truncate max-w-[150px] text-xs sm:text-sm">
                                 {memberName}
                               </p>
-                              <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 text-slate-700 px-1.5 py-0.2 text-[9px] font-semibold">
-                                <span className="material-symbols-outlined" style={{ fontSize: 10 }}>{memberRole === 'Formateur' ? 'school' : 'person'}</span>
+                              <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-xs font-semibold">
+                                <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{memberRole === 'Formateur' ? 'school' : 'person'}</span>
                                 {memberRole}
                               </span>
                             </div>
-                            <p className="text-[11px] text-on-surface-variant truncate max-w-[160px]">
+                            <p className="text-xs text-on-surface-variant truncate max-w-[175px]">
                               {memberEmail}
                             </p>
                             {memberPhone && (
-                              <p className="text-[10px] text-on-surface-variant/70 flex items-center gap-0.5 truncate">
-                                <span className="material-symbols-outlined" style={{ fontSize: 11 }}>call</span>
+                              <p className="text-xs text-on-surface-variant/80 flex items-center gap-0.5 truncate">
+                                <span className="material-symbols-outlined" style={{ fontSize: 12 }}>call</span>
                                 <span>{memberPhone}</span>
                               </p>
                             )}
@@ -487,38 +491,38 @@ export default function AdminReservations({ session }) {
                       <td className="py-2.5 px-3 font-semibold text-primary">
                         <div className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-secondary shrink-0" style={{ fontSize: 16 }}>meeting_room</span>
-                          <span className="truncate max-w-[130px] text-xs sm:text-sm" title={b.espaces?.nom}>{b.espaces?.nom || 'Espace inconnu'}</span>
+                          <span className="truncate max-w-[140px] text-xs sm:text-sm" title={b.espaces?.nom}>{b.espaces?.nom || 'Espace inconnu'}</span>
                         </div>
                       </td>
 
-                      {/* Date & Heures */}
+                      {/* Date & Heures strictes Africa/Tunis jj/mm/aaaa 24h */}
                       <td className="py-2.5 px-3 text-on-surface-variant whitespace-nowrap">
                         <span className="font-medium text-primary text-xs sm:text-sm">
-                          {startDate.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                          {formatDateDMY(b.date_debut)}
                         </span>
-                        <div className="text-[11px] text-on-surface-variant/80 mt-0.5 flex items-center gap-1">
+                        <div className="text-xs text-on-surface-variant/85 mt-0.5 flex items-center gap-1">
                           <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
                           <span>
-                            {startDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                            {formatTime24h(b.date_debut)}
                             {' → '}
-                            {endDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                            {formatTime24h(b.date_fin)}
                           </span>
                         </div>
                       </td>
 
-                      {/* Mode de Paiement (CDC v3.0 D1 : 100 % sur place) */}
+                      {/* Mode de Paiement */}
                       <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-xs">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-xs">
                           <span className="material-symbols-outlined text-amber-600" style={{ fontSize: 14 }}>storefront</span>
                           <span>
-                            {b.mode === 'check' ? 'Chèque (sur place)' : b.mode === 'bank_transfer' ? 'Virement (sur place)' : 'Sur place'}
+                            {b.mode === 'check' ? 'Chèque' : b.mode === 'bank_transfer' ? 'Virement bancaire' : 'Sur place'}
                           </span>
                         </span>
                       </td>
 
                       {/* Statut Badge */}
                       <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${cfg.badgeClass}`}>
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${cfg.badgeClass}`}>
                           <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{cfg.icon}</span>
                           <span>{cfg.label}</span>
                         </span>
@@ -559,22 +563,38 @@ export default function AdminReservations({ session }) {
                                 onClick={() => handleUpdateStatus(b.id, 'completed', null, 'Réservation marquée terminée.')}
                                 disabled={isActing}
                                 title="Marquer comme terminée"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sky-700 hover:bg-sky-50 border border-sky-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-emerald-700 hover:bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
                               >
                                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span>
                                 <span className="hidden sm:inline">Terminée</span>
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleUpdateStatus(b.id, 'no_show', 'Marquer ce client comme absent (no-show) ?', 'Statut Absent (no-show) enregistré.')}
-                                disabled={isActing}
-                                title="Marquer absent (no-show)"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-orange-700 hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                                onClick={() => !noShowBlocked && handleUpdateStatus(b.id, 'no_show', 'Marquer ce client en No-show (Absent) ?', 'Statut No-show (Absent) enregistré.')}
+                                disabled={isActing || noShowBlocked}
+                                title={
+                                  noShowBlocked
+                                    ? 'Impossible : un paiement ou un check-in validé existe déjà pour cette réservation.'
+                                    : 'Marquer No-show (Absent)'
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-orange-700 hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person_off</span>
-                                <span className="hidden sm:inline">Absent</span>
+                                <span className="hidden sm:inline">No-show (Absent)</span>
                               </button>
                             </>
+                          )}
+
+                          {paidPayment && (
+                            <button
+                              type="button"
+                              onClick={() => paymentApi.downloadReceipt(paidPayment.id)}
+                              title="Télécharger le reçu PDF"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[#f95d00] hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>receipt_long</span>
+                              <span className="hidden md:inline">Télécharger le reçu</span>
+                            </button>
                           )}
 
                           {['pending', 'confirmed', 'waitlisted'].includes(b.statut) && (
@@ -622,16 +642,24 @@ export default function AdminReservations({ session }) {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              setCreatingBooking(true);
               setError('');
+              const chosenEsp = espaces.find((sp) => sp.id === newBookingForm.espace_id);
+              const maxCap = Math.max(1, parseInt(chosenEsp?.capacite, 10) || 1);
+              const nbPart = parseInt(newBookingForm.nb_participants, 10);
+              if (chosenEsp?.type === 'meeting_room' && (!Number.isInteger(nbPart) || nbPart < 1 || nbPart > maxCap)) {
+                setError(`Pour une salle de réunion, le nombre de participants doit être compris entre 1 et ${maxCap}.`);
+                return;
+              }
+              setCreatingBooking(true);
               try {
-                const date_debut = new Date(`${newBookingForm.date}T${newBookingForm.heure_debut}:00`).toISOString();
-                const date_fin = new Date(`${newBookingForm.date}T${newBookingForm.heure_fin}:00`).toISOString();
+                const date_debut = tunisLocalToISO(`${newBookingForm.date}T${newBookingForm.heure_debut}`);
+                const date_fin = tunisLocalToISO(`${newBookingForm.date}T${newBookingForm.heure_fin}`);
                 await bookingApi.create({
                   user_id: newBookingForm.user_id,
                   espace_id: newBookingForm.espace_id,
                   date_debut,
                   date_fin,
+                  ...(chosenEsp?.type === 'meeting_room' ? { nb_participants: nbPart } : {}),
                   notes: newBookingForm.notes,
                 });
                 showToast('Réservation créée avec succès.');
@@ -678,7 +706,7 @@ export default function AdminReservations({ session }) {
               <select
                 required
                 value={newBookingForm.espace_id}
-                onChange={(e) => setNewBookingForm((p) => ({ ...p, espace_id: e.target.value }))}
+                onChange={(e) => setNewBookingForm((p) => ({ ...p, espace_id: e.target.value, nb_participants: 1 }))}
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               >
                 <option value="">— Sélectionner un espace —</option>
@@ -687,6 +715,27 @@ export default function AdminReservations({ session }) {
                 ))}
               </select>
             </div>
+            {(() => {
+              const sel = espaces.find((sp) => sp.id === newBookingForm.espace_id);
+              if (sel?.type !== 'meeting_room') return null;
+              const maxCap = Math.max(1, parseInt(sel.capacite, 10) || 1);
+              return (
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Nombre de participants * (1 à {maxCap} max)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    max={maxCap}
+                    value={newBookingForm.nb_participants}
+                    onChange={(e) => setNewBookingForm((p) => ({ ...p, nb_participants: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold"
+                  />
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="block text-xs font-semibold mb-1">Date *</label>

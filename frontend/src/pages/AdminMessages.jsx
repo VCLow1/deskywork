@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
+import { formatDateDMY, formatTime24h } from '../utils/format';
 import { io } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -18,7 +19,7 @@ function getRelativeTime(dateStr) {
   if (diffMin < 60) return `${diffMin} min`;
   if (diffH < 24) return `${diffH}h`;
   if (diffD < 7) return `${diffD}j`;
-  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return formatDateDMY(dateStr);
 }
 
 function getDateLabel(dateStr) {
@@ -29,7 +30,7 @@ function getDateLabel(dateStr) {
   yesterday.setDate(yesterday.getDate() - 1);
   if (date >= today) return "Aujourd'hui";
   if (date >= yesterday) return 'Hier';
-  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  return formatDateDMY(dateStr);
 }
 
 function ConversationItem({ conv, isActive, onClick }) {
@@ -68,15 +69,15 @@ function ConversationItem({ conv, isActive, onClick }) {
           <span className="text-sm font-semibold text-primary truncate" style={{ fontFamily: 'Sora, sans-serif' }}>
             {memberName}
           </span>
-          {lastMsg && <span className="text-[11px] text-on-surface-variant/50 shrink-0">{getRelativeTime(lastMsg.created_at)}</span>}
+          {lastMsg && <span className="text-xs text-on-surface-variant/50 shrink-0">{getRelativeTime(lastMsg.created_at)}</span>}
         </div>
         {isCommunity ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full mb-1">
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full mb-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             Canal Coworking
           </span>
         ) : (
-          conv.member?.email && <p className="text-[11px] text-on-surface-variant/40 truncate mb-0.5">{conv.member.email}</p>
+          conv.member?.email && <p className="text-xs text-on-surface-variant/40 truncate mb-0.5">{conv.member.email}</p>
         )}
         {lastMsg ? (
           <p className={`text-xs truncate ${conv.unread_count > 0 ? 'text-on-surface-variant font-semibold' : 'text-on-surface-variant/60'}`}>
@@ -87,7 +88,7 @@ function ConversationItem({ conv, isActive, onClick }) {
         )}
       </div>
       {conv.unread_count > 0 && (
-        <span className="flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-bold text-white shrink-0 mt-1" style={{ background: '#f95d00' }}>
+        <span className="flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-xs font-bold text-white shrink-0 mt-1" style={{ background: '#f95d00' }}>
           {conv.unread_count > 99 ? '99+' : conv.unread_count}
         </span>
       )}
@@ -103,18 +104,18 @@ function MessageBubble({ msg, isOwn, showSender }) {
     <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} mb-3`}>
       {showSender && !isOwn && (
         <div className="flex items-center gap-1.5 mb-1 ml-1">
-          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: isAdmin ? 'linear-gradient(135deg, #f95d00, #ff7a28)' : 'linear-gradient(135deg, #2FBE8F, #28a745)' }}>
+          <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: isAdmin ? 'linear-gradient(135deg, #f95d00, #ff7a28)' : 'linear-gradient(135deg, #2FBE8F, #28a745)' }}>
             {senderName.charAt(0).toUpperCase()}
           </div>
           <span className="text-xs font-semibold text-on-surface-variant">{senderName}</span>
-          {isAdmin && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-secondary/10 text-secondary">Staff</span>}
+          {isAdmin && <span className="text-xs font-bold px-1.5 py-0.5 rounded-full bg-secondary/10 text-secondary">Staff</span>}
         </div>
       )}
       <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isOwn ? 'text-white rounded-br-md' : 'bg-white border border-outline-variant/10 text-on-surface rounded-bl-md'}`} style={isOwn ? { background: 'linear-gradient(135deg, #f95d00, #ff7a28)', boxShadow: '0 4px 12px rgba(249,93,0,0.15)' } : { boxShadow: '0 2px 8px rgba(16,35,63,0.04)' }}>
         {msg.content}
       </div>
-      <span className="text-[10px] text-on-surface-variant/40 mt-0.5 mx-2">
-        {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+      <span className="text-xs text-on-surface-variant/40 mt-0.5 mx-2">
+        {formatTime24h(msg.created_at)}
         {msg._sending && ' ...'}
       </span>
     </div>
@@ -329,7 +330,7 @@ export default function AdminMessages({ session }) {
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" style={{ fontSize: 18 }}>search</span>
                 <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Rechercher..." className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-outline-variant/15 text-xs text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:border-secondary/40 transition-colors" />
               </div>
-              <div className="flex p-0.5 rounded-xl bg-surface-variant/30 gap-1 text-[11px] font-bold">
+              <div className="flex p-0.5 rounded-xl bg-surface-variant/30 gap-1 text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => setFilterTab('all')}
@@ -367,7 +368,7 @@ export default function AdminMessages({ session }) {
                 <ConversationItem key={conv.id} conv={{ ...conv, currentUserId: profile?.id }} isActive={activeConv?.id === conv.id} onClick={() => selectConversation(conv)} />
               ))}
             </div>
-            <div className="p-3 border-t border-outline-variant/10"><p className="text-[11px] text-on-surface-variant/40 text-center">{conversations.length} conversation{conversations.length !== 1 ? 's' : ''}</p></div>
+            <div className="p-3 border-t border-outline-variant/10"><p className="text-xs text-on-surface-variant/40 text-center">{conversations.length} conversation{conversations.length !== 1 ? 's' : ''}</p></div>
           </div>
           {/* Right */}
           <div className={`flex-1 flex flex-col bg-white ${showMobileChat ? 'flex' : 'hidden md:flex'}`}>
@@ -409,7 +410,7 @@ export default function AdminMessages({ session }) {
                           : (activeConv.member ? `${activeConv.member.prenom || ''} ${activeConv.member.nom || ''}`.trim() : activeConv.title)}
                       </p>
                       {(activeConv.type === 'group' || /canal/i.test(activeConv.title)) && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">
                           Canal Ouvert
                         </span>
                       )}
@@ -442,7 +443,7 @@ export default function AdminMessages({ session }) {
                         const showDate = !prevMsg || getDateLabel(msg.created_at) !== getDateLabel(prevMsg.created_at);
                         return (
                           <React.Fragment key={msg.id}>
-                            {showDate && <div className="flex items-center justify-center my-4"><span className="text-[11px] font-semibold text-on-surface-variant/40 px-3 py-1 rounded-full bg-white border border-outline-variant/10">{getDateLabel(msg.created_at)}</span></div>}
+                            {showDate && <div className="flex items-center justify-center my-4"><span className="text-xs font-semibold text-on-surface-variant/40 px-3 py-1 rounded-full bg-white border border-outline-variant/10">{getDateLabel(msg.created_at)}</span></div>}
                             <MessageBubble msg={msg} isOwn={isOwn} showSender={showSender} />
                           </React.Fragment>
                         );
@@ -482,7 +483,7 @@ export default function AdminMessages({ session }) {
               </div>
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-xs font-semibold text-on-surface-variant/60">Utilisateurs du coworking</p>
-                <span className="text-[11px] text-on-surface-variant/40">{filteredMembers.length} utilisateur{filteredMembers.length !== 1 ? 's' : ''}</span>
+                <span className="text-xs text-on-surface-variant/40">{filteredMembers.length} utilisateur{filteredMembers.length !== 1 ? 's' : ''}</span>
               </div>
               <div className="max-h-[300px] overflow-y-auto space-y-1">
                 {searchingMembers ? (
@@ -498,7 +499,7 @@ export default function AdminMessages({ session }) {
                       <p className="text-sm font-semibold text-primary truncate">{member.prenom || ''} {member.nom || ''}</p>
                       <p className="text-xs text-on-surface-variant/50 truncate">{member.email}</p>
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface-variant/30 text-on-surface-variant/60 shrink-0">{member.type_membre || 'Membre'}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-surface-variant/30 text-on-surface-variant/60 shrink-0">{member.type_membre || 'Membre'}</span>
                   </button>
                 ))}
               </div>
