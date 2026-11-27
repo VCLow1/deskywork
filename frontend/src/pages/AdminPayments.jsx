@@ -12,6 +12,7 @@ const ITEMS_PER_PAGE = 10;
 
 const STATUT_STYLES = {
   paid: 'bg-[#D1FAE5] text-[#065F46]',
+  partial: 'bg-[#FFEDD5] text-[#9A3412]',
   pending: 'bg-[#FEF3C7] text-[#92400E]',
   failed: 'bg-[#FEE2E2] text-[#991B1B]',
   refunded: 'bg-[#EDE9FE] text-[#5B21B6]',
@@ -19,6 +20,7 @@ const STATUT_STYLES = {
 
 const STATUT_LABELS = {
   paid: 'Payé',
+  partial: 'Partiel',
   pending: 'En attente',
   failed: 'Échoué',
   refunded: 'Remboursé',
@@ -27,6 +29,7 @@ const STATUT_LABELS = {
 const FILTER_TABS = [
   { key: 'all', label: 'Tous' },
   { key: 'paid', label: 'Payés' },
+  { key: 'partial', label: 'Partiels' },
   { key: 'pending', label: 'En attente' },
   { key: 'failed', label: 'Échoués' },
   { key: 'refunded', label: 'Remboursés' },
@@ -41,10 +44,12 @@ const MODE_LABELS = {
 
 function computePaymentStats(payments) {
   const stats = {
-    totalRevenue: payments.filter(p => p.statut === 'paid').reduce((sum, p) => sum + parseFloat(p.montant || 0), 0),
-    pendingAmount: payments.filter(p => p.statut === 'pending').reduce((sum, p) => sum + parseFloat(p.montant || 0), 0),
-    paidCount: payments.filter(p => p.statut === 'paid').length,
-    pendingCount: payments.filter(p => p.statut === 'pending').length,
+    totalRevenue: payments.filter((p) => p.statut === 'paid').reduce((sum, p) => sum + parseFloat(p.montant || 0), 0),
+    pendingAmount: payments
+      .filter((p) => p.statut === 'pending' || p.statut === 'partial')
+      .reduce((sum, p) => sum + parseFloat(p.reste_a_payer ?? p.montant ?? 0), 0),
+    paidCount: payments.filter((p) => p.statut === 'paid').length,
+    pendingCount: payments.filter((p) => p.statut === 'pending' || p.statut === 'partial').length,
   };
   const totalInvoices = stats.paidCount + stats.pendingCount;
   const recoveryRate = totalInvoices > 0 ? Math.round((stats.paidCount / totalInvoices) * 100) : 0;
@@ -83,8 +88,27 @@ export default function AdminPayments({ session }) {
   const [refundForm, setRefundForm] = useState({ montant_rembourse: '', motif_remboursement: '' });
   const [refunding, setRefunding] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
-  const [docForm, setDocForm] = useState({ type_doc: 'facture', numero: '', client_nom: '', montant_ht: '', tva_pct: 19, statut: 'emise' });
+  const [docForm, setDocForm] = useState({
+    type_doc: 'facture',
+    numero: '',
+    client_nom: '',
+    client_matricule_fiscal: '',
+    client_adresse: '',
+    montant_ht: '',
+    tva_pct: 19,
+    timbre_fiscal: 1,
+    statut: 'emise',
+  });
   const [savingDoc, setSavingDoc] = useState(false);
+  const [unpaidSummary, setUnpaidSummary] = useState({ items: [], buckets: {}, total_unpaid_amount: 0, rules: {} });
+  const [unpaidFilter, setUnpaidFilter] = useState('all');
+  const [myPerms, setMyPerms] = useState({ remboursements: true, factures_avoirs: true });
+  const [relanceTarget, setRelanceTarget] = useState(null);
+  const [relanceSending, setRelanceSending] = useState(false);
+  const [promesseTarget, setPromesseTarget] = useState(null);
+  const [promesseForm, setPromesseForm] = useState({ promesse_paiement_date: '', promesse_paiement_note: '' });
+  const [avoirTarget, setAvoirTarget] = useState(null);
+  const [avoirMotif, setAvoirMotif] = useState('');
 
   const filteredPayments = useMemo(() => {
     let result = [...payments];
@@ -129,17 +153,21 @@ export default function AdminPayments({ session }) {
     try {
       setErrorMsg('');
       if (!payments.length) setLoading(true);
-      const [profRes, data, mdRes, docsRes] = await Promise.all([
+      const [profRes, data, mdRes, docsRes, unpaidRes, permsRes] = await Promise.all([
         Promise.resolve(supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle()).catch(() => null),
         paymentApi.getAll().catch(() => ({ payments: [] })),
         paymentApi.getMontantDu().catch(() => ({ items: [], total_du: 0, count: 0 })),
         tenantAdminApi.getDevisFactures(includeArchivedDocs ? { include_archived: 'true' } : {}).catch(() => ({ items: [] })),
+        paymentApi.getUnpaidSummary().catch(() => ({ items: [], buckets: {}, total_unpaid_amount: 0, rules: {} })),
+        tenantAdminApi.getMyPermissions().catch(() => null),
       ]);
 
       if (profRes?.data) setProfile(profRes.data);
       if (data?.payments) setPayments(data.payments);
       if (mdRes?.items) setMontantDuData(mdRes);
       setDevisFactures(docsRes?.items || []);
+      if (unpaidRes?.items) setUnpaidSummary(unpaidRes);
+      if (permsRes?.permissions) setMyPerms(permsRes.permissions);
     } catch (err) {
       setErrorMsg(err.message || "Erreur de chargement");
     } finally {
@@ -182,25 +210,87 @@ export default function AdminPayments({ session }) {
     try {
       const ht = Number(docForm.montant_ht || 0);
       const tva = Number(docForm.tva_pct ?? 19);
-      const ttc = Math.round(ht * (1 + tva / 100) * 1000) / 1000;
-      const num = docForm.numero.trim() || `${docForm.type_doc === 'devis' ? 'DEV' : 'FAC'}-${new Date().getFullYear()}-${String(devisFactures.length + 1).padStart(3, '0')}`;
-      await tenantAdminApi.createDevisFacture({
-        type_doc: docForm.type_doc,
-        numero: num,
+      const timbre = docForm.type_doc === 'facture' ? Number(docForm.timbre_fiscal ?? 1) : 0;
+      const ttc = Math.round((ht * (1 + tva / 100) + timbre) * 1000) / 1000;
+      const payload = {
+        type: docForm.type_doc,
         client_nom: docForm.client_nom.trim(),
+        client_matricule_fiscal: docForm.client_matricule_fiscal?.trim() || null,
+        client_adresse: docForm.client_adresse?.trim() || null,
         montant_ht: ht,
         tva_pct: tva,
+        timbre_fiscal: timbre,
         montant_ttc: ttc,
         statut: docForm.statut,
-      });
+      };
+      if (docForm.numero.trim()) payload.numero = docForm.numero.trim();
+      await tenantAdminApi.createDevisFacture(payload);
       setShowDocModal(false);
-      setDocForm({ type_doc: 'facture', numero: '', client_nom: '', montant_ht: '', tva_pct: 19, statut: 'emise' });
-      setCollectFeedback('Document enregistré.');
+      setDocForm({
+        type_doc: 'facture',
+        numero: '',
+        client_nom: '',
+        client_matricule_fiscal: '',
+        client_adresse: '',
+        montant_ht: '',
+        tva_pct: 19,
+        timbre_fiscal: 1,
+        statut: 'emise',
+      });
+      setCollectFeedback('Document comptable enregistré.');
       await fetchProfileAndPayments();
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
       setSavingDoc(false);
+    }
+  };
+
+  const handleSendReminder = async (channel) => {
+    if (!relanceTarget) return;
+    setRelanceSending(true);
+    try {
+      const res = await paymentApi.sendReminder(relanceTarget.id, { channel });
+      setCollectFeedback(res.message || 'Relance enregistrée.');
+      if (channel === 'whatsapp' && relanceTarget.profiles?.telephone) {
+        const digits = String(relanceTarget.profiles.telephone).replace(/\D/g, '');
+        const text = encodeURIComponent(res.relance?.templates?.whatsapp || relanceTarget.templates?.whatsapp || '');
+        if (digits) window.open(`https://wa.me/${digits}?text=${text}`, '_blank', 'noopener,noreferrer');
+      }
+      setRelanceTarget(null);
+      await fetchProfileAndPayments();
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur lors de la relance.');
+    } finally {
+      setRelanceSending(false);
+    }
+  };
+
+  const handleConfirmPromise = async (e) => {
+    e.preventDefault();
+    if (!promesseTarget) return;
+    try {
+      const res = await paymentApi.recordPromise(promesseTarget.id, promesseForm);
+      setCollectFeedback(res.message || 'Promesse de paiement enregistrée.');
+      setPromesseTarget(null);
+      setPromesseForm({ promesse_paiement_date: '', promesse_paiement_note: '' });
+      await fetchProfileAndPayments();
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur lors de l’enregistrement de la promesse.');
+    }
+  };
+
+  const handleConfirmAvoir = async (e) => {
+    e.preventDefault();
+    if (!avoirTarget) return;
+    try {
+      const res = await tenantAdminApi.createAvoir(avoirTarget.id, { motif_avoir: avoirMotif });
+      setCollectFeedback(res.message || 'Avoir généré avec succès.');
+      setAvoirTarget(null);
+      setAvoirMotif('');
+      await fetchProfileAndPayments();
+    } catch (err) {
+      setErrorMsg(err.message || 'Erreur lors de la génération de l’avoir.');
     }
   };
 
@@ -557,7 +647,13 @@ export default function AdminPayments({ session }) {
                       <div className="text-xs">{formatDateDMY(dateP)}</div>
                     </td>
                     <td className="px-4 py-3 font-bold text-secondary">
-                      <Money amount={p.montant} />
+                      <div><Money amount={p.montant} /></div>
+                      {(p.statut === 'partial' || p.reste_a_payer > 0) && (
+                        <div className="text-xs font-medium text-on-surface-variant space-y-0.5 mt-0.5">
+                          <div>Payé : <Money amount={p.montant_paye || 0} /></div>
+                          <div className="text-amber-800 font-semibold">Reste : <Money amount={p.reste_a_payer ?? p.montant} /></div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className="bg-surface-container-high px-2 py-1 rounded-md text-xs font-medium">
@@ -579,7 +675,16 @@ export default function AdminPayments({ session }) {
                           <span className="material-symbols-outlined text-[16px]">download</span>
                           <span className="hidden sm:inline">Télécharger le reçu</span>
                         </button>
-                        {p.statut === 'paid' && (
+                        {(p.statut === 'pending' || p.statut === 'partial') && (
+                          <button
+                            type="button"
+                            onClick={() => openCollectModal({ ...p, montant_du: p.reste_a_payer ?? p.montant })}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-white bg-[#f95d00] hover:bg-[#e55500] rounded-lg transition-colors"
+                          >
+                            Encaisser
+                          </button>
+                        )}
+                        {p.statut === 'paid' && myPerms.remboursements !== false && profile?.role !== 'staff' && (
                           <button
                             type="button"
                             onClick={() => handleOpenRefund(p)}
@@ -652,34 +757,70 @@ export default function AdminPayments({ session }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/10">
-                  {devisFactures.map((d) => (
-                    <tr key={d.id} className={d.archived_at ? 'opacity-60' : ''}>
-                      <td className="py-2.5 px-3 font-mono font-bold text-primary">{d.numero}</td>
-                      <td className="py-2.5 px-3 capitalize">{d.type_doc}</td>
-                      <td className="py-2.5 px-3 font-semibold">{d.client_nom || '—'}</td>
-                      <td className="py-2.5 px-3"><Money amount={d.montant_ht} showTaxType="HT" /></td>
-                      <td className="py-2.5 px-3 font-bold text-[#f95d00]"><Money amount={d.montant_ttc} showTaxType="TTC" /></td>
-                      <td className="py-2.5 px-3 text-xs font-bold uppercase">{d.archived_at ? 'Archivé' : d.statut}</td>
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-2">
-                        {d.archived_at ? (
-                          <button type="button" onClick={async () => { await tenantAdminApi.restoreDevisFacture(d.id); await fetchProfileAndPayments(); }} className="text-emerald-700 font-semibold text-xs hover:underline">
-                            Restaurer
+                  {devisFactures.map((d) => {
+                    const docType = String(d.type || d.type_doc || 'facture').toLowerCase();
+                    const isLocked = Boolean(d.locked) || (docType === 'facture' && d.statut !== 'brouillon') || docType === 'avoir';
+                    return (
+                      <tr key={d.id} className={d.archived_at ? 'opacity-60' : ''}>
+                        <td className="py-2.5 px-3 font-mono font-bold text-primary">
+                          <div>{d.numero}</div>
+                          {isLocked && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md mt-0.5">
+                              Verrouillée
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 capitalize font-medium">
+                          {docType === 'avoir' ? 'Avoir' : docType === 'devis' ? 'Devis' : 'Facture'}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold">
+                          <div>{d.client_nom || '—'}</div>
+                          {d.client_matricule_fiscal && (
+                            <div className="text-xs text-on-surface-variant font-normal">MF : {d.client_matricule_fiscal}</div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3"><Money amount={d.montant_ht} showTaxType="HT" /></td>
+                        <td className="py-2.5 px-3 font-bold text-[#f95d00]"><Money amount={d.montant_ttc} showTaxType="TTC" /></td>
+                        <td className="py-2.5 px-3 text-xs font-bold uppercase">
+                          {d.archived_at ? 'Archivé' : (d.statut === 'avoir_emis' ? 'Avoir émis' : d.statut)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => tenantAdminApi.downloadDevisFacturePdf(d.id).catch((e) => setErrorMsg(e.message))}
+                            className="text-primary font-semibold text-xs hover:underline"
+                          >
+                            PDF
                           </button>
-                        ) : (
-                          <>
-                            {d.type_doc === 'devis' && (
-                              <button type="button" onClick={async () => { await tenantAdminApi.updateDevisFacture(d.id, { type_doc: 'facture', statut: 'emise' }); await fetchProfileAndPayments(); }} className="text-[#f95d00] font-semibold text-xs hover:underline">
-                                Convertir en facture
+                          {d.archived_at ? (
+                            myPerms.factures_avoirs !== false && profile?.role !== 'staff' && (
+                              <button type="button" onClick={async () => { await tenantAdminApi.restoreDevisFacture(d.id); await fetchProfileAndPayments(); }} className="text-emerald-700 font-semibold text-xs hover:underline">
+                                Restaurer
                               </button>
-                            )}
-                            <button type="button" onClick={async () => { if (window.confirm('Archiver ce document ?')) { await tenantAdminApi.archiveDevisFacture(d.id); await fetchProfileAndPayments(); } }} className="text-on-surface-variant font-semibold text-xs hover:underline">
-                              Archiver
-                            </button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                            )
+                          ) : (
+                            <>
+                              {docType === 'devis' && myPerms.factures_avoirs !== false && profile?.role !== 'staff' && (
+                                <button type="button" onClick={async () => { await tenantAdminApi.updateDevisFacture(d.id, { type: 'facture', statut: 'emise' }); await fetchProfileAndPayments(); }} className="text-[#f95d00] font-semibold text-xs hover:underline">
+                                  Convertir en facture
+                                </button>
+                              )}
+                              {docType === 'facture' && d.statut !== 'brouillon' && d.statut !== 'avoir_emis' && myPerms.factures_avoirs !== false && profile?.role !== 'staff' && (
+                                <button type="button" onClick={() => { setAvoirTarget(d); setAvoirMotif(''); }} className="text-red-700 font-semibold text-xs hover:underline">
+                                  Générer un avoir
+                                </button>
+                              )}
+                              {!isLocked && myPerms.factures_avoirs !== false && profile?.role !== 'staff' && (
+                                <button type="button" onClick={async () => { if (window.confirm('Archiver ce document ?')) { await tenantAdminApi.archiveDevisFacture(d.id); await fetchProfileAndPayments(); } }} className="text-on-surface-variant font-semibold text-xs hover:underline">
+                                  Archiver
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -688,6 +829,111 @@ export default function AdminPayments({ session }) {
       )}
 
       {/* Section Remboursements dédiée */}
+      {hubTab === 'impayes' && (
+        <div className="mt-6 bg-surface-container-lowest rounded-2xl border border-outline-variant/25 p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-sora font-bold text-base text-primary">Impayés et relances par ancienneté</h2>
+              <p className="text-xs text-on-surface-variant">
+                Suivi des créances (J+1, J+7, J+15), promesses de paiement et relances WhatsApp / E-mail.
+                {unpaidSummary.rules?.block_booking_on_overdue
+                  ? ` · Blocage automatique actif au-delà de ${unpaidSummary.rules.overdue_block_days || 7} jours (déblocable par Responsable).`
+                  : ' · Blocage automatique des réservations désactivé.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: 'all', label: `Tous (${(unpaidSummary.items || []).length})` },
+                { id: 'j1', label: `J+1 (${unpaidSummary.buckets?.j1_count || 0})` },
+                { id: 'j7', label: `J+7 (${unpaidSummary.buckets?.j7_count || 0})` },
+                { id: 'j15', label: `J+15 (${unpaidSummary.buckets?.j15_count || 0})` },
+              ].map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setUnpaidFilter(b.id)}
+                  style={unpaidFilter === b.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                    unpaidFilter === b.id ? '' : 'bg-surface-container-low text-on-surface-variant'
+                  }`}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {((unpaidSummary.items || []).filter((i) => unpaidFilter === 'all' || i.aging_bucket === unpaidFilter)).length === 0 ? (
+            <p className="text-sm text-on-surface-variant py-6 text-center">Aucun impayé dans cette tranche d&apos;ancienneté.</p>
+          ) : (
+            <div className="divide-y divide-outline-variant/15">
+              {(unpaidSummary.items || [])
+                .filter((i) => unpaidFilter === 'all' || i.aging_bucket === unpaidFilter)
+                .map((item) => {
+                  const clientName = item.profiles ? `${item.profiles.prenom || ''} ${item.profiles.nom || ''}`.trim() : 'Client';
+                  return (
+                    <div key={item.id} className="py-3.5 flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-sm text-primary">{clientName}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                            item.aging_bucket === 'j15'
+                              ? 'bg-red-100 text-red-800'
+                              : item.aging_bucket === 'j7'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-orange-100 text-[#9a3412]'
+                          }`}>
+                            {item.aging_label} ({item.days_overdue} j)
+                          </span>
+                          {item.promesse_paiement_date && (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                              Promesse de paiement : {formatDateDMY(item.promesse_paiement_date)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-on-surface-variant">
+                          Payé : <Money amount={item.montant_paye || 0} /> · Reste à payer : <strong className="text-[#f95d00]"><Money amount={item.reste_a_payer} /></strong>
+                          {item.reminder_count > 0 && ` · ${item.reminder_count} relance(s)`}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openCollectModal({ ...item, montant_du: item.reste_a_payer })}
+                          style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold"
+                        >
+                          Encaisser
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRelanceTarget(item)}
+                          className="px-3 py-1.5 rounded-xl border border-[#f95d00]/40 text-[#f95d00] text-xs font-bold hover:bg-orange-50"
+                        >
+                          Relancer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPromesseTarget(item);
+                            setPromesseForm({
+                              promesse_paiement_date: item.promesse_paiement_date || '',
+                              promesse_paiement_note: item.promesse_paiement_note || '',
+                            });
+                          }}
+                          className="px-3 py-1.5 rounded-xl border border-outline-variant/30 text-primary text-xs font-semibold hover:bg-surface-container-low"
+                        >
+                          Promesse
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+
       {hubTab === 'remboursements' && (
         <div className="mt-6 bg-surface-container-lowest rounded-2xl border border-outline-variant/25 p-5 shadow-sm">
           <h2 className="font-sora font-bold text-base text-primary mb-3">Historique des remboursements</h2>
@@ -701,6 +947,7 @@ export default function AdminPayments({ session }) {
                     <th className="py-2.5 px-3">Client</th>
                     <th className="py-2.5 px-3">Date</th>
                     <th className="py-2.5 px-3">Montant remboursé</th>
+                    <th className="py-2.5 px-3">Avoir généré</th>
                     <th className="py-2.5 px-3">Motif</th>
                   </tr>
                 </thead>
@@ -710,6 +957,7 @@ export default function AdminPayments({ session }) {
                       <td className="py-2.5 px-3 font-semibold">{p.profiles ? `${p.profiles.prenom || ''} ${p.profiles.nom || ''}`.trim() : 'Client'}</td>
                       <td className="py-2.5 px-3 text-xs">{formatDateDMY(p.refunded_at || p.updated_at || p.date_paiement || p.created_at)}</td>
                       <td className="py-2.5 px-3 font-bold text-red-700"><Money amount={p.montant_rembourse ?? p.montant} showTaxType="TTC" /></td>
+                      <td className="py-2.5 px-3 font-mono text-xs font-semibold text-primary">{p.avoir_numero || 'Avoir associé'}</td>
                       <td className="py-2.5 px-3 text-xs text-on-surface-variant">{p.motif_remboursement || p.reference_externe || '—'}</td>
                     </tr>
                   ))}
@@ -944,8 +1192,11 @@ export default function AdminPayments({ session }) {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Numéro</label>
-                <input type="text" value={docForm.numero} onChange={(e) => setDocForm((f) => ({ ...f, numero: e.target.value }))} placeholder="Auto si vide" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Statut</label>
+                <select value={docForm.statut} onChange={(e) => setDocForm((f) => ({ ...f, statut: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white">
+                  <option value="emise">Émise (verrouillée)</option>
+                  <option value="brouillon">Brouillon</option>
+                </select>
               </div>
             </div>
             <div>
@@ -954,12 +1205,26 @@ export default function AdminPayments({ session }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Matricule fiscal client</label>
+                <input type="text" value={docForm.client_matricule_fiscal} onChange={(e) => setDocForm((f) => ({ ...f, client_matricule_fiscal: e.target.value }))} placeholder="1234567/A/M/000" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Numéro (auto continu)</label>
+                <input type="text" value={docForm.numero} onChange={(e) => setDocForm((f) => ({ ...f, numero: e.target.value }))} placeholder="Auto continu si vide" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Montant HT (DT) *</label>
                 <input type="number" step="0.001" min="0" required value={docForm.montant_ht} onChange={(e) => setDocForm((f) => ({ ...f, montant_ht: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono font-bold" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">TVA (%)</label>
                 <input type="number" step="0.5" min="0" value={docForm.tva_pct} onChange={(e) => setDocForm((f) => ({ ...f, tva_pct: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Timbre (DT)</label>
+                <input type="number" step="0.001" min="0" value={docForm.timbre_fiscal} onChange={(e) => setDocForm((f) => ({ ...f, timbre_fiscal: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
               </div>
             </div>
             <div className="flex gap-2 pt-2">
@@ -969,6 +1234,84 @@ export default function AdminPayments({ session }) {
               <button type="submit" disabled={savingDoc} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold disabled:opacity-50">
                 {savingDoc ? 'Enregistrement…' : 'Enregistrer'}
               </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {relanceTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Relancer un impayé</h3>
+              <button type="button" onClick={() => setRelanceTarget(null)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50 text-xs space-y-2">
+              <p className="font-bold text-slate-800">Modèle WhatsApp prêt à envoyer :</p>
+              <p className="text-slate-700 whitespace-pre-line">{relanceTarget.templates?.whatsapp}</p>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50 text-xs space-y-1">
+              <p className="font-bold text-slate-800">Objet E-mail : {relanceTarget.templates?.emailSubject}</p>
+              <p className="text-slate-700 whitespace-pre-line">{relanceTarget.templates?.emailBody}</p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => handleSendReminder('whatsapp')} disabled={relanceSending} style={{ backgroundColor: '#059669', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold">
+                Envoyer par WhatsApp
+              </button>
+              <button type="button" onClick={() => handleSendReminder('email')} disabled={relanceSending} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold">
+                Envoyer par E-mail
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {promesseTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form onSubmit={handleConfirmPromise} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Enregistrer une promesse de paiement</h3>
+              <button type="button" onClick={() => setPromesseTarget(null)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Date d&apos;engagement *</label>
+              <input type="date" required value={promesseForm.promesse_paiement_date} onChange={(e) => setPromesseForm((f) => ({ ...f, promesse_paiement_date: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Note / Précision</label>
+              <input type="text" value={promesseForm.promesse_paiement_note} onChange={(e) => setPromesseForm((f) => ({ ...f, promesse_paiement_note: e.target.value }))} placeholder="Ex : Virement promis en fin de semaine" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setPromesseTarget(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700">Annuler</button>
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold">Valider la promesse</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {avoirTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form onSubmit={handleConfirmAvoir} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-sora text-lg font-bold text-slate-900">Générer un avoir sur {avoirTarget.numero}</h3>
+              <button type="button" onClick={() => setAvoirTarget(null)} className="text-slate-400 hover:text-slate-700">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-600">
+              Cette facture est verrouillée. L&apos;émission d&apos;un avoir comptable ({avoirTarget.numero}) annulera son solde avec numérotation continue.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Motif de l&apos;avoir *</label>
+              <input type="text" required minLength={3} value={avoirMotif} onChange={(e) => setAvoirMotif(e.target.value)} placeholder="Ex : Erreur de facturation / Annulation client" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={() => setAvoirTarget(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700">Annuler</button>
+              <button type="submit" style={{ backgroundColor: '#dc2626', color: '#ffffff' }} className="flex-1 rounded-xl py-2.5 text-xs font-bold">Émettre l&apos;avoir</button>
             </div>
           </form>
         </div>

@@ -16,6 +16,21 @@ const {
   hasFutureUntreatedReservations,
 } = require('../models/activityLogger');
 const { isStaffRole } = require('../models/kpisCalculator');
+const {
+  allocateDocumentNumber,
+  getTenantNumberingConfig,
+  updateNumberingSettings,
+} = require('../models/numbering');
+const {
+  PERMISSION_DEFINITIONS,
+  HARD_LOCKED_KEYS_FOR_STAFF,
+  mergeRoleMatrix,
+  evaluatePermission,
+} = require('../models/permissionsMatrix');
+const { loadTenantRolesMatrix } = require('../middleware/requirePermission');
+const { getUnpaidBlockingConfig } = require('../models/financeHelpers');
+const { generateInvoicePDF } = require('../utils/generateInvoicePdf');
+const { runLot4AutomationsForTenant } = require('../cron/lot4Automations');
 
 function isMissingSchemaError(err) {
   const msg = String(err?.message || '').toLowerCase();
@@ -92,6 +107,8 @@ async function updateTenant(req, res) {
     req.body.module_formations_actif !== undefined ||
     req.body.tva_defaut_pct !== undefined ||
     req.body.taxes_facturation !== undefined ||
+    req.body.finance_rules !== undefined ||
+    req.body.numbering !== undefined ||
     req.body.integrations !== undefined;
 
   let prevSettingsSnapshot = null;
@@ -106,7 +123,19 @@ async function updateTenant(req, res) {
     if (req.body.module_formations_actif !== undefined) nextSettings.module_formations_actif = Boolean(req.body.module_formations_actif);
     if (req.body.tva_defaut_pct !== undefined) nextSettings.tva_defaut_pct = Number(req.body.tva_defaut_pct) >= 0 ? Number(req.body.tva_defaut_pct) : DEFAULT_TVA_PCT;
     if (req.body.taxes_facturation && typeof req.body.taxes_facturation === 'object') {
-      nextSettings.taxes_facturation = { ...(curSettings.taxes_facturation || {}), ...req.body.taxes_facturation };
+      const tf = { ...(curSettings.taxes_facturation || {}), ...req.body.taxes_facturation };
+      const mf = tf.matricule_fiscal || tf.matricule_fiscale || '';
+      if (mf) {
+        tf.matricule_fiscal = mf;
+        tf.matricule_fiscale = mf;
+      }
+      nextSettings.taxes_facturation = tf;
+    }
+    if (req.body.finance_rules && typeof req.body.finance_rules === 'object') {
+      nextSettings.finance_rules = {
+        ...getUnpaidBlockingConfig(curSettings),
+        ...req.body.finance_rules,
+      };
     }
     if (req.body.integrations && typeof req.body.integrations === 'object') {
       nextSettings.integrations = { ...(curSettings.integrations || {}), ...req.body.integrations };
@@ -135,16 +164,29 @@ async function updateTenant(req, res) {
 
   if (error) return res.status(400).json({ error: error.message });
 
+  if (req.body.numbering && typeof req.body.numbering === 'object') {
+    try {
+      const updatedNumbering = await updateNumberingSettings(supabaseAdmin, req.tenantId, req.body.numbering);
+      data.settings = { ...(data.settings || {}), numbering: updatedNumbering };
+    } catch (_) {}
+  } else if (req.body.taxes_facturation?.prefixe_facture) {
+    try {
+      const updatedNumbering = await updateNumberingSettings(supabaseAdmin, req.tenantId, {
+        invoice_prefix: req.body.taxes_facturation.prefixe_facture,
+      });
+      data.settings = { ...(data.settings || {}), numbering: updatedNumbering };
+    } catch (_) {}
+  }
+
   await logActivity({
-    supabaseAdmin,
     tenantId: req.tenantId,
-    user: req.user,
+    req,
     action: 'modification',
-    entiteType: 'etablissement',
-    entiteId: req.tenantId,
-    details: 'Mise à jour des paramètres de l\'établissement',
-    avant: prevSettingsSnapshot,
-    apres: updates.settings || updates,
+    entityType: 'etablissement',
+    entityId: req.tenantId,
+    entityLabel: "Paramètres de l'établissement",
+    beforeData: prevSettingsSnapshot,
+    afterData: updates.settings || updates,
   });
 
   res.json({ tenant: data });
@@ -1350,23 +1392,26 @@ async function listStaff(req, res) {
 
     if (error) return res.status(500).json({ error: error.message });
 
+    const { matrix } = await loadTenantRolesMatrix(tid);
     const permMap = tenant?.settings?.staff_permissions || {};
-    const enriched = (staff || []).map((s) => ({
-      ...s,
-      permissions: {
-        agenda_checkin: true,
-        reservations: true,
-        encaissement_place: true,
-        membres_lecture: true,
-        tarifs_acces: false,
-        rapports_financiers: false,
-        equipe_gestion: false,
-        ...(permMap[s.id] || {}),
-        tarifs_acces: false,
-        rapports_financiers: false,
-        equipe_gestion: false,
-      },
-    }));
+    const enriched = (staff || []).map((s) => {
+      const staffMeta = permMap[s.id] || {};
+      const resolvedPerms = {};
+      for (const def of PERMISSION_DEFINITIONS) {
+        resolvedPerms[def.key] = evaluatePermission({
+          profileRole: s.role,
+          staffMeta,
+          rolesMatrix: matrix,
+          permKey: def.key,
+        });
+      }
+      return {
+        ...s,
+        custom_role_code: staffMeta.custom_role_code || 'staff',
+        custom_role_label: matrix[staffMeta.custom_role_code || 'staff']?.label || 'Réceptionniste',
+        permissions: resolvedPerms,
+      };
+    });
 
     res.json({
       staff: enriched,
@@ -1444,6 +1489,36 @@ async function createStaff(req, res) {
       return res.status(400).json({ error: profErr.message });
     }
 
+    if (req.tenantId && (req.body.custom_role_code || req.body.permissions)) {
+      const s = tenant?.settings || {};
+      const permMap = { ...(s.staff_permissions || {}) };
+      const customCode = req.body.custom_role_code || 'staff';
+      const sanitizedOverrides = {};
+      if (req.body.permissions && typeof req.body.permissions === 'object') {
+        for (const def of PERMISSION_DEFINITIONS) {
+          if (req.body.permissions[def.key] !== undefined) {
+            sanitizedOverrides[def.key] = customCode === 'staff' && HARD_LOCKED_KEYS_FOR_STAFF.has(def.key)
+              ? false
+              : Boolean(req.body.permissions[def.key]);
+          }
+        }
+      }
+      permMap[uid] = {
+        custom_role_code: customCode,
+        permissions: sanitizedOverrides,
+      };
+      await supabaseAdmin.from('tenants').update({ settings: { ...s, staff_permissions: permMap } }).eq('id', req.tenantId);
+    }
+
+    await logActivity({
+      tenantId: req.tenantId,
+      req,
+      action: 'creation',
+      entityType: 'staff',
+      entityId: uid,
+      entityLabel: `${prenom ? prenom + ' ' : ''}${nom} (${req.body.custom_role_code || 'Réceptionniste'})`,
+    });
+
     res.status(201).json({
       staff: profile,
       temporary_password: password ? undefined : tempPassword,
@@ -1476,21 +1551,41 @@ async function updateStaff(req, res) {
     const { data, error } = await supabaseAdmin.from('profiles').update(updates).eq('id', id).select().single();
     if (error) return res.status(400).json({ error: error.message });
 
-    if (req.body.permissions && typeof req.body.permissions === 'object') {
+    if ((req.body.permissions && typeof req.body.permissions === 'object') || req.body.custom_role_code !== undefined) {
       const { data: t } = await supabaseAdmin.from('tenants').select('settings').eq('id', req.tenantId).maybeSingle();
       const s = t?.settings || {};
       const permMap = { ...(s.staff_permissions || {}) };
+      const prevEntry = permMap[id] || {};
+      const customCode = req.body.custom_role_code !== undefined
+        ? (String(req.body.custom_role_code || '').trim() || 'staff')
+        : (prevEntry.custom_role_code || 'staff');
+
+      const nextPerms = { ...(prevEntry.permissions || {}) };
+      if (req.body.permissions && typeof req.body.permissions === 'object') {
+        for (const def of PERMISSION_DEFINITIONS) {
+          if (req.body.permissions[def.key] !== undefined) {
+            nextPerms[def.key] = customCode === 'staff' && HARD_LOCKED_KEYS_FOR_STAFF.has(def.key)
+              ? false
+              : Boolean(req.body.permissions[def.key]);
+          }
+        }
+      }
       permMap[id] = {
-        agenda_checkin: req.body.permissions.agenda_checkin !== false,
-        reservations: req.body.permissions.reservations !== false,
-        encaissement_place: req.body.permissions.encaissement_place !== false,
-        membres_lecture: req.body.permissions.membres_lecture !== false,
-        tarifs_acces: false,
-        rapports_financiers: false,
-        equipe_gestion: false,
+        custom_role_code: customCode,
+        permissions: nextPerms,
       };
       await supabaseAdmin.from('tenants').update({ settings: { ...s, staff_permissions: permMap } }).eq('id', req.tenantId);
     }
+
+    await logActivity({
+      tenantId: req.tenantId,
+      req,
+      action: 'modification',
+      entityType: 'staff',
+      entityId: id,
+      entityLabel: `${data.prenom || ''} ${data.nom || ''}`.trim(),
+      afterData: { custom_role_code: req.body.custom_role_code, statut_compte: updates.statut_compte },
+    });
 
     res.json({ staff: data });
   } catch (err) {
@@ -2185,12 +2280,602 @@ const incidentsHandlers = makeCollectionHandlers({
   requiredField: 'titre',
 });
 
-const devisFacturesHandlers = makeCollectionHandlers({
-  table: 'devis_factures',
-  settingsKey: 'devis_factures',
-  entiteType: 'devis_facture',
-  requiredField: 'numero',
-});
+// ── LOT 4 : Factures verrouillées, Devis, Avoirs & PDF conforme ────────────
+async function loadDevisFacturesStore(tid) {
+  const { data, error } = await supabaseAdmin
+    .from('devis_factures')
+    .select('*')
+    .eq('tenant_id', tid)
+    .order('created_at', { ascending: false });
+  if (!error && Array.isArray(data)) {
+    return { mode: 'sql', items: data };
+  }
+  const settings = await readTenantSettings(tid);
+  return { mode: 'settings', items: Array.isArray(settings.devis_factures) ? settings.devis_factures : [] };
+}
+
+function normalizeInvoiceLinesAndTotals(rawLines, body = {}, defaultTva = 19) {
+  const tvaPct = Number(body.tva_pct ?? body.tva_rate ?? defaultTva);
+  const safeTva = Number.isFinite(tvaPct) && tvaPct >= 0 ? tvaPct : 19;
+  const lines = Array.isArray(rawLines) && rawLines.length > 0
+    ? rawLines.map((l) => {
+        const q = Math.max(1, Number(l.quantite || 1));
+        const pu = roundMillime(l.prix_unitaire_ht ?? l.pu_ht ?? 0);
+        const totalHt = roundMillime(q * pu);
+        return {
+          designation: String(l.designation || 'Prestation coworking').trim(),
+          quantite: q,
+          prix_unitaire_ht: pu,
+          total_ht: totalHt,
+        };
+      })
+    : [
+        {
+          designation: String(body.notes || 'Prestation DESKYWORK').trim() || 'Prestation DESKYWORK',
+          quantite: 1,
+          prix_unitaire_ht: roundMillime(body.montant_ht || 0),
+          total_ht: roundMillime(body.montant_ht || 0),
+        },
+      ];
+
+  const montantHT = body.montant_ht != null && (!Array.isArray(rawLines) || rawLines.length === 0)
+    ? roundMillime(body.montant_ht)
+    : roundMillime(lines.reduce((s, l) => s + l.total_ht, 0));
+  const totalTVA = roundMillime(montantHT * (safeTva / 100));
+  const timbreFiscal = body.timbre_fiscal !== undefined
+    ? roundMillime(body.timbre_fiscal)
+    : ((body.type || 'facture') === 'facture' ? 1 : 0);
+  const montantTTC = roundMillime(montantHT + totalTVA + timbreFiscal);
+
+  return { lines, montantHT, tvaPct: safeTva, totalTVA, timbreFiscal, montantTTC };
+}
+
+const devisFacturesHandlers = {
+  list: async (req, res) => {
+    try {
+      const tid = req.tenantId;
+      const includeArchived = req.query.include_archived === 'true' || req.query.include_archived === '1';
+      const { items } = await loadDevisFacturesStore(tid);
+      const filtered = includeArchived ? items : items.filter((d) => !d.archived_at);
+      res.json({ items: filtered });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+
+  create: async (req, res) => {
+    try {
+      const tid = req.tenantId;
+      const body = req.body || {};
+      const type = ['devis', 'facture', 'avoir'].includes(body.type) ? body.type : 'facture';
+      const statut = body.statut || (type === 'facture' ? 'emise' : 'brouillon');
+      const clientNom = String(body.client_nom || '').trim();
+      if (!clientNom) {
+        return res.status(400).json({ error: 'Le nom du client est obligatoire.' });
+      }
+
+      const { data: tenantRow } = await supabaseAdmin.from('tenants').select('*').eq('id', tid).maybeSingle();
+      const settings = (tenantRow?.settings && typeof tenantRow.settings === 'object') ? tenantRow.settings : {};
+      const defaultTva = Number(settings.tva_defaut_pct ?? 19);
+      const docTypeCounter = type === 'avoir' ? 'credit_note' : type === 'devis' ? 'quote' : 'invoice';
+
+      // Numérotation continue et sans trou allouée UNIQUEMENT à l'émission (les brouillons gardent un numéro temporaire)
+      let numero = body.numero ? String(body.numero).trim() : '';
+      if (!numero) {
+        numero = statut === 'brouillon'
+          ? `BROUILLON-${Date.now().toString().slice(-6)}`
+          : await allocateDocumentNumber(supabaseAdmin, tid, docTypeCounter);
+      }
+
+      const calc = normalizeInvoiceLinesAndTotals(body.lignes, { ...body, type }, defaultTva);
+      const nowIso = new Date().toISOString();
+      const isLockedInvoice = type === 'facture' && statut !== 'brouillon';
+
+      const payload = {
+        tenant_id: tid,
+        type,
+        numero,
+        client_nom: clientNom,
+        client_email: body.client_email || null,
+        client_telephone: body.client_telephone || null,
+        client_matricule_fiscal: body.client_matricule_fiscal || null,
+        client_adresse: body.client_adresse || null,
+        user_id: body.user_id || null,
+        personne_id: body.personne_id || null,
+        reservation_id: body.reservation_id || null,
+        abonnement_id: body.abonnement_id || null,
+        paiement_id: body.paiement_id || null,
+        lignes: calc.lines,
+        montant_ht: calc.montantHT,
+        tva_pct: calc.tvaPct,
+        total_tva: calc.totalTVA,
+        timbre_fiscal: calc.timbreFiscal,
+        montant_ttc: calc.montantTTC,
+        statut,
+        date_emission: body.date_emission || nowIso.slice(0, 10),
+        date_echeance: body.date_echeance || null,
+        notes: body.notes || null,
+        mentions_legales: settings?.taxes_facturation?.mentions_legales || null,
+        emetteur_snapshot: {
+          nom: tenantRow?.nom || 'DeskyWork',
+          adresse: tenantRow?.adresse || '',
+          telephone: tenantRow?.telephone || '',
+          email: tenantRow?.email || '',
+          matricule_fiscal:
+            settings?.taxes_facturation?.matricule_fiscal ||
+            settings?.taxes_facturation?.matricule_fiscale ||
+            settings?.matricule_fiscal ||
+            '',
+        },
+        locked: isLockedInvoice,
+        locked_at: isLockedInvoice ? nowIso : null,
+        created_by: req.user?.id || null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+
+      const { data, error } = await supabaseAdmin.from('devis_factures').insert(payload).select().single();
+      let row = data;
+      if (error && isMissingSchemaError(error)) {
+        row = { id: crypto.randomUUID(), ...payload, archived_at: null };
+        const raw = Array.isArray(settings.devis_factures) ? settings.devis_factures : [];
+        await writeTenantSettingsKey(tid, 'devis_factures', [row, ...raw]);
+      } else if (error) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      await logActivity({
+        tenantId: tid,
+        req,
+        action: 'creation',
+        entityType: 'devis_facture',
+        entityId: row.id,
+        entityLabel: `${type.toUpperCase()} ${row.numero} (${calc.montantTTC.toFixed(3)} DT TTC)`,
+        afterData: row,
+      });
+
+      res.status(201).json({ item: row });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+
+  update: async (req, res) => {
+    try {
+      const tid = req.tenantId;
+      const { id } = req.params;
+      const { mode, items } = await loadDevisFacturesStore(tid);
+      const existing = items.find((d) => d.id === id);
+      if (!existing) return res.status(404).json({ error: 'Document introuvable.' });
+
+      const isFactureLocked =
+        existing.locked === true ||
+        (existing.type === 'facture' && existing.statut !== 'brouillon') ||
+        existing.type === 'avoir';
+
+      if (isFactureLocked) {
+        return res.status(409).json({
+          error: 'Une facture émise ou un avoir est définitivement verrouillé(e). Pour toute correction ou annulation, générez un avoir.',
+          code: 'INVOICE_LOCKED',
+        });
+      }
+
+      const body = req.body || {};
+      const nowIso = new Date().toISOString();
+      const nextStatut = body.statut || existing.statut;
+      let nextNumero = existing.numero;
+      let shouldLock = false;
+
+      // Émission d'un brouillon de facture -> attribuer un numéro continu et verrouiller
+      if (existing.type === 'facture' && nextStatut !== 'brouillon') {
+        if (!existing.numero || String(existing.numero).startsWith('BROUILLON-')) {
+          nextNumero = await allocateDocumentNumber(supabaseAdmin, tid, 'invoice');
+        }
+        shouldLock = true;
+      }
+
+      const calc = normalizeInvoiceLinesAndTotals(body.lignes ?? existing.lignes, {
+        ...existing,
+        ...body,
+        type: existing.type,
+      });
+
+      const patch = {
+        ...(body.client_nom !== undefined ? { client_nom: body.client_nom } : {}),
+        ...(body.client_email !== undefined ? { client_email: body.client_email } : {}),
+        ...(body.client_telephone !== undefined ? { client_telephone: body.client_telephone } : {}),
+        ...(body.client_matricule_fiscal !== undefined ? { client_matricule_fiscal: body.client_matricule_fiscal } : {}),
+        ...(body.client_adresse !== undefined ? { client_adresse: body.client_adresse } : {}),
+        ...(body.date_echeance !== undefined ? { date_echeance: body.date_echeance } : {}),
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        statut: nextStatut,
+        numero: nextNumero,
+        lignes: calc.lines,
+        montant_ht: calc.montantHT,
+        tva_pct: calc.tvaPct,
+        total_tva: calc.totalTVA,
+        timbre_fiscal: calc.timbreFiscal,
+        montant_ttc: calc.montantTTC,
+        locked: shouldLock,
+        locked_at: shouldLock ? nowIso : existing.locked_at,
+        updated_at: nowIso,
+      };
+
+      let row = null;
+      if (mode === 'sql') {
+        const { data, error } = await supabaseAdmin
+          .from('devis_factures')
+          .update(patch)
+          .eq('id', id)
+          .eq('tenant_id', tid)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        row = data;
+      } else {
+        const nextList = items.map((it) => (it.id === id ? { ...it, ...patch } : it));
+        row = nextList.find((it) => it.id === id);
+        await writeTenantSettingsKey(tid, 'devis_factures', nextList);
+      }
+
+      await logActivity({
+        tenantId: tid,
+        req,
+        action: 'modification',
+        entityType: 'devis_facture',
+        entityId: id,
+        entityLabel: `${row.type.toUpperCase()} ${row.numero}`,
+        beforeData: existing,
+        afterData: patch,
+      });
+
+      res.json({ item: row });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+
+  archive: async (req, res) => {
+    try {
+      const tid = req.tenantId;
+      const { id } = req.params;
+      const { mode, items } = await loadDevisFacturesStore(tid);
+      const existing = items.find((d) => d.id === id);
+      if (!existing) return res.status(404).json({ error: 'Document introuvable.' });
+
+      if (existing.type === 'facture' && existing.statut !== 'brouillon') {
+        return res.status(409).json({
+          error: 'Une facture émise ne peut pas être archivée directement : générez un avoir comptable.',
+          code: 'INVOICE_LOCKED',
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      const patch = { archived_at: nowIso, archived_by: req.user?.id || null, updated_at: nowIso };
+      let row = null;
+      if (mode === 'sql') {
+        const { data, error } = await supabaseAdmin.from('devis_factures').update(patch).eq('id', id).eq('tenant_id', tid).select().single();
+        if (error) return res.status(400).json({ error: error.message });
+        row = data;
+      } else {
+        const nextList = items.map((it) => (it.id === id ? { ...it, ...patch } : it));
+        row = nextList.find((it) => it.id === id);
+        await writeTenantSettingsKey(tid, 'devis_factures', nextList);
+      }
+
+      await logActivity({
+        tenantId: tid,
+        req,
+        action: 'archivage',
+        entityType: 'devis_facture',
+        entityId: id,
+        entityLabel: `${existing.numero}`,
+      });
+      res.json({ item: row, message: 'Document archivé.' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+
+  restore: async (req, res) => {
+    try {
+      const tid = req.tenantId;
+      const { id } = req.params;
+      const { mode, items } = await loadDevisFacturesStore(tid);
+      const nowIso = new Date().toISOString();
+      const patch = { archived_at: null, archived_by: null, updated_at: nowIso };
+      let row = null;
+      if (mode === 'sql') {
+        const { data, error } = await supabaseAdmin.from('devis_factures').update(patch).eq('id', id).eq('tenant_id', tid).select().single();
+        if (error) return res.status(400).json({ error: error.message });
+        row = data;
+      } else {
+        const nextList = items.map((it) => (it.id === id ? { ...it, ...patch } : it));
+        row = nextList.find((it) => it.id === id);
+        await writeTenantSettingsKey(tid, 'devis_factures', nextList);
+      }
+
+      await logActivity({
+        tenantId: tid,
+        req,
+        action: 'restauration',
+        entityType: 'devis_facture',
+        entityId: id,
+        entityLabel: row?.numero || id,
+      });
+      res.json({ item: row, message: 'Document restauré.' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+};
+
+// POST /api/admin/devis-factures/:id/avoir — Émission d'un Avoir pour corriger/annuler une facture verrouillée
+async function createAvoirFromFacture(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+    const { motif_avoir = '' } = req.body || {};
+    const cleanMotif = String(motif_avoir || '').trim();
+    if (cleanMotif.length < 3) {
+      return res.status(400).json({ error: 'Le motif de l’avoir est obligatoire (minimum 3 caractères).' });
+    }
+
+    const { mode, items } = await loadDevisFacturesStore(tid);
+    const parent = items.find((d) => d.id === id);
+    if (!parent) return res.status(404).json({ error: 'Facture introuvable.' });
+    if (parent.type !== 'facture') {
+      return res.status(400).json({ error: 'Un avoir ne peut être émis que sur une facture.' });
+    }
+    if (parent.statut === 'avoir_emis') {
+      return res.status(409).json({ error: 'Un avoir a déjà été émis pour cette facture.' });
+    }
+
+    const numeroAvoir = await allocateDocumentNumber(supabaseAdmin, tid, 'credit_note');
+    const nowIso = new Date().toISOString();
+    const negLines = (Array.isArray(parent.lignes) ? parent.lignes : []).map((l) => ({
+      designation: `Avoir — ${l.designation || parent.numero}`,
+      quantite: Number(l.quantite || 1),
+      prix_unitaire_ht: -Math.abs(Number(l.prix_unitaire_ht || parent.montant_ht || 0)),
+      total_ht: -Math.abs(Number(l.total_ht || parent.montant_ht || 0)),
+    }));
+    const mHT = -Math.abs(roundMillime(parent.montant_ht || 0));
+    const mTVA = -Math.abs(roundMillime(parent.total_tva ?? (Math.abs(mHT) * (Number(parent.tva_pct ?? 19) / 100))));
+    const mTimbre = -Math.abs(roundMillime(parent.timbre_fiscal || 0));
+    const mTTC = -Math.abs(roundMillime(parent.montant_ttc || 0));
+
+    const avoirPayload = {
+      tenant_id: tid,
+      type: 'avoir',
+      numero: numeroAvoir,
+      parent_facture_id: parent.id,
+      client_nom: parent.client_nom,
+      client_email: parent.client_email || null,
+      client_telephone: parent.client_telephone || null,
+      client_matricule_fiscal: parent.client_matricule_fiscal || null,
+      client_adresse: parent.client_adresse || null,
+      user_id: parent.user_id || null,
+      personne_id: parent.personne_id || null,
+      lignes: negLines.length > 0 ? negLines : [{ designation: `Avoir sur facture ${parent.numero}`, quantite: 1, prix_unitaire_ht: mHT, total_ht: mHT }],
+      montant_ht: mHT,
+      tva_pct: parent.tva_pct ?? 19,
+      total_tva: mTVA,
+      timbre_fiscal: mTimbre,
+      montant_ttc: mTTC,
+      statut: 'emise',
+      date_emission: nowIso.slice(0, 10),
+      motif_avoir: cleanMotif,
+      mentions_legales: parent.mentions_legales || null,
+      emetteur_snapshot: parent.emetteur_snapshot || {},
+      locked: true,
+      locked_at: nowIso,
+      created_by: req.user?.id || null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    let avoirRow = null;
+    if (mode === 'sql') {
+      const { data, error } = await supabaseAdmin.from('devis_factures').insert(avoirPayload).select().single();
+      if (error) return res.status(400).json({ error: error.message });
+      avoirRow = data;
+      await supabaseAdmin.from('devis_factures').update({ statut: 'avoir_emis', updated_at: nowIso }).eq('id', parent.id).eq('tenant_id', tid);
+    } else {
+      avoirRow = { id: crypto.randomUUID(), ...avoirPayload, archived_at: null };
+      const nextList = [
+        avoirRow,
+        ...items.map((it) => (it.id === parent.id ? { ...it, statut: 'avoir_emis', updated_at: nowIso } : it)),
+      ];
+      await writeTenantSettingsKey(tid, 'devis_factures', nextList);
+    }
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'creation_avoir',
+      entityType: 'devis_facture',
+      entityId: avoirRow.id,
+      entityLabel: `Avoir ${numeroAvoir} sur facture ${parent.numero}`,
+      afterData: { parent_facture: parent.numero, motif_avoir: cleanMotif, montant_ttc: mTTC },
+    });
+
+    res.status(201).json({ item: avoirRow, message: `Avoir ${numeroAvoir} généré avec succès.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/admin/devis-factures/:id/pdf — Téléchargement PDF sans modifier la numérotation continue
+async function downloadDevisFacturePdf(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+    const { items } = await loadDevisFacturesStore(tid);
+    const doc = items.find((d) => d.id === id);
+    if (!doc) return res.status(404).json({ error: 'Document introuvable.' });
+
+    const { data: tenantRow } = await supabaseAdmin.from('tenants').select('*').eq('id', tid).maybeSingle();
+    const pdfBuffer = await generateInvoicePDF(doc, tenantRow || {});
+    const safeName = `${doc.type || 'document'}-${doc.numero || doc.id}.pdf`.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ── LOT 4 : Permissions RBAC & Rôles personnalisables ──────────────────────
+async function getMyPermissions(req, res) {
+  try {
+    const profile = req.profile;
+    const tid = req.tenantId || profile?.tenant_id;
+    const { matrix, tenantSettings } = await loadTenantRolesMatrix(tid);
+    const staffMeta = tenantSettings?.staff_permissions?.[profile.id] || {};
+    const permissions = {};
+    for (const def of PERMISSION_DEFINITIONS) {
+      permissions[def.key] = evaluatePermission({
+        profileRole: profile.role,
+        staffMeta,
+        rolesMatrix: matrix,
+        permKey: def.key,
+      });
+    }
+    res.json({
+      role: profile.role,
+      custom_role_code: staffMeta.custom_role_code || (profile.role === 'staff' ? 'staff' : 'admin'),
+      permissions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function getRolesPermissions(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { matrix } = await loadTenantRolesMatrix(tid);
+    res.json({
+      definitions: PERMISSION_DEFINITIONS,
+      roles: Object.values(matrix),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function updateRolesPermissions(req, res) {
+  try {
+    const tid = req.tenantId;
+    const incomingRoles = Array.isArray(req.body?.roles)
+      ? req.body.roles
+      : Object.values(req.body?.roles || {});
+
+    const storedMap = {};
+    for (const r of incomingRoles) {
+      const code = String(r.code || r.role_code || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_');
+      if (!code || code === 'admin' || code === 'super_admin') continue;
+
+      const sanitizedPerms = {};
+      for (const def of PERMISSION_DEFINITIONS) {
+        const val = Boolean(r.permissions?.[def.key]);
+        sanitizedPerms[def.key] = code === 'staff' && HARD_LOCKED_KEYS_FOR_STAFF.has(def.key) ? false : val;
+      }
+
+      storedMap[code] = {
+        code,
+        label: String(r.label || r.role_label || code).trim(),
+        is_system: code === 'staff',
+        permissions: sanitizedPerms,
+      };
+
+      await supabaseAdmin
+        .from('roles_permissions')
+        .upsert(
+          {
+            tenant_id: tid,
+            role_code: code,
+            role_label: storedMap[code].label,
+            permissions: sanitizedPerms,
+            is_system: code === 'staff',
+            updated_by: req.user?.id || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'tenant_id,role_code' }
+        )
+        .then(() => {})
+        .catch(() => {});
+    }
+
+    const merged = mergeRoleMatrix(storedMap);
+    const curSettings = await readTenantSettings(tid);
+    await writeTenantSettingsKey(tid, 'roles_matrix', merged);
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'modification',
+      entityType: 'roles_permissions',
+      entityId: tid,
+      entityLabel: 'Matrice des rôles et permissions',
+      beforeData: curSettings.roles_matrix || null,
+      afterData: merged,
+    });
+
+    res.json({
+      definitions: PERMISSION_DEFINITIONS,
+      roles: Object.values(merged),
+      message: 'Matrice des permissions enregistrée.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/admin/personnes/merge — Fusion de doublons (verrouillée Responsable, 403 Staff)
+async function mergePersonnes(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { source_id, target_id } = req.body || {};
+    if (!source_id || !target_id || source_id === target_id) {
+      return res.status(400).json({ error: 'source_id et target_id distincts sont requis.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    await supabaseAdmin.from('reservations').update({ user_id: target_id }).eq('user_id', source_id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('paiements').update({ user_id: target_id }).eq('user_id', source_id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('abonnements').update({ user_id: target_id }).eq('user_id', source_id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('personnes').update({ archived_at: nowIso, archived_by: req.user?.id || null }).eq('id', source_id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'fusion_membres',
+      entityType: 'personne',
+      entityId: target_id,
+      entityLabel: `Fusion fiche ${source_id} -> ${target_id}`,
+    });
+
+    res.json({ message: 'Fiches fusionnées et doublon archivé.', target_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/admin/automations/run — Déclenchement manuel / opportuniste des automatisations P1 LOT 4
+async function triggerLot4Automations(req, res) {
+  try {
+    const result = await runLot4AutomationsForTenant(supabaseAdmin, req.tenantId, { force: Boolean(req.body?.force) });
+    res.json({ summary: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
 
 function normalizePhoneTNAdmin(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
@@ -2420,6 +3105,7 @@ module.exports = {
   createPersonne,
   archivePersonne,
   restorePersonne,
+  mergePersonnes,
   checkPersonnePhone,
   getPersonne360,
   updatePersonneNotes,
@@ -2428,6 +3114,9 @@ module.exports = {
   createStaff,
   updateStaff,
   deleteStaff,
+  getMyPermissions,
+  getRolesPermissions,
+  updateRolesPermissions,
   getSubscriptionOverview,
   requestPackUpgrade,
   downloadDeskyInvoicePdf,
@@ -2437,8 +3126,11 @@ module.exports = {
   getMarketplaceStats,
   getActivityLog,
   getPacks,
+  triggerLot4Automations,
   ressourcesHandlers,
   servicesHandlers,
   incidentsHandlers,
   devisFacturesHandlers,
+  createAvoirFromFacture,
+  downloadDevisFacturePdf,
 };

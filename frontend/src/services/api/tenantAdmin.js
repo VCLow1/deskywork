@@ -77,8 +77,33 @@ export const tenantAdminApi = {
   },
   createDevisFacture: (payload) => apiFetch('/api/admin/devis-factures', { method: 'POST', body: JSON.stringify(payload) }),
   updateDevisFacture: (id, payload) => apiFetch(`/api/admin/devis-factures/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  createAvoir: (id, payload) => apiFetch(`/api/admin/devis-factures/${id}/avoir`, { method: 'POST', body: JSON.stringify(payload) }),
+  downloadDevisFacturePdf: async (id) => {
+    const headers = await getAuthHeaders();
+    const res = await fetch(`${API_URL}/api/admin/devis-factures/${encodeURIComponent(id)}/pdf`, {
+      headers: { ...headers },
+    });
+    if (!res.ok) throw new Error('Impossible de télécharger le document PDF.');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `document-${id}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  },
   archiveDevisFacture: (id) => apiFetch(`/api/admin/devis-factures/${id}/archive`, { method: 'POST' }),
   restoreDevisFacture: (id) => apiFetch(`/api/admin/devis-factures/${id}/restore`, { method: 'POST' }),
+  getMyPermissions: () => apiFetch('/api/admin/my-permissions'),
+  getRolesPermissions: () => apiFetch('/api/admin/roles-permissions'),
+  updateRolesPermissions: (payload) =>
+    apiFetch('/api/admin/roles-permissions', { method: 'PUT', body: JSON.stringify(payload) }),
+  mergePersonnes: (payload) =>
+    apiFetch('/api/admin/personnes/merge', { method: 'POST', body: JSON.stringify(payload) }),
+  runAutomations: (payload = {}) =>
+    apiFetch('/api/admin/automations/run', { method: 'POST', body: JSON.stringify(payload) }),
   getStaff: () => apiFetch('/api/admin/staff'),
   createStaff: (payload) =>
     apiFetch('/api/admin/staff', { method: 'POST', body: JSON.stringify(payload) }),

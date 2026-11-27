@@ -101,6 +101,7 @@ export default function FloorPlanLiveView({ onToast, onError }) {
     return {
       free: items.filter((i) => i.live_status === 'free').length,
       occupied: items.filter((i) => i.live_status === 'occupied').length,
+      contract_occupied: items.filter((i) => i.live_status === 'contract_occupied').length,
       alert: items.filter((i) => ['ending_soon', 'overtime'].includes(i.live_status)).length,
       maintenance: items.filter((i) => i.live_status === 'maintenance').length,
       unavailable: items.filter((i) => i.live_status === 'unavailable').length,
@@ -202,9 +203,8 @@ export default function FloorPlanLiveView({ onToast, onError }) {
     }
   };
 
-  const cardCls = `rounded-2xl border p-4 ${
-    dark ? 'bg-[#1b1a18] border-white/10 text-white' : 'bg-white border-outline-variant/20 text-primary'
-  }`;
+  const cardCls = `rounded-2xl border p-4 ${dark ? 'bg-[#1b1a18] border-white/10 text-white' : 'bg-white border-outline-variant/20 text-primary'
+    }`;
 
   if (loading) {
     return (
@@ -247,9 +247,8 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                   setSelectedItemId(null);
                   loadLive(e.target.value, true);
                 }}
-                className={`px-3.5 py-2 rounded-xl border text-sm font-bold outline-none ${
-                  dark ? 'bg-[#141311] border-white/15 text-white' : 'bg-slate-50 border-outline-variant/30 text-primary'
-                }`}
+                className={`px-3.5 py-2 rounded-xl border text-sm font-bold outline-none ${dark ? 'bg-[#141311] border-white/15 text-white' : 'bg-slate-50 border-outline-variant/30 text-primary'
+                  }`}
               >
                 {plans.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -270,6 +269,11 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             <span className="px-2.5 py-1 rounded-full bg-red-500/15 text-red-700 dark:text-red-300">
               {counts.occupied} Occupé{counts.occupied > 1 ? 's' : ''}
             </span>
+            {counts.contract_occupied > 0 && (
+              <span className="px-2.5 py-1 rounded-full bg-[#f95d00]/15 text-[#c2410c] dark:text-[#fdba74]">
+                {counts.contract_occupied} Occupé - contrat
+              </span>
+            )}
             <span className="px-2.5 py-1 rounded-full bg-orange-500/15 text-orange-700 dark:text-orange-300">
               {counts.alert} Fin / Dépassement
             </span>
@@ -300,6 +304,7 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             { key: 'occupied', label: 'Occupé / Réservé' },
             { key: 'ending_soon', label: 'Bientôt terminée (-15 min)' },
             { key: 'overtime', label: 'En dépassement' },
+            { key: 'contract_occupied', label: 'Occupé - contrat' },
             { key: 'maintenance', label: 'En maintenance (hachuré)' },
             { key: 'unavailable', label: 'Non disponible' },
           ].map((lg) => {
@@ -332,9 +337,9 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                     ● {item.status_label}
                   </span>
                 </div>
-                {item.space_name && <p className="opacity-75 text-xs">{item.space_name}</p>}
+                {item.space_name && <p className="opacity-75 text-[11px]">{item.space_name}</p>}
                 {item.date_fin && (
-                  <p className="text-xs font-semibold">
+                  <p className="text-[11px] font-semibold">
                     Fin prévue : {formatTimeTunis(item.date_fin)}
                     {item.client_name ? ` · ${item.client_name}` : ''}
                   </p>
@@ -360,14 +365,14 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             <div className="space-y-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-secondary">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
                     {getItemTypeMeta(selectedItem.item_type).shortLabel}
                   </span>
                   <h4 className="font-sora font-bold text-lg">{selectedItem.label}</h4>
                   <p className="text-xs opacity-75">{selectedItem.space_name || 'Non associé à un espace'}</p>
                 </div>
                 <span
-                  className="px-2.5 py-1 rounded-full text-xs font-bold shrink-0"
+                  className="px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0"
                   style={{
                     backgroundColor: palette.statuses[selectedItem.live_status || 'free']?.dot + '22',
                     color: palette.statuses[selectedItem.live_status || 'free']?.dot,
@@ -376,6 +381,20 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                   {selectedItem.status_label}
                 </span>
               </div>
+
+              {selectedItem.live_status === 'contract_occupied' && (
+                <div className="p-3 rounded-xl bg-[#f95d00]/10 border border-[#f95d00]/30 text-xs space-y-1.5">
+                  <p className="font-bold text-[#9a3412] dark:text-[#fed7aa]">Occupé - contrat</p>
+                  {selectedItem.occupied_by && (
+                    <p className="font-semibold text-primary">Titulaire : {selectedItem.occupied_by}</p>
+                  )}
+                  {selectedItem.contract_end_date && (
+                    <p className="opacity-85">
+                      Fin de contrat : {new Date(selectedItem.contract_end_date).toLocaleDateString('fr-FR', { timeZone: 'Africa/Tunis' })}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {selectedItem.live_status === 'free' && (
                 <div className="space-y-3 text-xs">
@@ -431,13 +450,12 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                     const t = computeLiveTiming(selectedItem);
                     return (
                       <div
-                        className={`p-3.5 rounded-xl border text-center ${
-                          t.isOvertime
+                        className={`p-3.5 rounded-xl border text-center ${t.isOvertime
                             ? 'bg-orange-500/15 border-orange-500/40 text-orange-700 dark:text-orange-200'
                             : 'bg-slate-500/10 border-outline-variant/20'
-                        }`}
+                          }`}
                       >
-                        <p className="text-xs font-bold uppercase tracking-wider opacity-75">
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-75">
                           {t.isOvertime ? 'En dépassement depuis' : 'Temps restant (Minuteur live)'}
                         </p>
                         <p className="font-sora text-2xl font-extrabold mt-1">
@@ -500,9 +518,8 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                           <select
                             value={collectMode}
                             onChange={(e) => setCollectMode(e.target.value)}
-                            className={`px-2.5 py-2 rounded-lg border text-xs font-semibold ${
-                              dark ? 'bg-[#141311] border-white/15 text-white' : 'bg-white border-amber-300 text-slate-800'
-                            }`}
+                            className={`px-2.5 py-2 rounded-lg border text-xs font-semibold ${dark ? 'bg-[#141311] border-white/15 text-white' : 'bg-white border-amber-300 text-slate-800'
+                              }`}
                           >
                             <option value="cash">Espèces</option>
                             <option value="cheque">Chèque</option>

@@ -372,6 +372,7 @@ function enrichPlansForClientOrLive({
   plans,
   espacesById,
   unites = [],
+  contractByUniteId = new Map(),
   reservations,
   sessions,
   formations,
@@ -564,6 +565,23 @@ function enrichPlansForClientOrLive({
           live_status: 'unavailable',
           status_label: 'Non disponible',
           bookable: false,
+        };
+      }
+
+      const activeContract = linkedUnite ? contractByUniteId.get(linkedUnite.id) : null;
+      if (activeContract) {
+        return {
+          ...baseFields,
+          live_status: 'contract_occupied',
+          status_label: 'Occupé - contrat',
+          bookable: false,
+          contract_subscription_id: activeContract.id,
+          ...(isAdmin
+            ? {
+                occupied_by: activeContract.member_name || 'Contrat longue durée',
+                contract_end_date: activeContract.date_fin || null,
+              }
+            : {}),
         };
       }
 
@@ -1023,10 +1041,35 @@ async function getLiveFloorPlanStatus(req, res) {
       ? Number(tRow.settings.tarif_depassement_heure)
       : (tRow?.tarif_depassement_heure != null ? Number(tRow.tarif_depassement_heure) : null);
 
+    // Contrats longue durée (bureaux privés liés à un abonnement actif) -> « Occupé - contrat »
+    const contractByUniteId = new Map();
+    try {
+      const todayYmd = tunisNow.date;
+      const archivedSubIds = new Set(Array.isArray(tRow?.settings?.archived_subscriptions) ? tRow.settings.archived_subscriptions : []);
+      const { data: contractSubs } = await supabaseAdmin
+        .from('abonnements')
+        .select('*, profiles(nom, prenom)')
+        .eq('tenant_id', tenantId)
+        .in('statut', ['active', 'actif', 'a_renouveler'])
+        .gte('date_fin', todayYmd);
+      const subMetaMap = tRow?.settings?.subscription_meta || {};
+      for (const s of contractSubs || []) {
+        if (s.archived_at || archivedSubIds.has(s.id)) continue;
+        const uId = s.unite_id || subMetaMap[s.id]?.unite_id || null;
+        if (!uId) continue;
+        contractByUniteId.set(uId, {
+          id: s.id,
+          date_fin: s.date_fin,
+          member_name: s.profiles ? `${s.profiles.prenom || ''} ${s.profiles.nom || ''}`.trim() : 'Contrat actif',
+        });
+      }
+    } catch (_) {}
+
     const enriched = enrichPlansForClientOrLive({
       plans,
       espacesById,
       unites,
+      contractByUniteId,
       reservations,
       sessions,
       formations,
@@ -1047,6 +1090,7 @@ async function getLiveFloorPlanStatus(req, res) {
     const counts = {
       free: allItems.filter((i) => i.live_status === 'free').length,
       occupied: allItems.filter((i) => i.live_status === 'occupied').length,
+      contract_occupied: allItems.filter((i) => i.live_status === 'contract_occupied').length,
       ending_soon: allItems.filter((i) => i.live_status === 'ending_soon').length,
       overtime: allItems.filter((i) => i.live_status === 'overtime').length,
       maintenance: allItems.filter((i) => i.live_status === 'maintenance').length,
@@ -1083,17 +1127,33 @@ async function getPublicFloorPlans(req, res) {
     const slot = tunisSlotToUtcRange(date, start, end);
     const tunisNow = nowTunisParts();
 
-    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
+    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }, publicContractsRes] = await Promise.all([
       loadTenantPlansWithItems(tenant.id, { onlyActive: true }),
       loadTenantEspacesMap(tenant.id),
       loadSpaceUnitsForTenant(supabaseAdmin, tenant.id),
       loadTenantReservationsAndSessions(tenant.id, slot.startDate.toISOString(), slot.endDate.toISOString()),
+      supabaseAdmin
+        .from('abonnements')
+        .select('*')
+        .eq('tenant_id', tenant.id)
+        .in('statut', ['active', 'actif', 'a_renouveler'])
+        .gte('date_fin', tunisNow.date),
     ]);
+
+    const contractByUniteId = new Map();
+    const archivedPublicSubs = new Set(Array.isArray(tenant.settings?.archived_subscriptions) ? tenant.settings.archived_subscriptions : []);
+    const subMetaMap = tenant.settings?.subscription_meta || {};
+    for (const s of publicContractsRes?.data || []) {
+      if (s.archived_at || archivedPublicSubs.has(s.id)) continue;
+      const uId = s.unite_id || subMetaMap[s.id]?.unite_id || null;
+      if (uId) contractByUniteId.set(uId, { id: s.id, date_fin: s.date_fin });
+    }
 
     const enriched = enrichPlansForClientOrLive({
       plans,
       espacesById,
       unites,
+      contractByUniteId,
       reservations,
       sessions,
       formations,

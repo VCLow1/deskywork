@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
+const { requirePermission } = require('../middleware/requirePermission');
 const ctrl = require('../controllers/kpisController');
 const reportCtrl = require('../controllers/reportController');
 
@@ -19,8 +20,8 @@ router.get('/admin/kpis', authenticate, requireRoles('super_admin', 'admin', 'st
 router.get('/admin/kpis/revenue-chart', authenticate, requireRoles('super_admin', 'admin', 'staff'), cacheControl(30), ctrl.getRevenueChart);
 
 // Rapport intelligent (IA embarquée) & Rapports détaillés + Export PDF (CDC v3.0 — Admin uniquement pour rapports financiers)
-router.get('/admin/report', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.getAdminReport);
-router.get('/admin/reports/detailed', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.getDetailedReport);
-router.get('/admin/reports/pdf', authenticate, requireRoles('super_admin', 'admin'), reportCtrl.downloadAdminReportPdf);
+router.get('/admin/report', authenticate, requirePermission('rapports_financiers'), reportCtrl.getAdminReport);
+router.get('/admin/reports/detailed', authenticate, requirePermission('rapports_financiers'), reportCtrl.getDetailedReport);
+router.get('/admin/reports/pdf', authenticate, requirePermission('rapports_financiers'), reportCtrl.downloadAdminReportPdf);
 
 module.exports = router;

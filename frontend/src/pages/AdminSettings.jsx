@@ -57,6 +57,15 @@ export default function AdminSettings({ session }) {
     matricule_fiscale: '',
     prefixe_facture: 'FAC',
     mentions_legales: 'TVA 19% applicable selon la législation tunisienne en vigueur.',
+    receipt_prefix: 'REC',
+    quote_prefix: 'DEV',
+    credit_note_prefix: 'AV',
+    receipt_next: 1,
+    invoice_next: 1,
+    quote_next: 1,
+    credit_note_next: 1,
+    block_booking_on_overdue: false,
+    overdue_block_days: 7,
   });
 
   const [alertSettings, setAlertSettings] = useState({ ...DEFAULT_ALERTS });
@@ -110,9 +119,18 @@ export default function AdminSettings({ session }) {
       setTaxesForm({
         tva_defaut_pct: Number(s.tva_defaut_pct ?? 19),
         timbre_fiscal: Number(s.taxes_facturation?.timbre_fiscal ?? 1.000),
-        matricule_fiscale: s.taxes_facturation?.matricule_fiscale || '',
-        prefixe_facture: s.taxes_facturation?.prefixe_facture || 'FAC',
+        matricule_fiscale: s.taxes_facturation?.matricule_fiscale || s.taxes_facturation?.matricule_fiscal || '',
+        prefixe_facture: s.numbering?.invoice_prefix || s.taxes_facturation?.prefixe_facture || 'FAC',
         mentions_legales: s.taxes_facturation?.mentions_legales || 'TVA 19% applicable selon la législation tunisienne en vigueur.',
+        receipt_prefix: s.numbering?.receipt_prefix || 'REC',
+        quote_prefix: s.numbering?.quote_prefix || 'DEV',
+        credit_note_prefix: s.numbering?.credit_note_prefix || 'AV',
+        receipt_next: Number(s.numbering?.receipt_next ?? 1),
+        invoice_next: Number(s.numbering?.invoice_next ?? 1),
+        quote_next: Number(s.numbering?.quote_next ?? 1),
+        credit_note_next: Number(s.numbering?.credit_note_next ?? 1),
+        block_booking_on_overdue: Boolean(s.finance_rules?.block_booking_on_overdue),
+        overdue_block_days: Number(s.finance_rules?.overdue_block_days ?? 7),
       });
       if (notifRes?.alert_settings) {
         setAlertSettings({ ...DEFAULT_ALERTS, ...notifRes.alert_settings });
@@ -195,8 +213,23 @@ export default function AdminSettings({ session }) {
         taxes_facturation: {
           timbre_fiscal: Number(taxesForm.timbre_fiscal),
           matricule_fiscale: taxesForm.matricule_fiscale.trim(),
+          matricule_fiscal: taxesForm.matricule_fiscale.trim(),
           prefixe_facture: taxesForm.prefixe_facture.trim() || 'FAC',
           mentions_legales: taxesForm.mentions_legales.trim(),
+        },
+        numbering: {
+          receipt_prefix: (taxesForm.receipt_prefix || 'REC').trim().toUpperCase(),
+          invoice_prefix: (taxesForm.prefixe_facture || 'FAC').trim().toUpperCase(),
+          quote_prefix: (taxesForm.quote_prefix || 'DEV').trim().toUpperCase(),
+          credit_note_prefix: (taxesForm.credit_note_prefix || 'AV').trim().toUpperCase(),
+          receipt_next: Math.max(1, Number(taxesForm.receipt_next || 1)),
+          invoice_next: Math.max(1, Number(taxesForm.invoice_next || 1)),
+          quote_next: Math.max(1, Number(taxesForm.quote_next || 1)),
+          credit_note_next: Math.max(1, Number(taxesForm.credit_note_next || 1)),
+        },
+        finance_rules: {
+          block_booking_on_overdue: Boolean(taxesForm.block_booking_on_overdue),
+          overdue_block_days: Math.max(1, Number(taxesForm.overdue_block_days || 7)),
         },
       });
       showToast('Paramètres fiscaux et TVA enregistrés.');
@@ -367,6 +400,58 @@ export default function AdminSettings({ session }) {
                 <textarea rows={2} value={taxesForm.mentions_legales} onChange={(e) => setTaxesForm((f) => ({ ...f, mentions_legales: e.target.value }))} className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/30 text-sm" />
               </div>
             </div>
+
+            <div className="pt-4 border-t border-outline-variant/15 space-y-3">
+              <h3 className="font-sora font-bold text-base text-primary">Numérotation continue et sans trou (Reçus, Factures, Devis, Avoirs)</h3>
+              <p className="text-xs text-on-surface-variant">
+                Les numéros sont générés uniquement au moment de l&apos;encaissement ou de l&apos;émission comptable (jamais au téléchargement PDF).
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Préfixe Reçus</label>
+                  <input value={taxesForm.receipt_prefix} onChange={(e) => setTaxesForm((f) => ({ ...f, receipt_prefix: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-outline-variant/30 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Compteur Reçus (min)</label>
+                  <input type="number" min="1" value={taxesForm.receipt_next} onChange={(e) => setTaxesForm((f) => ({ ...f, receipt_next: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-outline-variant/30 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Compteur Factures (min)</label>
+                  <input type="number" min="1" value={taxesForm.invoice_next} onChange={(e) => setTaxesForm((f) => ({ ...f, invoice_next: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-outline-variant/30 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Préfixe Avoirs</label>
+                  <input value={taxesForm.credit_note_prefix} onChange={(e) => setTaxesForm((f) => ({ ...f, credit_note_prefix: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-outline-variant/30 text-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-outline-variant/15 space-y-3">
+              <h3 className="font-sora font-bold text-base text-primary">Règle de blocage sur impayés</h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-amber-200 bg-amber-50/40">
+                <label className="inline-flex items-center gap-2.5 text-sm font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={taxesForm.block_booking_on_overdue}
+                    onChange={(e) => setTaxesForm((f) => ({ ...f, block_booking_on_overdue: e.target.checked }))}
+                    className="w-4 h-4 accent-[#f95d00]"
+                  />
+                  <span>Bloquer les nouvelles réservations en cas d&apos;impayé dépassant le seuil (déblocable par un Responsable)</span>
+                </label>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-bold uppercase text-on-surface-variant">Seuil (jours) :</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="90"
+                    value={taxesForm.overdue_block_days}
+                    onChange={(e) => setTaxesForm((f) => ({ ...f, overdue_block_days: e.target.value }))}
+                    className="w-20 px-3 py-1.5 rounded-xl border border-outline-variant/30 text-sm font-bold text-center"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <button type="submit" disabled={saving} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="px-6 py-2.5 rounded-xl text-sm font-bold">
                 {saving ? 'Enregistrement…' : 'Enregistrer la fiscalité'}

@@ -4,16 +4,7 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { tenantAdminApi } from '../services/api';
 import { normalizeTunisianPhone, validateTunisianPhone } from '../utils/tunisianPhone';
 import TunisianPhoneInput from '../components/common/TunisianPhoneInput';
-
-const PERM_LABELS = [
-  { key: 'agenda_checkin', label: 'Agenda & Check-in / Libération des sessions', allowed: true },
-  { key: 'reservations', label: 'Gestion des réservations & accueil', allowed: true },
-  { key: 'encaissement_place', label: 'Encaissements sur place (espèces/chèque/virement)', allowed: true },
-  { key: 'membres_lecture', label: 'Consultation membres & Invités', allowed: true },
-  { key: 'tarifs_acces', label: 'Tarification & codes promo (Verrouillé Staff)', allowed: false },
-  { key: 'rapports_financiers', label: 'Rapports financiers & CA (Verrouillé Staff)', allowed: false },
-  { key: 'equipe_gestion', label: 'Gestion équipe & abonnement SaaS (Verrouillé Staff)', allowed: false },
-];
+import { PERMISSION_DEFINITIONS, HARD_LOCKED_KEYS_FOR_STAFF } from '../utils/permissionsMatrix';
 
 export default function AdminTeam({ session, embedded = false }) {
   const { userId, email, metadata } = useSessionUser(session);
@@ -30,15 +21,22 @@ export default function AdminTeam({ session, embedded = false }) {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [tempPwd, setTempPwd] = useState('');
-  const [form, setForm] = useState({ nom: '', prenom: '', email: '', telephone: '' });
+  const [form, setForm] = useState({ nom: '', prenom: '', email: '', telephone: '', custom_role_code: 'staff' });
+  const [rolesMatrix, setRolesMatrix] = useState([]);
+  const [savingMatrix, setSavingMatrix] = useState(false);
+  const [newRoleLabel, setNewRoleLabel] = useState('');
 
   const loadData = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await tenantAdminApi.getStaff();
+      const [res, matrixRes] = await Promise.all([
+        tenantAdminApi.getStaff(),
+        tenantAdminApi.getRolesPermissions().catch(() => ({ roles: [] })),
+      ]);
       setStaff(res.staff || []);
       if (res.quota) setQuota(res.quota);
+      if (Array.isArray(matrixRes?.roles)) setRolesMatrix(matrixRes.roles);
     } catch (e) {
       setError(e.message || 'Impossible de charger l\'équipe.');
     } finally {
@@ -70,12 +68,58 @@ export default function AdminTeam({ session, embedded = false }) {
       const res = await tenantAdminApi.createStaff(payload);
       if (res.temporary_password) setTempPwd(res.temporary_password);
       setMsg(res.message || 'Compte Staff créé.');
-      setForm({ nom: '', prenom: '', email: '', telephone: '' });
+      setForm({ nom: '', prenom: '', email: '', telephone: '', custom_role_code: 'staff' });
       await loadData();
     } catch (err) {
       setError(err.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleToggleRolePerm = (roleCode, permKey) => {
+    if (roleCode === 'admin') return;
+    if (roleCode === 'staff' && HARD_LOCKED_KEYS_FOR_STAFF.has(permKey)) return;
+    setRolesMatrix((prev) =>
+      prev.map((r) =>
+        r.code === roleCode
+          ? { ...r, permissions: { ...(r.permissions || {}), [permKey]: !r.permissions?.[permKey] } }
+          : r
+      )
+    );
+  };
+
+  const handleAddCustomRole = () => {
+    const label = newRoleLabel.trim();
+    if (!label) return;
+    const code = label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_');
+    if (!code || rolesMatrix.some((r) => r.code === code)) return;
+    const emptyPerms = Object.fromEntries(PERMISSION_DEFINITIONS.map((p) => [p.key, false]));
+    setRolesMatrix((prev) => [...prev, { code, label, is_system: false, permissions: emptyPerms }]);
+    setNewRoleLabel('');
+  };
+
+  const handleSaveMatrix = async () => {
+    setSavingMatrix(true);
+    setError('');
+    try {
+      const res = await tenantAdminApi.updateRolesPermissions({ roles: rolesMatrix });
+      if (Array.isArray(res?.roles)) setRolesMatrix(res.roles);
+      setMsg('Matrice des rôles et permissions enregistrée.');
+    } catch (err) {
+      setError(err.message || 'Erreur lors de la sauvegarde.');
+    } finally {
+      setSavingMatrix(false);
+    }
+  };
+
+  const handleAssignMemberRole = async (member, customRoleCode) => {
+    try {
+      await tenantAdminApi.updateStaff(member.id, { custom_role_code: customRoleCode });
+      setMsg('Rôle mis à jour.');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -197,7 +241,17 @@ export default function AdminTeam({ session, embedded = false }) {
                     </div>
                     <p className="text-xs text-on-surface-variant">{s.email} {s.telephone ? `· ${s.telephone}` : ''}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={s.custom_role_code || 'staff'}
+                      onChange={(e) => handleAssignMemberRole(s, e.target.value)}
+                      className="px-2.5 py-1.5 rounded-xl border border-outline-variant/25 bg-white text-xs font-semibold"
+                      title="Rôle appliqué"
+                    >
+                      {(rolesMatrix.length > 0 ? rolesMatrix.filter((r) => r.code !== 'admin') : [{ code: 'staff', label: 'Réceptionniste' }]).map((r) => (
+                        <option key={r.code} value={r.code}>{r.label}</option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={() => handleToggleSuspend(s)}
@@ -210,7 +264,7 @@ export default function AdminTeam({ session, embedded = false }) {
                       onClick={() => handleDelete(s)}
                       className="px-3 py-1.5 rounded-xl bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100"
                     >
-                      Supprimer
+                      Archiver
                     </button>
                   </div>
                 </div>
@@ -219,28 +273,77 @@ export default function AdminTeam({ session, embedded = false }) {
           )}
         </div>
 
-        {/* Matrice des permissions Staff */}
-        <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15">
-          <h2 className="font-sora font-bold text-base text-[#100f0d] mb-2">Permissions du rôle Staff (Niveau 2)</h2>
-          <p className="text-xs text-on-surface-variant mb-4">
-            Le Staff gère l&apos;accueil quotidien mais n&apos;a aucun accès aux tarifs, rapports financiers ni à la gestion d&apos;équipe.
-          </p>
-          <div className="space-y-2.5">
-            {PERM_LABELS.map((p) => (
-              <div
-                key={p.key}
-                className={`p-3 rounded-2xl border flex items-center gap-3 text-xs font-semibold ${
-                  p.allowed
-                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                    : 'bg-slate-50 border-slate-200 text-slate-500'
-                }`}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                  {p.allowed ? 'check_circle' : 'lock'}
-                </span>
-                <span>{p.label}</span>
-              </div>
-            ))}
+        {/* Matrice éditable des permissions par rôle */}
+        <div className="lg:col-span-5 bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/15 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-sora font-bold text-base text-[#100f0d]">Matrice des rôles et permissions</h2>
+              <p className="text-xs text-on-surface-variant">
+                Réceptionniste verrouillé (403) sur les modules sensibles ; rôles personnalisables cochables.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={savingMatrix}
+              onClick={handleSaveMatrix}
+              style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold disabled:opacity-50"
+            >
+              {savingMatrix ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newRoleLabel}
+              onChange={(e) => setNewRoleLabel(e.target.value)}
+              placeholder="Nouveau rôle (ex : Caissier)"
+              className="flex-1 px-3 py-1.5 rounded-xl border border-outline-variant/30 text-xs"
+            />
+            <button
+              type="button"
+              onClick={handleAddCustomRole}
+              className="px-3 py-1.5 rounded-xl border border-[#f95d00]/40 text-[#f95d00] text-xs font-bold hover:bg-orange-50"
+            >
+              + Rôle
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-outline-variant/20 text-on-surface-variant">
+                  <th className="py-2 pr-2 font-bold">Permission</th>
+                  {rolesMatrix.map((r) => (
+                    <th key={r.code} className="py-2 px-1.5 text-center font-bold">{r.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10">
+                {PERMISSION_DEFINITIONS.map((perm) => (
+                  <tr key={perm.key}>
+                    <td className="py-2 pr-2 font-medium text-primary">{perm.label}</td>
+                    {rolesMatrix.map((r) => {
+                      const hardLocked = r.code === 'admin' || (r.code === 'staff' && perm.hardLockedForStaff);
+                      const checked = r.code === 'admin' ? true : (r.code === 'staff' && perm.hardLockedForStaff ? false : Boolean(r.permissions?.[perm.key]));
+                      return (
+                        <td key={`${r.code}-${perm.key}`} className="py-2 px-1.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={hardLocked}
+                            onChange={() => handleToggleRolePerm(r.code, perm.key)}
+                            title={hardLocked ? 'Verrouillé système (API 403)' : 'Cocher / décocher'}
+                            className="w-4 h-4 accent-[#f95d00] cursor-pointer disabled:opacity-60"
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -308,6 +411,18 @@ export default function AdminTeam({ session, embedded = false }) {
                     onChange={(val) => setForm((p) => ({ ...p, telephone: val }))}
                     className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Rôle attribué</label>
+                  <select
+                    value={form.custom_role_code}
+                    onChange={(e) => setForm((p) => ({ ...p, custom_role_code: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white"
+                  >
+                    {(rolesMatrix.length > 0 ? rolesMatrix.filter((r) => r.code !== 'admin') : [{ code: 'staff', label: 'Réceptionniste' }]).map((r) => (
+                      <option key={r.code} value={r.code}>{r.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex gap-2 pt-2">
                   <button type="button" onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-xl bg-gray-100 text-sm font-semibold">

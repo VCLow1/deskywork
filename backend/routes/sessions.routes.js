@@ -3,11 +3,12 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
+const { requirePermission } = require('../middleware/requirePermission');
 const ctrl = require('../controllers/sessionsController');
 
 // Politique d'annulation
 router.get('/settings/cancellation-policy', authenticate, ctrl.getCancellationPolicyRoute);
-router.patch('/settings/cancellation-policy', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.updateCancellationPolicyRoute);
+router.patch('/settings/cancellation-policy', authenticate, requirePermission('parametres'), ctrl.updateCancellationPolicyRoute);
 
 // Sessions membres
 router.get('/sessions/me', authenticate, ctrl.getMySessions);

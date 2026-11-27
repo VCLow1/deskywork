@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
-import { subscriptionApi, memberApi } from '../services/api';
+import { subscriptionApi, memberApi, tenantAdminApi } from '../services/api';
 import { formatDateDMY } from '../utils/format';
 import Money from '../components/common/Money';
 
@@ -53,9 +54,12 @@ export default function AdminSubscriptions({ session }) {
     [userId, email, metadata]
   );
 
-  const [tab, setTab] = useState('active');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = STATUS_TABS.some((t) => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'active';
+  const [tab, setTab] = useState(initialTab);
   const [subscriptions, setSubscriptions] = useState([]);
   const [members, setMembers] = useState([]);
+  const [unites, setUnites] = useState([]);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -63,13 +67,25 @@ export default function AdminSubscriptions({ session }) {
   const [error, setError] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [suspendTarget, setSuspendTarget] = useState(null);
+  const [suspendMotif, setSuspendMotif] = useState('');
   const [form, setForm] = useState({
     user_id: '',
     type: 'mensuel',
     date_debut: new Date().toISOString().slice(0, 10),
     date_fin: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+    quota_type: 'illimite',
+    quota_total: '',
+    unite_id: '',
     renouvellement_auto: false,
   });
+
+  useEffect(() => {
+    const qTab = searchParams.get('tab');
+    if (qTab && STATUS_TABS.some((t) => t.id === qTab)) {
+      setTab(qTab);
+    }
+  }, [searchParams]);
 
   const showToast = (m) => { setMsg(m); setTimeout(() => setMsg(''), 3500); };
 
@@ -77,12 +93,14 @@ export default function AdminSubscriptions({ session }) {
     setLoading(true);
     setError('');
     try {
-      const [subRes, memRes] = await Promise.all([
+      const [subRes, memRes, uniRes] = await Promise.all([
         subscriptionApi.getAll({ include_archived: includeArchived ? 'true' : undefined }),
         memberApi.getAll().catch(() => ({ members: [] })),
+        tenantAdminApi.getUnites().catch(() => ({ unites: [] })),
       ]);
       setSubscriptions(subRes.subscriptions || []);
       setMembers((memRes.members || []).filter((m) => !['admin', 'staff', 'super_admin'].includes(m.role)));
+      setUnites(uniRes.unites || []);
     } catch (e) {
       setError(e.message || 'Erreur lors du chargement des abonnements.');
     } finally {
@@ -131,9 +149,36 @@ export default function AdminSubscriptions({ session }) {
   };
 
   const handleChangeStatus = async (sub, statut) => {
+    if (statut === 'suspended') {
+      setSuspendTarget(sub);
+      setSuspendMotif('');
+      return;
+    }
     try {
       await subscriptionApi.update(sub.id, { statut });
       showToast('Statut de l\'abonnement mis à jour.');
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleConfirmSuspend = async (e) => {
+    e.preventDefault();
+    if (!suspendTarget) return;
+    if (suspendMotif.trim().length < 3) {
+      setError('Un motif (minimum 3 caractères) est obligatoire pour suspendre un abonnement.');
+      return;
+    }
+    try {
+      await subscriptionApi.update(suspendTarget.id, {
+        statut: 'suspended',
+        confirm_suspension: true,
+        motif_suspension: suspendMotif.trim(),
+      });
+      setSuspendTarget(null);
+      setSuspendMotif('');
+      showToast('Abonnement suspendu après validation humaine.');
       await loadData();
     } catch (err) {
       setError(err.message);
@@ -240,9 +285,9 @@ export default function AdminSubscriptions({ session }) {
                 <thead>
                   <tr className="border-b border-outline-variant/15 text-xs uppercase text-on-surface-variant bg-surface-container-low/40">
                     <th className="py-3 px-4">Membre</th>
-                    <th className="py-3 px-4">Formule</th>
+                    <th className="py-3 px-4">Formule &amp; Bureau</th>
+                    <th className="py-3 px-4">Quota consommé</th>
                     <th className="py-3 px-4">Période</th>
-                    <th className="py-3 px-4">Renouvellement</th>
                     <th className="py-3 px-4">Statut</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
@@ -250,6 +295,10 @@ export default function AdminSubscriptions({ session }) {
                 <tbody className="divide-y divide-outline-variant/10">
                   {filtered.map((s) => {
                     const stMeta = STATUS_META[normalizeBucket(s)] || STATUS_META.active;
+                    const qTotal = s.quota_total != null ? Number(s.quota_total) : null;
+                    const qConso = Number(s.quota_consomme || 0);
+                    const qUnit = s.quota_type === 'jours' ? 'j' : 'h';
+                    const qPct = qTotal > 0 ? Math.min(100, Math.round((qConso / qTotal) * 100)) : 0;
                     return (
                       <tr key={s.id} className={s.archived_at ? 'opacity-60 bg-slate-50/60' : ''}>
                         <td className="py-3 px-4">
@@ -260,15 +309,38 @@ export default function AdminSubscriptions({ session }) {
                         </td>
                         <td className="py-3 px-4 font-semibold text-primary">
                           {TYPE_LABELS[s.type] || s.type || 'Mensuel'}
+                          {s.unite && (
+                            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-50 border border-[#f95d00]/30 text-xs font-bold text-[#9a3412]">
+                              Bureau {s.unite.code} · Occupé - contrat
+                            </span>
+                          )}
                           {s.montant_ttc > 0 && (
                             <span className="block text-xs text-on-surface-variant"><Money amount={s.montant_ttc} showTaxType="TTC" /></span>
                           )}
                         </td>
+                        <td className="py-3 px-4 min-w-[160px]">
+                          {qTotal != null && s.quota_type !== 'illimite' ? (
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs font-semibold">
+                                <span>{qConso}{qUnit} / {qTotal}{qUnit}</span>
+                                <span className="text-[#f95d00]">{qPct}%</span>
+                              </div>
+                              <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{ width: `${qPct}%`, backgroundColor: qPct >= 90 ? '#d97706' : '#f95d00' }}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold text-on-surface-variant">Illimité</span>
+                          )}
+                        </td>
                         <td className="py-3 px-4 text-xs text-on-surface-variant whitespace-nowrap">
                           {formatDateDMY(s.date_debut)} → {formatDateDMY(s.date_fin)}
-                        </td>
-                        <td className="py-3 px-4 text-xs">
-                          {s.renouvellement_auto ? 'Automatique' : 'Manuel'}
+                          <span className="block text-xs text-on-surface-variant">
+                            {s.renouvellement_auto ? 'Renouvellement auto' : 'Renouvellement manuel'}
+                          </span>
                         </td>
                         <td className="py-3 px-4">
                           <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold border ${stMeta.cls}`}>
@@ -377,6 +449,52 @@ export default function AdminSubscriptions({ session }) {
                   <input type="date" required value={form.date_fin} onChange={(e) => setForm((f) => ({ ...f, date_fin: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-outline-variant/30 text-sm" />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Quota inclus</label>
+                  <select
+                    value={form.quota_type}
+                    onChange={(e) => setForm((f) => ({ ...f, quota_type: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm bg-white"
+                  >
+                    <option value="illimite">Illimité</option>
+                    <option value="heures">Heures incluses</option>
+                    <option value="jours">Jours inclus</option>
+                  </select>
+                </div>
+                {form.quota_type !== 'illimite' && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">
+                      Total ({form.quota_type === 'jours' ? 'jours' : 'heures'}) *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.5"
+                      required
+                      value={form.quota_total}
+                      onChange={(e) => setForm((f) => ({ ...f, quota_total: e.target.value }))}
+                      placeholder="Ex : 40"
+                      className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">
+                  Bureau privé dédié (optionnel — statut « Occupé - contrat »)
+                </label>
+                <select
+                  value={form.unite_id}
+                  onChange={(e) => setForm((f) => ({ ...f, unite_id: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm bg-white"
+                >
+                  <option value="">Aucun bureau exclusif</option>
+                  {unites.filter((u) => !u.archived_at).map((u) => (
+                    <option key={u.id} value={u.id}>{u.code} — {u.nom || u.espaces?.nom || 'Unité'}</option>
+                  ))}
+                </select>
+              </div>
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" checked={form.renouvellement_auto} onChange={(e) => setForm((f) => ({ ...f, renouvellement_auto: e.target.checked }))} className="accent-[#f95d00]" />
                 Renouvellement automatique
@@ -385,6 +503,39 @@ export default function AdminSubscriptions({ session }) {
                 <button type="button" onClick={() => setShowNew(false)} className="px-4 py-2 rounded-xl border border-outline-variant/30 text-sm font-semibold">Annuler</button>
                 <button type="submit" disabled={creating} style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="px-5 py-2 rounded-xl text-sm font-bold">
                   {creating ? 'Création…' : 'Créer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {suspendTarget && (
+          <div className="fixed inset-0 z-[100] bg-black/45 flex items-center justify-center p-4">
+            <form onSubmit={handleConfirmSuspend} className="bg-white dark:bg-[#1a1815] rounded-3xl p-6 max-w-md w-full border border-outline-variant/20 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-sora font-bold text-lg text-primary">Confirmation humaine de suspension</h2>
+                <button type="button" onClick={() => setSuspendTarget(null)} className="text-on-surface-variant">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <p className="text-xs text-on-surface-variant">
+                Conformément à la politique DeskyWork, une suspension d&apos;abonnement nécessite une validation humaine explicite.
+              </p>
+              <div>
+                <label className="block text-xs font-bold uppercase text-on-surface-variant mb-1">Motif de suspension *</label>
+                <input
+                  required
+                  minLength={3}
+                  value={suspendMotif}
+                  onChange={(e) => setSuspendMotif(e.target.value)}
+                  placeholder="Ex : Demande du client / Impayé prolongé"
+                  className="w-full px-3 py-2.5 rounded-xl border border-outline-variant/30 text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setSuspendTarget(null)} className="px-4 py-2 rounded-xl border border-outline-variant/30 text-sm font-semibold">Annuler</button>
+                <button type="submit" style={{ backgroundColor: '#d97706', color: '#ffffff' }} className="px-5 py-2 rounded-xl text-sm font-bold">
+                  Confirmer la suspension
                 </button>
               </div>
             </form>

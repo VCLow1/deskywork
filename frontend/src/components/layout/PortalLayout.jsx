@@ -566,7 +566,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
       bellTimerRef.current = setTimeout(() => setBellRinging(false), 1400);
 
       showBrowserNotification(notif, (clicked) => {
-        navigate(getNotificationTarget(clicked?.type, roleRef.current));
+        navigate(clicked?.target_url || clicked?.metadata?.target_url || getNotificationTarget(clicked?.type, roleRef.current));
       });
 
       window.dispatchEvent(new CustomEvent('deskywork-notification-received', { detail: notif }));
@@ -617,6 +617,10 @@ export default function PortalLayout({ children, profile, onLogout }) {
     }
 
     fetchNotifications(false);
+
+    if (['admin', 'staff'].includes(profile.role)) {
+      tenantAdminApi.runAutomations({ force: false }).catch(() => {});
+    }
 
     joinUser(profile.id);
     const removeCreatedListener = onNotificationCreated((notification) => {

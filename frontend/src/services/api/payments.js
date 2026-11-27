@@ -1,4 +1,4 @@
-// services/api/payments.js — Encaissements sur place & Reçus PDF (CDC v3.0 D1)
+// services/api/payments.js — Encaissements sur place, Impayés, Remboursements & Reçus PDF
 import { apiFetch, getAuthHeaders, API_URL } from './_core';
 
 export const paymentApi = {
@@ -12,12 +12,17 @@ export const paymentApi = {
     return apiFetch(`/api/montant-du${qs ? `?${qs}` : ''}`);
   },
   getMyMontantDu: () => apiFetch('/api/montant-du/me'),
+  getUnpaidSummary: () => apiFetch('/api/payments/unpaid/summary'),
   createMontantDu: (payload) =>
     apiFetch('/api/montant-du', { method: 'POST', body: JSON.stringify(payload) }),
   collect: (id, payload) =>
     apiFetch(`/api/payments/${id}/collect`, { method: 'POST', body: JSON.stringify(payload) }),
   refund: (id, payload) =>
     apiFetch(`/api/payments/${id}/refund`, { method: 'POST', body: JSON.stringify(payload) }),
+  sendReminder: (id, payload) =>
+    apiFetch(`/api/payments/${id}/relance`, { method: 'POST', body: JSON.stringify(payload) }),
+  recordPromise: (id, payload) =>
+    apiFetch(`/api/payments/${id}/promesse`, { method: 'POST', body: JSON.stringify(payload) }),
   getMemberPayments: (memberId) => apiFetch(`/api/payments/member/${memberId}`),
   create: (payload) =>
     apiFetch('/api/payments', { method: 'POST', body: JSON.stringify(payload) }),

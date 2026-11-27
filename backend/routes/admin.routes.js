@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
+const { requirePermission } = require('../middleware/requirePermission');
 const {
   getTenant,
   updateTenant,
@@ -24,6 +25,7 @@ const {
   createPersonne,
   archivePersonne,
   restorePersonne,
+  mergePersonnes,
   checkPersonnePhone,
   getPersonne360,
   updatePersonneNotes,
@@ -32,6 +34,9 @@ const {
   createStaff,
   updateStaff,
   deleteStaff,
+  getMyPermissions,
+  getRolesPermissions,
+  updateRolesPermissions,
   getSubscriptionOverview,
   requestPackUpgrade,
   downloadDeskyInvoicePdf,
@@ -41,10 +46,13 @@ const {
   getMarketplaceStats,
   getActivityLog,
   getPacks,
+  triggerLot4Automations,
   ressourcesHandlers,
   servicesHandlers,
   incidentsHandlers,
   devisFacturesHandlers,
+  createAvoirFromFacture,
+  downloadDevisFacturePdf,
 } = require('../controllers/adminController');
 const {
   listAdminUnites,
@@ -58,36 +66,38 @@ const {
 
 // Packs & Journal d'activité
 router.get('/admin/packs', authenticate, requireRoles('super_admin', 'admin', 'staff'), getPacks);
-router.get('/admin/activity-log', authenticate, requireRoles('super_admin', 'admin'), getActivityLog);
+router.get('/admin/activity-log', authenticate, requirePermission('journal_activite'), getActivityLog);
+router.post('/admin/automations/run', authenticate, requireRoles('super_admin', 'admin', 'staff'), triggerLot4Automations);
 
 // Recherche globale header
 router.get('/admin/global-search', authenticate, requireRoles('super_admin', 'admin', 'staff'), globalSearch);
 
 // Tenant (coworking)
 router.get('/admin/tenant', authenticate, requireRoles('super_admin', 'admin', 'staff'), getTenant);
-router.patch('/admin/tenant', authenticate, requireRoles('super_admin', 'admin'), updateTenant);
-router.get('/admin/marketplace-stats', authenticate, requireRoles('super_admin', 'admin'), getMarketplaceStats);
+router.patch('/admin/tenant', authenticate, requirePermission('parametres'), updateTenant);
+router.get('/admin/marketplace-stats', authenticate, requirePermission('rapports_financiers'), getMarketplaceStats);
 
 // Espaces + archivage + tarifs HT/TTC
-router.post('/admin/espaces', authenticate, requireRoles('super_admin', 'admin'), createEspace);
-router.patch('/admin/espaces/:id', authenticate, requireRoles('super_admin', 'admin'), updateEspace);
-router.delete('/admin/espaces/:id', authenticate, requireRoles('super_admin', 'admin'), deleteEspace);
-router.post('/admin/espaces/:id/archive', authenticate, requireRoles('super_admin', 'admin'), archiveEspace);
-router.post('/admin/espaces/:id/restore', authenticate, requireRoles('super_admin', 'admin'), restoreEspace);
-router.put('/admin/espaces/:id/tarifs', authenticate, requireRoles('super_admin', 'admin'), updateEspaceTarifs);
-router.get('/admin/tarifs/historique', authenticate, requireRoles('super_admin', 'admin', 'staff'), getTarifHistory);
+router.post('/admin/espaces', authenticate, requirePermission('parametres'), createEspace);
+router.patch('/admin/espaces/:id', authenticate, requirePermission('parametres'), updateEspace);
+router.delete('/admin/espaces/:id', authenticate, requirePermission('parametres'), deleteEspace);
+router.post('/admin/espaces/:id/archive', authenticate, requirePermission('parametres'), archiveEspace);
+router.post('/admin/espaces/:id/restore', authenticate, requirePermission('parametres'), restoreEspace);
+router.put('/admin/espaces/:id/tarifs', authenticate, requirePermission('tarifs_acces'), updateEspaceTarifs);
+router.get('/admin/tarifs/historique', authenticate, requirePermission('tarifs_acces'), getTarifHistory);
 router.post('/admin/upload', authenticate, uploadPhoto);
 router.post('/upload', authenticate, uploadPhoto);
 
 // Onboarding
-router.post('/admin/onboarding/complete', authenticate, requireRoles('super_admin', 'admin'), completeOnboarding);
+router.post('/admin/onboarding/complete', authenticate, requirePermission('parametres'), completeOnboarding);
 
 // Membres, Personnes (Invités / Prospects) & Clients
 router.get('/admin/members', authenticate, requireRoles('super_admin', 'admin', 'staff'), listMembers);
-router.post('/admin/members', authenticate, requireRoles('super_admin', 'admin', 'staff'), createMember);
-router.post('/admin/personnes', authenticate, requireRoles('super_admin', 'admin', 'staff'), createPersonne);
-router.post('/admin/personnes/:id/archive', authenticate, requireRoles('super_admin', 'admin'), archivePersonne);
-router.post('/admin/personnes/:id/restore', authenticate, requireRoles('super_admin', 'admin'), restorePersonne);
+router.post('/admin/members', authenticate, requirePermission('clients_lecture_creation'), createMember);
+router.post('/admin/personnes', authenticate, requirePermission('clients_lecture_creation'), createPersonne);
+router.post('/admin/personnes/merge', authenticate, requirePermission('archivage_fusion_membres'), mergePersonnes);
+router.post('/admin/personnes/:id/archive', authenticate, requirePermission('archivage_fusion_membres'), archivePersonne);
+router.post('/admin/personnes/:id/restore', authenticate, requirePermission('archivage_fusion_membres'), restorePersonne);
 router.get('/admin/personnes/check-phone', authenticate, requireRoles('super_admin', 'admin', 'staff'), checkPersonnePhone);
 router.get('/admin/personnes/:id/360', authenticate, requireRoles('super_admin', 'admin', 'staff'), getPersonne360);
 router.patch('/admin/personnes/:id/notes', authenticate, requireRoles('super_admin', 'admin', 'staff'), updatePersonneNotes);
@@ -123,25 +133,30 @@ router.post('/admin/incidents/:id/archive', authenticate, requireRoles('super_ad
 router.post('/admin/incidents/:id/restore', authenticate, requireRoles('super_admin', 'admin'), incidentsHandlers.restore);
 
 router.get('/admin/devis-factures', authenticate, requireRoles('super_admin', 'admin', 'staff'), devisFacturesHandlers.list);
-router.post('/admin/devis-factures', authenticate, requireRoles('super_admin', 'admin'), devisFacturesHandlers.create);
-router.patch('/admin/devis-factures/:id', authenticate, requireRoles('super_admin', 'admin'), devisFacturesHandlers.update);
-router.post('/admin/devis-factures/:id/archive', authenticate, requireRoles('super_admin', 'admin'), devisFacturesHandlers.archive);
-router.post('/admin/devis-factures/:id/restore', authenticate, requireRoles('super_admin', 'admin'), devisFacturesHandlers.restore);
+router.post('/admin/devis-factures', authenticate, requirePermission('factures_avoirs'), devisFacturesHandlers.create);
+router.patch('/admin/devis-factures/:id', authenticate, requirePermission('factures_avoirs'), devisFacturesHandlers.update);
+router.post('/admin/devis-factures/:id/avoir', authenticate, requirePermission('factures_avoirs'), createAvoirFromFacture);
+router.get('/admin/devis-factures/:id/pdf', authenticate, requireRoles('super_admin', 'admin', 'staff'), downloadDevisFacturePdf);
+router.post('/admin/devis-factures/:id/archive', authenticate, requirePermission('factures_avoirs'), devisFacturesHandlers.archive);
+router.post('/admin/devis-factures/:id/restore', authenticate, requirePermission('factures_avoirs'), devisFacturesHandlers.restore);
 
-// Équipe (Staff) — réservé Admin (bloqué pour Staff)
-router.get('/admin/staff', authenticate, requireRoles('super_admin', 'admin'), listStaff);
-router.post('/admin/staff', authenticate, requireRoles('super_admin', 'admin'), createStaff);
-router.patch('/admin/staff/:id', authenticate, requireRoles('super_admin', 'admin'), updateStaff);
-router.delete('/admin/staff/:id', authenticate, requireRoles('super_admin', 'admin'), deleteStaff);
+// Équipe (Staff) & Matrice des permissions (verrouillé 403 pour Réceptionniste)
+router.get('/admin/my-permissions', authenticate, requireRoles('super_admin', 'admin', 'staff'), getMyPermissions);
+router.get('/admin/roles-permissions', authenticate, requirePermission('equipe_gestion'), getRolesPermissions);
+router.put('/admin/roles-permissions', authenticate, requirePermission('equipe_gestion'), updateRolesPermissions);
+router.get('/admin/staff', authenticate, requirePermission('equipe_gestion'), listStaff);
+router.post('/admin/staff', authenticate, requirePermission('equipe_gestion'), createStaff);
+router.patch('/admin/staff/:id', authenticate, requirePermission('equipe_gestion'), updateStaff);
+router.delete('/admin/staff/:id', authenticate, requirePermission('equipe_gestion'), deleteStaff);
 
-// Mon Abonnement DeskyWork — réservé Admin (bloqué pour Staff)
-router.get('/admin/subscription', authenticate, requireRoles('super_admin', 'admin'), getSubscriptionOverview);
-router.post('/admin/subscription/upgrade-request', authenticate, requireRoles('super_admin', 'admin'), requestPackUpgrade);
-router.get('/admin/subscription/invoices/:invoiceId/pdf', authenticate, requireRoles('super_admin', 'admin'), downloadDeskyInvoicePdf);
+// Mon Abonnement DeskyWork — réservé Responsable (403 pour Staff)
+router.get('/admin/subscription', authenticate, requirePermission('parametres'), getSubscriptionOverview);
+router.post('/admin/subscription/upgrade-request', authenticate, requirePermission('parametres'), requestPackUpgrade);
+router.get('/admin/subscription/invoices/:invoiceId/pdf', authenticate, requirePermission('parametres'), downloadDeskyInvoicePdf);
 
 // Notifications & Support DeskyWork
 router.get('/admin/notifications-support', authenticate, requireRoles('super_admin', 'admin', 'staff'), getNotificationsSupportState);
-router.patch('/admin/alert-settings', authenticate, requireRoles('super_admin', 'admin'), updateAlertSettings);
+router.patch('/admin/alert-settings', authenticate, requirePermission('parametres'), updateAlertSettings);
 router.post('/admin/support-tickets', authenticate, requireRoles('super_admin', 'admin', 'staff'), createSupportTicket);
 
 // Conversations admin

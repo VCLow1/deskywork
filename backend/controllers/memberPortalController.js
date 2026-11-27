@@ -242,8 +242,19 @@ async function listNotifications(req, res) {
     .eq('user_id', req.user.id)
     .eq('lu', false);
 
+  const enrichedNotifications = (data || []).map((n) => {
+    const match = typeof n.message === 'string' ? n.message.match(/\[Lien:\s*([^\]]+)\]\s*$/) : null;
+    const targetUrl = n.target_url || n.metadata?.target_url || (match ? match[1].trim() : null);
+    const cleanMessage = match ? n.message.replace(match[0], '').trim() : n.message;
+    return {
+      ...n,
+      message: cleanMessage,
+      target_url: targetUrl,
+    };
+  });
+
   res.json({
-    notifications: data || [],
+    notifications: enrichedNotifications,
     unreadCount: unreadCount || 0,
     pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / parseInt(limit)) },
   });

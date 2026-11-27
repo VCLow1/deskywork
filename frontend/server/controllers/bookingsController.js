@@ -284,12 +284,14 @@ async function createBooking(req, res) {
       telephone_contact = null,
       services_additionnels = [],
       ressources = [],
+      promo_code = null,
       code_promo = null,
-      deduire_quota_abonnement = false,
+      deduire_quota_abonnement = true,
       mode_paiement = 'cash',
       confirmation_manuelle = false,
       delai_confirmation_heures = 2,
       override_conflit = false,
+      override_unpaid_block = false,
       motif_retroactif = '',
       notes: freeNotes = '',
     } = req.body;
@@ -374,6 +376,35 @@ async function createBooking(req, res) {
     }
     const effectiveFpItemId = floor_plan_item_id || targetUnite?.floor_plan_item_id || null;
 
+    // Vérification blocage pour impayé dépassant X jours (LOT 4, déblocable uniquement par Responsable)
+    if (targetUserId && bookingTenantId) {
+      const { getUnpaidBlockingConfig, computeAgingBucket } = require('../models/financeHelpers');
+      const { data: tCfgRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', bookingTenantId).maybeSingle();
+      const financeCfg = getUnpaidBlockingConfig(tCfgRow?.settings || {});
+      if (financeCfg.block_booking_on_overdue) {
+        const { data: overdueRows } = await supabaseAdmin
+          .from('paiements')
+          .select('*, reservations(date_fin)')
+          .eq('tenant_id', bookingTenantId)
+          .eq('user_id', targetUserId)
+          .in('statut', ['pending', 'partial']);
+        const blockedItem = (overdueRows || []).find((p) => {
+          const aging = computeAgingBucket(p.due_date || p.reservations?.date_fin || p.created_at);
+          return aging.daysOverdue >= financeCfg.overdue_block_days;
+        });
+        const canOverrideUnpaid = isManagerRole(req.profile?.role) && Boolean(override_unpaid_block);
+        if (blockedItem && !canOverrideUnpaid) {
+          const aging = computeAgingBucket(blockedItem.due_date || blockedItem.reservations?.date_fin || blockedItem.created_at);
+          return res.status(403).json({
+            error: `Nouvelle réservation bloquée : ce membre a un impayé en retard de ${aging.daysOverdue} jour(s) (seuil : ${financeCfg.overdue_block_days} jours). Seul un Responsable peut débloquer ou le solde doit être régularisé.`,
+            code: 'UNPAID_BOOKING_BLOCKED',
+            days_overdue: aging.daysOverdue,
+            overdue_block_days: financeCfg.overdue_block_days,
+          });
+        }
+      }
+    }
+
     // Vérification restriction abonnement membre
     if (!isStaff && targetUserId) {
       const today = todayISO();
@@ -430,26 +461,45 @@ async function createBooking(req, res) {
       }
     }
 
-    // Déduction quota abonnement si demandé
+    // Déduction automatique du quota abonnement compatible (LOT 4) + recalcul du reste à payer
     let quotaDeduit = 0;
     let activeMemberSub = null;
-    if (deduire_quota_abonnement && targetUserId) {
+    let activeSubMetaConsomme = 0;
+    if (deduire_quota_abonnement !== false && targetUserId) {
       const today = todayISO();
       const { data: subRow } = await supabaseAdmin
         .from('abonnements')
         .select('*')
         .eq('user_id', targetUserId)
-        .eq('statut', 'active')
+        .in('statut', ['active', 'actif', 'a_renouveler'])
         .lte('date_debut', today)
         .gte('date_fin', today)
         .order('date_fin', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (subRow) {
-        const remainingQuota = Number(subRow.heures_restantes ?? subRow.credits_restants ?? subRow.heures_incluses ?? 0);
-        if (remainingQuota > 0) {
-          quotaDeduit = Math.min(remainingQuota, hours);
-          const ratioPaid = hours > 0 ? Math.max(0, (hours - quotaDeduit) / hours) : 1;
+
+      if (subRow && (!subRow.type_espace || !espData.type || subRow.type_espace === espData.type)) {
+        let subMeta = {};
+        if (bookingTenantId) {
+          const { data: tSub } = await supabaseAdmin.from('tenants').select('settings').eq('id', bookingTenantId).maybeSingle();
+          subMeta = tSub?.settings?.subscription_meta?.[subRow.id] || {};
+        }
+        const quotaType = subRow.quota_type || subMeta.quota_type || 'illimite';
+        const quotaTotal = subRow.quota_total != null ? Number(subRow.quota_total) : (subMeta.quota_total != null ? Number(subMeta.quota_total) : null);
+        const quotaConsomme = Number(subRow.quota_consomme ?? subMeta.quota_consomme ?? 0) || 0;
+        const legacyRemaining = subRow.heures_restantes ?? subRow.credits_restants ?? subRow.heures_incluses ?? null;
+        const remainingQuota = quotaTotal != null
+          ? Math.max(0, quotaTotal - quotaConsomme)
+          : (legacyRemaining != null ? Math.max(0, Number(legacyRemaining)) : 0);
+
+        if (quotaType === 'illimite' && subRow.unite_id && unite_id && subRow.unite_id === unite_id) {
+          computedMontantHT = roundMillime(servicesSubtotalHT);
+          activeMemberSub = subRow;
+        } else if (remainingQuota > 0) {
+          const unitQty = quotaType === 'jours' ? Math.max(1, Math.ceil(hours / 8)) : hours;
+          quotaDeduit = Math.min(remainingQuota, unitQty);
+          activeSubMetaConsomme = quotaConsomme + quotaDeduit;
+          const ratioPaid = unitQty > 0 ? Math.max(0, (unitQty - quotaDeduit) / unitQty) : 1;
           computedMontantHT = roundMillime(spaceSubtotalHT * ratioPaid + servicesSubtotalHT);
           activeMemberSub = subRow;
         }
@@ -652,9 +702,12 @@ async function createBooking(req, res) {
       data = fetched;
     }
 
-    // Déduire le quota d'abonnement si applicable
+    // Déduire le quota d'abonnement si applicable + journaliser la consommation
     if (activeMemberSub && quotaDeduit > 0) {
       const patchSub = {};
+      if (activeMemberSub.quota_total != null || activeMemberSub.quota_consomme != null) {
+        patchSub.quota_consomme = activeSubMetaConsomme;
+      }
       if (activeMemberSub.heures_restantes != null) {
         patchSub.heures_restantes = Math.max(0, Number(activeMemberSub.heures_restantes) - quotaDeduit);
       } else if (activeMemberSub.credits_restants != null) {
@@ -662,6 +715,46 @@ async function createBooking(req, res) {
       }
       if (Object.keys(patchSub).length > 0) {
         await supabaseAdmin.from('abonnements').update(patchSub).eq('id', activeMemberSub.id).catch(() => {});
+      }
+      if (bookingTenantId) {
+        try {
+          const { data: tRow } = await supabaseAdmin.from('tenants').select('settings').eq('id', bookingTenantId).maybeSingle();
+          const curS = (tRow?.settings && typeof tRow.settings === 'object') ? tRow.settings : {};
+          const subMeta = { ...(curS.subscription_meta || {}) };
+          if (subMeta[activeMemberSub.id]) {
+            subMeta[activeMemberSub.id] = {
+              ...subMeta[activeMemberSub.id],
+              quota_consomme: activeSubMetaConsomme,
+            };
+          }
+          const consoItem = {
+            id: `conso-${Date.now()}`,
+            tenant_id: bookingTenantId,
+            abonnement_id: activeMemberSub.id,
+            reservation_id: data?.id || null,
+            quota_delta: quotaDeduit,
+            quota_type: activeMemberSub.quota_type || 'heures',
+            montant_economise_ttc: computeTTC(spaceSubtotalHT, tvaApplique) - computedMontant,
+            description: `Réservation ${espData.nom}`,
+            created_at: new Date().toISOString(),
+          };
+          const { error: consoErr } = await supabaseAdmin.from('abonnement_consommations').insert({
+            tenant_id: bookingTenantId,
+            abonnement_id: activeMemberSub.id,
+            reservation_id: data?.id || null,
+            quota_delta: quotaDeduit,
+            quota_type: activeMemberSub.quota_type || 'heures',
+            montant_economise_ttc: Math.max(0, computeTTC(spaceSubtotalHT, tvaApplique) - computedMontant),
+            description: `Réservation ${espData.nom}`,
+            created_by: req.user?.id || null,
+          });
+          const nextSettings = { ...curS, subscription_meta: subMeta };
+          if (consoErr) {
+            const list = Array.isArray(curS.abonnement_consommations) ? curS.abonnement_consommations : [];
+            nextSettings.abonnement_consommations = [consoItem, ...list].slice(0, 200);
+          }
+          await supabaseAdmin.from('tenants').update({ settings: nextSettings }).eq('id', bookingTenantId);
+        } catch (_) {}
       }
     }
 

@@ -14,6 +14,8 @@ export const subscriptionApi = {
     apiFetch('/api/subscriptions', { method: 'POST', body: JSON.stringify(payload) }),
   update: (id, payload) =>
     apiFetch(`/api/subscriptions/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  getConsumptions: (id) =>
+    apiFetch(`/api/subscriptions/${id}/consumptions`),
   archive: (id) =>
     apiFetch(`/api/subscriptions/${id}/archive`, { method: 'POST' }),
   restore: (id) =>

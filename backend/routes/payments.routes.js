@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
+const { requirePermission } = require('../middleware/requirePermission');
 const ctrl = require('../controllers/paymentsController');
 
 // CDC v3.0 — D1 : paiement 100 % sur place en v1. Toutes les passerelles en ligne
@@ -23,8 +24,11 @@ router.get('/payments/member/:memberId', authenticate, ctrl.getMemberPayments);
 router.get('/montant-du/me', authenticate, ctrl.getMontantDu);
 router.get('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getMontantDu);
 router.post('/montant-du', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createMontantDu);
-router.post('/payments/:id/collect', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.collectPayment);
-router.post('/payments/:id/refund', authenticate, requireRoles('super_admin', 'admin'), ctrl.refundPayment);
+router.get('/payments/unpaid/summary', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getUnpaidSummary);
+router.post('/payments/:id/collect', authenticate, requirePermission('paiements_encaissement'), ctrl.collectPayment);
+router.post('/payments/:id/refund', authenticate, requirePermission('remboursements'), ctrl.refundPayment);
+router.post('/payments/:id/relance', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.sendPaymentReminder);
+router.post('/payments/:id/promesse', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.recordPaymentPromise);
 
 // Routes paiement administration (Super Admin, Admin, Staff)
 router.post('/payments', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.createPayment);

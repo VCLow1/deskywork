@@ -143,6 +143,14 @@ export function getFloorPlanPalette(dark = false) {
         dot: '#d97706',
         furniture: dark ? 'rgba(245, 158, 11, 0.22)' : 'rgba(217, 119, 6, 0.18)',
       },
+      contract_occupied: {
+        label: 'Occupé - contrat',
+        fill: dark ? 'rgba(249, 93, 0, 0.22)' : 'rgba(249, 93, 0, 0.14)',
+        stroke: '#f95d00',
+        text: dark ? '#fed7aa' : '#9a3412',
+        dot: '#f95d00',
+        furniture: dark ? 'rgba(249, 93, 0, 0.30)' : 'rgba(249, 93, 0, 0.22)',
+      },
     },
   };
 }
