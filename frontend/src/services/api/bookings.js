@@ -7,6 +7,12 @@ export const bookingApi = {
 
   checkSlots: (payload) =>
     apiFetch('/api/bookings/check-slots', { method: 'POST', body: JSON.stringify(payload) }),
+  createHold: (payload) =>
+    apiFetch('/api/bookings/hold', { method: 'POST', body: JSON.stringify(payload) }),
+  releaseHold: (holdId) =>
+    apiFetch(`/api/bookings/hold/${holdId}`, { method: 'DELETE' }),
+  validatePromo: (payload) =>
+    apiFetch('/api/promo-codes/validate', { method: 'POST', body: JSON.stringify(payload) }),
 
   getCalendar: (params) => {
     const qs = new URLSearchParams(params).toString();

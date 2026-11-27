@@ -14,8 +14,7 @@ export default function BookingShell({
   activeStep = 1,
   nav = { home: '/dashboard', bookings: '/dashboard/bookings' },
   onStepClick = null,
-  backTo = null,
-  backLabel = 'Quitter',
+  onExit = null,
   subtitle = null,
   children,
 }) {
@@ -78,7 +77,7 @@ export default function BookingShell({
             <BrandLogo to={nav.home} />
             {subtitle && (
               <span
-                className="hidden xl:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold truncate max-w-[220px]"
+                className="hidden xl:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold truncate max-w-[220px]"
                 style={{
                   backgroundColor: dark ? 'rgba(255,255,255,0.06)' : '#f0eee9',
                   color: textMuted,
@@ -124,7 +123,7 @@ export default function BookingShell({
                     }}
                   >
                     <span
-                      className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-extrabold"
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-extrabold"
                       style={{
                         backgroundColor: isActive
                           ? 'rgba(255,255,255,0.22)'
@@ -159,7 +158,7 @@ export default function BookingShell({
           {/* Contrôles droite : horloge live, thème, quitter */}
           <div className="flex items-center gap-2">
             <div
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-bold"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold"
               style={{
                 backgroundColor: dark ? 'rgba(16,185,129,0.12)' : '#ecfdf5',
                 color: dark ? '#6ee7b7' : '#065f46',
@@ -189,7 +188,8 @@ export default function BookingShell({
             </button>
 
             <Link
-              to={backTo || nav.home}
+              to={nav.home}
+              onClick={() => onExit?.()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:opacity-90"
               style={{
                 backgroundColor: dark ? 'rgba(255,255,255,0.07)' : '#ffffff',
@@ -198,10 +198,8 @@ export default function BookingShell({
                 textDecoration: 'none',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
-                {backTo ? 'arrow_back' : 'close'}
-              </span>
-              <span>{backLabel}</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+              <span>Quitter</span>
             </Link>
           </div>
         </div>
@@ -221,7 +219,7 @@ export default function BookingShell({
                 type="button"
                 disabled={!clickable}
                 onClick={() => clickable && onStepClick(st.num)}
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all"
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-bold transition-all"
                 style={{
                   backgroundColor: isActive
                     ? '#f95d00'
@@ -247,3 +245,4 @@ export default function BookingShell({
     </div>
   );
 }
+

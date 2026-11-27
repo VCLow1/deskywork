@@ -3,11 +3,12 @@ const crypto = require('crypto');
 const { supabaseAdmin } = require('../config/supabase');
 const { getCancellationPolicy, buildDynamicCancellationMessage, hasActiveSubscription, computeRemainingMinutes, insertWithColumnFallback } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
-const { emitSessionStarted, emitSessionEnded, emitSessionOvertime } = require('../services/socketService');
+const { emitSessionStarted, emitSessionEnded, emitSessionOvertime, emitNotification } = require('../services/socketService');
 const { computeWalkinBilling, computeOvertime15Min, getClosingTimestampTunis } = require('../models/walkinBilling');
-const { checkAvailabilityWithBuffer, getTenantTamponMinutes, loadSpaceUnitsForTenant } = require('../models/bookingAvailability');
+const { checkAvailabilityWithBuffer, getTenantTamponMinutes, loadSpaceUnitsForTenant, sweepPastConfirmedReservations } = require('../models/bookingAvailability');
 const { logActivity } = require('../models/activityLogger');
 const { DEFAULT_TVA_PCT, roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
+const { verifyDynamicQrOrShortCode } = require('../models/dynamicQr');
 
 function normalizePhoneTN(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
@@ -184,44 +185,72 @@ async function getMySessions(req, res) {
 
 async function getMyActiveSessions(req, res) {
   try {
+    await sweepPastConfirmedReservations(supabaseAdmin, { userId: req.user.id }).catch(() => {});
+    const nowIso = new Date().toISOString();
+
     const { data: reservations } = await supabaseAdmin
       .from('reservations')
-      .select('id')
-      .eq('user_id', req.user.id);
+      .select('id, tenant_id, espace_id, unite_id, date_debut, date_fin, statut, archived_at, espaces(id, nom, type, tarif_horaire, tarif_horaire_ht, tva_pct, tenant_id)')
+      .eq('user_id', req.user.id)
+      .order('date_debut', { ascending: true });
 
-    const reservationIds = (reservations || []).map((r) => r.id);
-    if (reservationIds.length === 0) {
-      return res.json({ session: null });
+    const activeReservations = (reservations || []).filter((r) => !r.archived_at);
+    const reservationIds = activeReservations.map((r) => r.id);
+
+    let activeSession = null;
+    if (reservationIds.length > 0) {
+      const { data, error } = await supabaseAdmin
+        .from('sessions')
+        .select(`
+          *,
+          reservations (
+            id, tenant_id, espace_id, unite_id, date_debut, date_fin, statut,
+            espaces (id, nom, type, tarif_horaire, tarif_horaire_ht, tva_pct, tenant_id)
+          )
+        `)
+        .in('reservation_id', reservationIds)
+        .in('statut', ['active', 'overtime'])
+        .is('check_out', null)
+        .order('check_in', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ error: error.message });
+      if (data && (data.started_at || data.check_in)) {
+        const resTenant = data.tenant_id || data.reservations?.tenant_id || data.reservations?.espaces?.tenant_id || null;
+        const overtimeRate = await getTenantOvertimeRate(resTenant);
+        const details = computeWorkSessionDetails(data, overtimeRate);
+        activeSession = {
+          ...data,
+          started_at: data.started_at || data.check_in,
+          temps_restant: details.temps_restant,
+          overtime_rate: details.hourly_overtime_rate,
+          details,
+        };
+      }
     }
 
-    const { data, error } = await supabaseAdmin
-      .from('sessions')
-      .select(`
-        *,
-        reservations (
-          id, date_debut, date_fin, statut,
-          espaces (nom, type)
-        )
-      `)
-      .in('reservation_id', reservationIds)
-      .eq('statut', 'active')
-      .order('check_in', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let nextBooking = null;
+    if (!activeSession) {
+      const { data: allMySessions } = reservationIds.length > 0
+        ? await supabaseAdmin.from('sessions').select('reservation_id, check_out, statut').in('reservation_id', reservationIds)
+        : { data: [] };
+      const closedResIds = new Set(
+        (allMySessions || []).filter((s) => s.check_out || s.statut === 'completed').map((s) => s.reservation_id)
+      );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    if (!data) {
-      return res.json({ session: null, server_now: new Date().toISOString() });
+      nextBooking = activeReservations.find(
+        (r) =>
+          ['confirmed', 'pending', 'en_attente_confirmation'].includes(r.statut) &&
+          !closedResIds.has(r.id) &&
+          new Date(r.date_fin).getTime() > Date.now()
+      ) || null;
     }
 
     res.json({
-      server_now: new Date().toISOString(),
-      session: {
-        ...data,
-        started_at: data.started_at || data.check_in,
-        temps_restant: computeRemainingMinutes(data.reservations?.date_fin),
-      },
+      server_now: nowIso,
+      session: activeSession,
+      next_booking: nextBooking,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -236,37 +265,27 @@ async function checkIn(req, res) {
     let targetUserId = req.user.id;
     let reservation;
     let checkedInMember;
+    let qrMethod = null;
 
     if (qr_token && isStaff) {
-      // Le QR scanné peut être le token brut ou le payload JSON complet
-      let token = String(qr_token).trim();
-      if (token.startsWith('{')) {
-        try {
-          const parsed = JSON.parse(token);
-          token = parsed.qr_token || parsed.token || token;
-        } catch {
-          // token brut
-        }
+      const verification = await verifyDynamicQrOrShortCode(supabaseAdmin, qr_token, {
+        tenantId: req.tenantId || null,
+      });
+
+      if (!verification.valid) {
+        const statusCode = verification.status === 'blocked' ? 403 : verification.status === 'expired' ? 410 : 404;
+        return res.status(statusCode).json({
+          error: verification.error,
+          qr_status: verification.status,
+          member: verification.member || undefined,
+          overdue_days: verification.overdue_days,
+          overdue_amount: verification.overdue_amount,
+        });
       }
 
-      const { data: memberProfile, error: profErr } = await supabaseAdmin
-        .from('profiles')
-        .select('id, nom, prenom, email, statut_compte')
-        .eq('qr_token', token)
-        .single();
-
-      if (profErr || !memberProfile) {
-        return res.status(404).json({ error: 'QR code invalide ou expiré.' });
-      }
-
-      targetUserId = memberProfile.id;
-      checkedInMember = {
-        id: memberProfile.id,
-        nom: memberProfile.nom,
-        prenom: memberProfile.prenom,
-        email: memberProfile.email,
-        statut_compte: memberProfile.statut_compte,
-      };
+      qrMethod = verification.method;
+      targetUserId = verification.member.id;
+      checkedInMember = verification.member;
 
       const now = new Date();
       const todayStart = new Date();
@@ -294,10 +313,15 @@ async function checkIn(req, res) {
       if (!reservation) {
         return res.status(404).json({
           error: "Aucune réservation confirmée en cours ou à venir pour ce membre.",
-          member: memberProfile,
+          member: checkedInMember,
         });
       }
     } else if (reservation_id) {
+      if (!isStaff) {
+        return res.status(403).json({
+          error: "Seul l'accueil (ou le scan de votre QR code par l'équipe) peut démarrer votre session de travail.",
+        });
+      }
       const { data, error } = await supabaseAdmin
         .from('reservations')
         .select('*, espaces(nom, type)')
@@ -306,14 +330,6 @@ async function checkIn(req, res) {
 
       if (error || !data) {
         return res.status(404).json({ error: 'Réservation introuvable.' });
-      }
-
-      if (!isStaff && data.user_id !== req.user.id) {
-        return res.status(403).json({ error: 'Check-in non autorisé.' });
-      }
-
-      if (data.statut !== 'confirmed' && !isStaff) {
-        return res.status(400).json({ error: 'Seules les réservations confirmées peuvent être check-in.' });
       }
 
       reservation = data;
@@ -384,6 +400,7 @@ async function checkIn(req, res) {
     res.status(201).json({
       session: { ...session, temps_restant: remaining },
       member: checkedInMember || undefined,
+      qr_method: qrMethod || undefined,
       warning: !hasSub ? 'Check-in effectué sans abonnement actif.' : null,
     });
 
@@ -414,7 +431,11 @@ async function checkOut(req, res) {
       .from('sessions')
       .select(`
         *,
-        reservations (id, user_id, date_debut, date_fin, espaces(nom, type))
+        reservations (
+          id, user_id, tenant_id, date_debut, date_fin,
+          espaces(id, nom, type, tarif_horaire, tarif_horaire_ht, tva_pct),
+          profiles!user_id(id, nom, prenom, email)
+        )
       `);
 
     if (session_id) query = query.eq('id', session_id);
@@ -427,19 +448,43 @@ async function checkOut(req, res) {
     }
 
     if (!isStaff && session.reservations?.user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Check-out non autorisé.' });
+      return res.status(403).json({ error: 'Action non autorisée.' });
     }
 
-    const now = new Date().toISOString();
-    const endTime = new Date(session.reservations?.date_fin || now);
-    const overtime = new Date(now) > endTime;
+    if (session.check_out && session.statut === 'completed') {
+      return res.json({
+        already_stopped: true,
+        session,
+        server_now: new Date().toISOString(),
+        message: 'Cette session est déjà terminée.',
+      });
+    }
 
-    const { data, error } = await supabaseAdmin
+    const nowIso = new Date().toISOString();
+    const resTenant = session.tenant_id || session.reservations?.tenant_id || req.tenantId || null;
+    const overtimeRate = await getTenantOvertimeRate(resTenant);
+    const esp = session.reservations?.espaces || {};
+    const effectiveRate = overtimeRate != null ? Number(overtimeRate) : Number(esp.tarif_horaire || 0);
+    const tvaPct = Number(esp.tva_pct ?? DEFAULT_TVA_PCT);
+
+    const overtimeCalc = computeOvertime15Min({
+      dateFin: session.reservations?.date_fin || nowIso,
+      nowOrStop: nowIso,
+      tarifHoraireTTC: effectiveRate,
+      tvaPct,
+    });
+    const overtime = overtimeCalc.overtimeSeconds > 0;
+
+    let { data, error } = await supabaseAdmin
       .from('sessions')
       .update({
-        check_out: now,
+        check_out: nowIso,
+        stopped_at: nowIso,
         statut: overtime ? 'overtime' : 'completed',
         temps_restant: 0,
+        ended_by_member: !isStaff,
+        overtime_tranches_15min: overtimeCalc.slices15Min,
+        overtime_montant_ttc: overtimeCalc.montantTTC,
       })
       .eq('id', session.id)
       .select(`
@@ -451,12 +496,104 @@ async function checkOut(req, res) {
       `)
       .single();
 
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) {
+      ({ data, error } = await supabaseAdmin
+        .from('sessions')
+        .update({
+          check_out: nowIso,
+          statut: overtime ? 'overtime' : 'completed',
+          temps_restant: 0,
+        })
+        .eq('id', session.id)
+        .select(`
+          *,
+          reservations (
+            id, date_debut, date_fin, statut,
+            espaces (nom, type)
+          )
+        `)
+        .single());
+    }
+
     if (error) return res.status(400).json({ error: error.message });
 
+    if (session.reservation_id) {
+      await supabaseAdmin
+        .from('reservations')
+        .update({ statut: 'completed' })
+        .eq('id', session.reservation_id)
+        .catch(() => {});
+    }
+
+    let paiement = null;
+    if (overtimeCalc.montantTTC > 0 && session.reservations?.user_id) {
+      const { data: pRow } = await supabaseAdmin
+        .from('paiements')
+        .insert({
+          user_id: session.reservations.user_id,
+          reservation_id: session.reservation_id,
+          montant: overtimeCalc.montantTTC,
+          mode: 'cash',
+          statut: 'pending',
+          tenant_id: resTenant,
+          reference_externe: `DEPASSEMENT-${overtimeCalc.slices15Min}T`,
+        })
+        .select('*')
+        .maybeSingle();
+      paiement = pRow || null;
+    }
+
+    // Si arrêté par le membre, alerter en temps réel l'accueil + tracer dans le journal
+    if (!isStaff && resTenant) {
+      const memberName = session.reservations?.profiles
+        ? `${session.reservations.profiles.prenom || ''} ${session.reservations.profiles.nom || ''}`.trim()
+        : `${req.profile?.prenom || ''} ${req.profile?.nom || ''}`.trim() || 'Membre';
+      const spaceName = esp.nom || 'Espace';
+      const msg = overtimeCalc.montantTTC > 0
+        ? `${memberName} a terminé sa session (${spaceName}) avec un dépassement de ${overtimeCalc.overtimeMinutes} min (${overtimeCalc.montantTTC.toFixed(3)} DT TTC).`
+        : `${memberName} a terminé sa session de travail (${spaceName}).`;
+
+      const { data: admins } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('tenant_id', resTenant)
+        .in('role', ['admin', 'staff']);
+      for (const adm of admins || []) {
+        const notifPayload = {
+          user_id: adm.id,
+          type: 'session_terminee_membre',
+          canal: 'Dashboard',
+          lu: false,
+          message: `${msg} [Lien: /admin/reservations]`,
+        };
+        const { data: insertedNotif } = await supabaseAdmin
+          .from('notifications')
+          .insert(notifPayload)
+          .select('*')
+          .maybeSingle();
+        if (insertedNotif) emitNotification(adm.id, insertedNotif);
+      }
+
+      await logActivity({
+        tenantId: resTenant,
+        req,
+        action: 'fin_session_membre',
+        entityType: 'session',
+        entityId: session.id,
+        entityLabel: `${memberName} · ${spaceName}`,
+        afterData: { check_out: nowIso, overtime: overtimeCalc },
+      });
+    }
+
     res.json({
+      server_now: nowIso,
       session: data,
       overtime,
-      message: overtime ? 'Session terminée avec dépassement horaire.' : 'Check-out enregistré.',
+      billing_summary: overtimeCalc,
+      paiement,
+      message: overtime
+        ? `Session terminée avec dépassement (${overtimeCalc.overtimeMinutes} min · ${overtimeCalc.montantTTC.toFixed(3)} DT TTC à régler sur place).`
+        : 'Votre session est terminée et l’accueil a été prévenu.',
     });
 
     const sessionEventData = {
@@ -465,6 +602,7 @@ async function checkOut(req, res) {
       reservation_id: session.reservation_id,
       check_out: data.check_out,
       statut: data.statut,
+      ended_by_member: !isStaff,
       espace: session.reservations?.espaces,
     };
     if (overtime) {
@@ -513,6 +651,7 @@ function computeWorkSessionDetails(sessionRow, overtimeRateOverride = null) {
     etat_label = 'Bientôt terminée';
   }
 
+    const hourlyRate = overtimeRateOverride != null ? Number(overtimeRateOverride) : Number(res.espaces?.tarif_horaire || 0);
     const overtimeCalc = overtime_seconds > 0
       ? computeOvertime15Min({
         dateFin: res.date_fin,
@@ -939,7 +1078,7 @@ async function releaseSession(req, res) {
   }
 }
 
-// POST /api/sessions/start — Démarrage idempotent avec started_at UTC côté serveur
+// POST /api/sessions/start — Démarrage idempotent côté serveur (réservé accueil/staff, bloqué au membre)
 async function startSession(req, res) {
   try {
     const { reservation_id, idempotency_key } = req.body || {};
@@ -947,15 +1086,17 @@ async function startSession(req, res) {
       return res.status(400).json({ error: 'reservation_id est requis.' });
     }
     const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile?.role);
+    if (!isStaff) {
+      return res.status(403).json({
+        error: "Vous ne pouvez pas démarrer votre session vous-même. Présentez votre QR code à l'accueil.",
+      });
+    }
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('reservations')
       .select('*, espaces(id, nom, type, tenant_id)')
       .eq('id', reservation_id)
       .single();
     if (resErr || !reservation) return res.status(404).json({ error: 'Réservation introuvable.' });
-    if (!isStaff && reservation.user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Action non autorisée.' });
-    }
 
     const nowIso = new Date().toISOString();
     const { data: existing } = await supabaseAdmin
@@ -1378,11 +1519,16 @@ async function stopSession(req, res) {
   }
 }
 
-// POST /api/sessions/:id/extend — Prolongation 1 clic facturable si créneau suivant libre
+// POST /api/sessions/:id/extend — Prolongation 1 clic facturable (+15/+30/+60 membre) si créneau suivant libre
 async function extendSession(req, res) {
   try {
     const { id } = req.params;
-    const minutes = Math.max(15, Math.min(240, parseInt(req.body?.minutes, 10) || 30));
+    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile?.role);
+    const requestedMin = parseInt(req.body?.minutes, 10) || 30;
+    if (!isStaff && ![15, 30, 60].includes(requestedMin)) {
+      return res.status(400).json({ error: 'Durée de prolongation membre autorisée : 15, 30 ou 60 minutes.' });
+    }
+    const minutes = Math.max(15, Math.min(240, requestedMin));
 
     const { data: sess, error: sErr } = await supabaseAdmin
       .from('sessions')
@@ -1395,7 +1541,6 @@ async function extendSession(req, res) {
     }
 
     const resRow = sess.reservations;
-    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile?.role);
     if (!isStaff && resRow.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Action non autorisée.' });
     }
@@ -1416,6 +1561,7 @@ async function extendSession(req, res) {
       dateFin: newEndIso,
       tamponMinutes,
       excludeReservationId: resRow.id,
+      excludeUserId: req.user.id,
     });
     if (!avail.isAvailable) {
       return res.status(409).json({
@@ -1477,6 +1623,20 @@ async function extendSession(req, res) {
       afterData: { date_fin: newEndIso, supplement_ht: supplementHT, supplement_ttc: supplementTTC },
     });
 
+    if (!isStaff && tid) {
+      const { data: admins } = await supabaseAdmin.from('profiles').select('id').eq('tenant_id', tid).in('role', ['admin', 'staff']);
+      const memberName = `${req.profile?.prenom || ''} ${req.profile?.nom || ''}`.trim() || 'Membre';
+      for (const adm of admins || []) {
+        await supabaseAdmin.from('notifications').insert({
+          user_id: adm.id,
+          type: 'prolongation_session',
+          canal: 'Dashboard',
+          lu: false,
+          message: `${memberName} a prolongé sa session (${resRow.espaces?.nom || 'Espace'}) de +${minutes} min (${supplementTTC.toFixed(3)} DT TTC à régler sur place). [Lien: /admin/reservations]`,
+        }).catch(() => {});
+      }
+    }
+
     res.json({
       server_now: new Date().toISOString(),
       reservation_id: resRow.id,
@@ -1484,7 +1644,103 @@ async function extendSession(req, res) {
       supplement_ht: supplementHT,
       supplement_ttc: supplementTTC,
       paiement,
-      message: `Session prolongée de ${minutes} min (+${supplementTTC.toFixed(3)} DT TTC).`,
+      message: `Session prolongée de ${minutes} min (+${supplementTTC.toFixed(3)} DT TTC à régler sur place).`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// PATCH /api/sessions/:id/adjust — Correction tracée par le staff (après arrêt membre ou oubli)
+async function adjustSession(req, res) {
+  try {
+    const { id } = req.params;
+    const { check_out, montant_override_ttc, motif } = req.body || {};
+    if (!String(motif || '').trim()) {
+      return res.status(400).json({ error: 'Un motif de correction est obligatoire.' });
+    }
+
+    const { data: sess, error: sErr } = await supabaseAdmin
+      .from('sessions')
+      .select('*, reservations(id, user_id, tenant_id, date_debut, date_fin, espaces(id, nom, tarif_horaire, tva_pct))')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (sErr || !sess) {
+      return res.status(404).json({ error: 'Session introuvable.' });
+    }
+
+    const resTenant = sess.tenant_id || sess.reservations?.tenant_id || req.tenantId || null;
+    const nowIso = new Date().toISOString();
+    const effectiveCheckOut = check_out ? new Date(check_out).toISOString() : (sess.check_out || nowIso);
+
+    const esp = sess.reservations?.espaces || {};
+    const overtimeRate = await getTenantOvertimeRate(resTenant);
+    const effectiveRate = overtimeRate != null ? Number(overtimeRate) : Number(esp.tarif_horaire || 0);
+    const overtime = computeOvertime15Min({
+      dateFin: sess.reservations?.date_fin || effectiveCheckOut,
+      nowOrStop: effectiveCheckOut,
+      tarifHoraireTTC: effectiveRate,
+      tvaPct: Number(esp.tva_pct ?? DEFAULT_TVA_PCT),
+    });
+
+    const finalOvertimeTTC = montant_override_ttc !== undefined && montant_override_ttc !== null
+      ? roundMillime(montant_override_ttc)
+      : overtime.montantTTC;
+
+    const patch = {
+      check_out: effectiveCheckOut,
+      stopped_at: effectiveCheckOut,
+      overtime_tranches_15min: overtime.slices15Min,
+      overtime_montant_ttc: finalOvertimeTTC,
+      staff_adjusted_at: nowIso,
+      staff_adjusted_by: req.user.id,
+      staff_adjustment_reason: String(motif).trim(),
+    };
+
+    let { data: updated, error: updErr } = await supabaseAdmin
+      .from('sessions')
+      .update(patch)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (updErr && /column|does not exist|schema cache/i.test(updErr.message || '')) {
+      ({ data: updated, error: updErr } = await supabaseAdmin
+        .from('sessions')
+        .update({ check_out: effectiveCheckOut })
+        .eq('id', id)
+        .select('*')
+        .single());
+    }
+    if (updErr) return res.status(400).json({ error: updErr.message });
+
+    if (sess.reservation_id) {
+      await supabaseAdmin
+        .from('paiements')
+        .update({ montant: finalOvertimeTTC })
+        .eq('reservation_id', sess.reservation_id)
+        .eq('statut', 'pending')
+        .ilike('reference_externe', 'DEPASSEMENT-%')
+        .catch(() => {});
+    }
+
+    await logActivity({
+      tenantId: resTenant,
+      req,
+      action: 'correction_session',
+      entityType: 'session',
+      entityId: id,
+      entityLabel: `${esp.nom || 'Session'} (${finalOvertimeTTC.toFixed(3)} DT TTC)`,
+      beforeData: { check_out: sess.check_out, overtime_montant_ttc: sess.overtime_montant_ttc },
+      afterData: { check_out: effectiveCheckOut, overtime_montant_ttc: finalOvertimeTTC, motif: String(motif).trim() },
+    });
+
+    res.json({
+      server_now: nowIso,
+      session: updated,
+      overtime_montant_ttc: finalOvertimeTTC,
+      message: 'Session ajustée et journalisée.',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1515,5 +1771,6 @@ module.exports = {
   startWalkinSession,
   stopSession,
   extendSession,
+  adjustSession,
   autoCloseSweep,
 };

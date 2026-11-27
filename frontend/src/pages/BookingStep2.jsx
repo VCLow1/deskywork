@@ -1,4 +1,4 @@
-// pages/BookingStep2.jsx — Choix et vérification temps réel du créneau horaire (Africa/Tunis)
+// pages/BookingStep2.jsx — Choix créneau réel (horaires d'ouverture, Maintenant 15min, Journée complète & unités)
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
@@ -6,9 +6,10 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { useTheme } from '../context/ThemeContext';
 import { bookingApi } from '../services/api';
 import { getBookerNav } from '../utils/roles';
-import { formatDT, tunisLocalToISO } from '../utils/format';
+import { getNextQuarterHourTunis, parseOpeningHours, tunisLocalToISO } from '../utils/format';
 import { spaceTypeLabel } from '../constants/spaceTypes';
 import { getDefaultTunisSlot, getTodayTunisDate } from '../components/floorplan/floorPlanConstants';
+import Money from '../components/common/Money';
 import BookingShell from '../components/booking/BookingShell';
 
 export default function BookingStep2({ session }) {
@@ -18,6 +19,7 @@ export default function BookingStep2({ session }) {
   const espaceId = searchParams.get('espaceId');
   const itemId = searchParams.get('itemId') || '';
   const itemLabel = searchParams.get('itemLabel') || '';
+  const initialUniteId = searchParams.get('uniteId') || '';
   const navigate = useNavigate();
   const [nav] = useState(() => getBookerNav(metadata.role || 'member'));
 
@@ -29,6 +31,15 @@ export default function BookingStep2({ session }) {
   const [date, setDate] = useState(defSlot.date);
   const [startTime, setStartTime] = useState(defSlot.start);
   const [endTime, setEndTime] = useState(defSlot.end);
+  const [selectedUniteId, setSelectedUniteId] = useState(initialUniteId);
+  const [slotsMeta, setSlotsMeta] = useState({
+    horaires: '08:00 - 20:00',
+    min_duration_minutes: 60,
+    tampon_minutes: 15,
+    available_slots: [],
+    units_status: [],
+  });
+
   const [checking, setChecking] = useState(false);
   const [availabilityMessage, setAvailabilityMessage] = useState('');
   const [isAvailable, setIsAvailable] = useState(false);
@@ -41,17 +52,13 @@ export default function BookingStep2({ session }) {
     }
     let active = true;
     (async () => {
-      const { data: sp } = await supabase
-        .from('espaces')
-        .select('*')
-        .eq('id', espaceId)
-        .single();
+      const { data: sp } = await supabase.from('espaces').select('*').eq('id', espaceId).single();
       if (!active || !sp) return;
       setSpace(sp);
       if (sp.tenant_id) {
         const { data: tn } = await supabase
           .from('tenants')
-          .select('id, nom, slug, ville, adresse, cover_url, logo_url')
+          .select('id, nom, slug, ville, adresse, cover_url, logo_url, horaires_ouverture')
           .eq('id', sp.tenant_id)
           .maybeSingle();
         if (active && tn) setCoworking(tn);
@@ -61,6 +68,28 @@ export default function BookingStep2({ session }) {
       active = false;
     };
   }, [espaceId, navigate]);
+
+  // Charger les créneaux disponibles selon horaires d'ouverture, durée minimale & tampon
+  useEffect(() => {
+    if (!espaceId || !date) return;
+    bookingApi
+      .checkSlots({
+        espace_id: espaceId,
+        unite_id: selectedUniteId || null,
+        date,
+        duration_minutes: slotsMeta.min_duration_minutes || 60,
+      })
+      .then((res) => {
+        setSlotsMeta({
+          horaires: res.horaires || '08:00 - 20:00',
+          min_duration_minutes: res.min_duration_minutes || 60,
+          tampon_minutes: res.tampon_minutes ?? 15,
+          available_slots: Array.isArray(res.available_slots) ? res.available_slots : [],
+          units_status: Array.isArray(res.units_status) ? res.units_status : [],
+        });
+      })
+      .catch(() => {});
+  }, [espaceId, date, selectedUniteId]);
 
   const verifyAvailability = useCallback(async () => {
     if (!espaceId || !date || !startTime || !endTime) return;
@@ -72,6 +101,13 @@ export default function BookingStep2({ session }) {
       setIsAvailable(false);
       setOccupancy(null);
       setAvailabilityMessage("L'heure de fin doit être postérieure à l'heure de début.");
+      return;
+    }
+
+    const durMin = Math.round((new Date(endDateTime) - new Date(startDateTime)) / 60000);
+    if (durMin < (slotsMeta.min_duration_minutes || 30)) {
+      setIsAvailable(false);
+      setAvailabilityMessage(`Durée minimale requise : ${slotsMeta.min_duration_minutes || 60} minutes.`);
       return;
     }
 
@@ -107,14 +143,14 @@ export default function BookingStep2({ session }) {
     } finally {
       setChecking(false);
     }
-  }, [espaceId, date, startTime, endTime, itemId, space?.capacite]);
+  }, [espaceId, date, startTime, endTime, itemId, space?.capacite, slotsMeta.min_duration_minutes]);
 
-  // Vérification automatique temps réel (debounce 300ms) dès que le créneau change
+  // Vérification automatique temps réel (debounce 250ms) dès que le créneau change
   useEffect(() => {
     if (!space) return undefined;
     const t = setTimeout(() => {
       verifyAvailability();
-    }, 300);
+    }, 250);
     return () => clearTimeout(t);
   }, [space, verifyAvailability]);
 
@@ -131,33 +167,47 @@ export default function BookingStep2({ session }) {
     return rate * Math.max(0, durationHours);
   }, [space?.tarif_horaire, durationHours]);
 
+  const selectedUnitObj = useMemo(
+    () => slotsMeta.units_status.find((u) => u.id === selectedUniteId) || null,
+    [slotsMeta.units_status, selectedUniteId]
+  );
+
   const handleProceed = () => {
+    const effItemId = itemId || selectedUnitObj?.floor_plan_item_id || '';
+    const effItemLabel = itemLabel || selectedUnitObj?.code || selectedUnitObj?.nom || '';
     const qs = new URLSearchParams({
       espaceId,
       date,
       start: startTime,
       end: endTime,
-      ...(itemId ? { itemId } : {}),
-      ...(itemLabel ? { itemLabel } : {}),
+      ...(selectedUniteId ? { uniteId: selectedUniteId } : {}),
+      ...(effItemId ? { itemId: effItemId } : {}),
+      ...(effItemLabel ? { itemLabel: effItemLabel } : {}),
     }).toString();
     navigate(`/book/step3?${qs}`);
   };
 
   const applyPreset = (type) => {
+    const parsed = parseOpeningHours(slotsMeta.horaires);
+    const openStr = `${String(parsed.openHour).padStart(2, '0')}:${String(parsed.openMin).padStart(2, '0')}`;
+    const closeStr = `${String(parsed.closeHour).padStart(2, '0')}:${String(parsed.closeMin).padStart(2, '0')}`;
     if (type === 'now') {
-      const s = getDefaultTunisSlot();
-      setDate(s.date);
-      setStartTime(s.start);
-      setEndTime(s.end);
+      const q = getNextQuarterHourTunis({
+        horaires: slotsMeta.horaires,
+        durationMinutes: Math.max(60, slotsMeta.min_duration_minutes || 60),
+      });
+      setDate(q.date);
+      setStartTime(q.start);
+      setEndTime(q.end);
+    } else if (type === 'day') {
+      setStartTime(openStr);
+      setEndTime(closeStr);
     } else if (type === 'morning') {
-      setStartTime('09:00');
+      setStartTime(openStr);
       setEndTime('13:00');
     } else if (type === 'afternoon') {
       setStartTime('14:00');
-      setEndTime('18:00');
-    } else if (type === 'day') {
-      setStartTime('09:00');
-      setEndTime('17:00');
+      setEndTime(closeStr);
     }
   };
 
@@ -169,7 +219,7 @@ export default function BookingStep2({ session }) {
 
   if (!space) {
     return (
-      <BookingShell activeStep={2} nav={nav} backTo="/book/step1" backLabel="Retour">
+      <BookingShell activeStep={2} nav={nav}>
         <div className="flex items-center justify-center py-24">
           <div className="w-12 h-12 rounded-full border-4 border-[#f95d00] border-t-transparent animate-spin" />
         </div>
@@ -183,11 +233,9 @@ export default function BookingStep2({ session }) {
     <BookingShell
       activeStep={2}
       nav={nav}
-      backTo={backHref}
-      backLabel="Retour aux espaces"
       subtitle={coworking?.nom || space.nom}
       onStepClick={(st) => {
-        if (st === 1) navigate('/book/step1');
+        if (st === 1) navigate('/book/step1?browse=1');
       }}
     >
       <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn">
@@ -213,14 +261,14 @@ export default function BookingStep2({ session }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2 mb-1">
                 <span
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase"
+                  className="px-2.5 py-0.5 rounded-full text-xs font-extrabold uppercase"
                   style={{ backgroundColor: dark ? 'rgba(249,93,0,0.18)' : '#ffedd8', color: '#f95d00' }}
                 >
                   {spaceTypeLabel(space.type)}
                 </span>
-                {itemLabel && (
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
-                    Poste Plan 2D : {itemLabel}
+                {(itemLabel || selectedUnitObj) && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                    Unité : {itemLabel || selectedUnitObj?.code || selectedUnitObj?.nom}
                   </span>
                 )}
               </div>
@@ -229,18 +277,15 @@ export default function BookingStep2({ session }) {
               </h1>
               <p className="text-xs mt-0.5 mb-0" style={{ color: textMuted }}>
                 {coworking ? `${coworking.nom}${coworking.ville ? ` · ${coworking.ville}` : ''} · ` : ''}
-                Capacité {space.capacite} pers. ·{' '}
-                {space.type === 'open_space' || space.type === 'hot_desk'
-                  ? 'Espace partagé'
-                  : 'Salle privative exclusive'}
+                Horaires : {slotsMeta.horaires} · Durée min. {slotsMeta.min_duration_minutes} min · Tampon {slotsMeta.tampon_minutes} min
               </p>
             </div>
           </div>
 
           <div className="text-left sm:text-right shrink-0">
-            <span className="text-[11px] font-semibold block" style={{ color: textMuted }}>Tarif horaire</span>
+            <span className="text-xs font-semibold block" style={{ color: textMuted }}>Tarif horaire</span>
             <span className="font-sora font-extrabold text-xl text-[#f95d00]">
-              {formatDT(space.tarif_horaire)} <span className="text-xs font-normal" style={{ color: textMuted }}>/ h</span>
+              <Money amount={space.tarif_horaire} zeroLabel="Gratuit" unit="/ h" />
             </span>
           </div>
         </div>
@@ -260,7 +305,7 @@ export default function BookingStep2({ session }) {
                 Choisissez votre créneau
               </h2>
               <p className="text-xs sm:text-sm mt-1 mb-0" style={{ color: textMuted }}>
-                La disponibilité est vérifiée instantanément en temps réel (fuseau Africa/Tunis).
+                Vérification automatique instantanée (fuseau Africa/Tunis).
               </p>
             </div>
             <Link
@@ -273,13 +318,13 @@ export default function BookingStep2({ session }) {
             </Link>
           </div>
 
-          {/* Raccourcis rapides */}
+          {/* Raccourcis rapides conformes : Maintenant (quart d'heure) & Journée complète */}
           <div className="flex flex-wrap gap-2">
             {[
-              { id: 'now', label: '⚡ Maintenant (+2h)', icon: 'bolt' },
-              { id: 'morning', label: 'Matin (09h - 13h)', icon: 'wb_sunny' },
-              { id: 'afternoon', label: 'Après-midi (14h - 18h)', icon: 'schedule' },
-              { id: 'day', label: 'Journée complète (09h - 17h)', icon: 'today' },
+              { id: 'now', label: '⚡ Maintenant (prochain quart d’heure)' },
+              { id: 'morning', label: 'Matinée' },
+              { id: 'afternoon', label: 'Après-midi' },
+              { id: 'day', label: `Journée complète (${slotsMeta.horaires})` },
             ].map((p) => (
               <button
                 key={p.id}
@@ -293,13 +338,38 @@ export default function BookingStep2({ session }) {
             ))}
           </div>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              verifyAvailability();
-            }}
-            className="space-y-4"
-          >
+          {/* Choix d'unité / poste si l'espace comporte des unités */}
+          {slotsMeta.units_status.length > 0 && !itemId && (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold uppercase tracking-wide" style={{ color: textMuted }}>
+                Poste / Unité (optionnel)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {slotsMeta.units_status.map((u) => {
+                  const unavailable = u.statut && u.statut !== 'disponible';
+                  const active = selectedUniteId === u.id;
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      disabled={unavailable}
+                      onClick={() => setSelectedUniteId(active ? '' : u.id)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{
+                        backgroundColor: active ? '#f95d00' : subtleBg,
+                        color: active ? '#ffffff' : textMain,
+                        border: `1px solid ${active ? '#f95d00' : cardBorder}`,
+                      }}
+                    >
+                      {u.code || u.nom} {unavailable ? `(${u.statut === 'en_maintenance' ? 'Maintenance' : 'Indispo'})` : ''}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label htmlFor="date" className="block text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: textMuted }}>
@@ -347,6 +417,38 @@ export default function BookingStep2({ session }) {
                 />
               </div>
             </div>
+
+            {/* Créneaux libres suggérés du jour */}
+            {slotsMeta.available_slots.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold" style={{ color: textMuted }}>
+                  Créneaux suggérés libres ce jour :
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {slotsMeta.available_slots.slice(0, 8).map((s) => {
+                    const isPicked = startTime === s.heure_debut && endTime === s.heure_fin;
+                    return (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onClick={() => {
+                          setStartTime(s.heure_debut);
+                          setEndTime(s.heure_fin);
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
+                        style={{
+                          backgroundColor: isPicked ? '#f95d00' : subtleBg,
+                          color: isPicked ? '#ffffff' : textMain,
+                          border: `1px solid ${isPicked ? '#f95d00' : cardBorder}`,
+                        }}
+                      >
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Statut temps réel */}
             {checking && (
@@ -412,7 +514,7 @@ export default function BookingStep2({ session }) {
               </div>
             )}
 
-            {/* Récapitulatif tarifaire + CTA */}
+            {/* Récapitulatif tarifaire + CTA (sans bouton Revérifier) */}
             <div
               className="pt-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               style={{ borderTop: `1px solid ${cardBorder}` }}
@@ -422,36 +524,26 @@ export default function BookingStep2({ session }) {
                   Estimation ({durationHours > 0 ? `${durationHours} h` : 'créneau invalide'}) · Paiement sur place
                 </span>
                 <span className="font-sora font-extrabold text-2xl text-[#f95d00]">
-                  {formatDT(totalEstimate)}
+                  <Money amount={totalEstimate} zeroLabel="Gratuit" />
                 </span>
               </div>
 
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="submit"
-                  disabled={checking}
-                  className="px-4 py-3 rounded-2xl text-xs font-bold cursor-pointer"
-                  style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
-                >
-                  Revérifier
-                </button>
-                <button
-                  type="button"
-                  disabled={!isAvailable || checking || durationHours <= 0}
-                  onClick={handleProceed}
-                  className="px-6 py-3 rounded-2xl text-sm font-extrabold cursor-pointer transition-transform hover:scale-[1.02] disabled:opacity-45 disabled:cursor-not-allowed"
-                  style={{
-                    background: 'linear-gradient(135deg, #f95d00 0%, #ff8234 100%)',
-                    color: '#ffffff',
-                    border: 'none',
-                    boxShadow: '0 8px 20px rgba(249,93,0,0.3)',
-                  }}
-                >
-                  Continuer vers la confirmation →
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={!isAvailable || checking || durationHours <= 0}
+                onClick={handleProceed}
+                className="px-6 py-3 rounded-2xl text-sm font-extrabold cursor-pointer transition-transform hover:scale-[1.02] disabled:opacity-45 disabled:cursor-not-allowed"
+                style={{
+                  background: 'linear-gradient(135deg, #f95d00 0%, #ff8234 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  boxShadow: '0 8px 20px rgba(249,93,0,0.3)',
+                }}
+              >
+                Continuer vers la confirmation →
+              </button>
             </div>
-          </form>
+          </div>
         </div>
       </div>
     </BookingShell>

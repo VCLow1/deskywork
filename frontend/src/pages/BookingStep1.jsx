@@ -6,15 +6,27 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { useTheme } from '../context/ThemeContext';
 import { guestApi, floorPlansApi, memberPortalApi } from '../services/api';
 import { getBookerNav } from '../utils/roles';
-import { formatDT } from '../utils/format';
-import { spaceTypeLabel } from '../constants/spaceTypes';
+import { formatPriceOrFree, getNextQuarterHourTunis, parseOpeningHours } from '../utils/format';
+import { spaceTypeLabel, EQUIPMENTS } from '../constants/spaceTypes';
 import { getDefaultTunisSlot, getTodayTunisDate } from '../components/floorplan/floorPlanConstants';
+import Money from '../components/common/Money';
 import BookingShell from '../components/booking/BookingShell';
 import SpacePhotoGalleryModal from '../components/booking/SpacePhotoGalleryModal';
 import FloorPlanBookingView from '../components/floorplan/FloorPlanBookingView';
 
-const START_HOURS = Array.from({ length: 14 }, (_, i) => `${String(7 + i).padStart(2, '0')}:00`);
-const END_HOURS = Array.from({ length: 15 }, (_, i) => `${String(8 + i).padStart(2, '0')}:00`);
+function buildHalfHourList(openHour, openMin, closeHour, closeMin, isEnd = false) {
+  const startTotal = openHour * 60 + openMin;
+  const endTotal = closeHour * 60 + closeMin;
+  const list = [];
+  const first = isEnd ? startTotal + 30 : startTotal;
+  const last = isEnd ? endTotal : endTotal - 30;
+  for (let m = first; m <= last; m += 15) {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    list.push(`${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`);
+  }
+  return list;
+}
 
 // Coordonnées de repli pour villes/quartiers tunisiens lorsque latitude/longitude ne sont pas encore renseignées sur le coworking
 const TUNISIA_CITY_COORDS = {
@@ -119,7 +131,9 @@ export default function BookingStep1({ session }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const selectedTenantId = searchParams.get('tenantId') || '';
+  const browseParam = searchParams.get('browse') === '1';
   const initialModeParam = searchParams.get('view'); // 'images' | 'plan'
+  const [hasLeftHomeTenant, setHasLeftHomeTenant] = useState(false);
 
   const [userRole, setUserRole] = useState(() => metadata?.role || '');
   const [showTrainerContextModal, setShowTrainerContextModal] = useState(false);
@@ -162,6 +176,9 @@ export default function BookingStep1({ session }) {
   const [lastSyncedAt, setLastSyncedAt] = useState('');
   const [spaceViewMode, setSpaceViewMode] = useState(initialModeParam === 'plan' ? 'plan' : 'images'); // 'images' | 'plan'
   const [spaceTypeFilter, setSpaceTypeFilter] = useState('all');
+  const [minCapacityFilter, setMinCapacityFilter] = useState(0);
+  const [equipmentFilters, setEquipmentFilters] = useState([]);
+  const [selectedUnitBySpace, setSelectedUnitBySpace] = useState({});
   const [onlyAvailableSpaces, setOnlyAvailableSpaces] = useState(false);
   const [gallerySpace, setGallerySpace] = useState(null);
 
@@ -219,6 +236,13 @@ export default function BookingStep1({ session }) {
       active = false;
     };
   }, []);
+
+  // Auto-sélection de l'établissement habituel si membre déjà rattaché (masque l'étape 1 Marketplace)
+  useEffect(() => {
+    if (!selectedTenantId && !browseParam && !hasLeftHomeTenant && recs.home_tenant_id) {
+      setSearchParams({ tenantId: recs.home_tenant_id }, { replace: true });
+    }
+  }, [selectedTenantId, browseParam, hasLeftHomeTenant, recs.home_tenant_id, setSearchParams]);
 
   const handleRequestGeolocation = () => {
     if (!navigator?.geolocation) {
@@ -420,6 +444,9 @@ export default function BookingStep1({ session }) {
 
   const handleSelectCoworking = (cw) => {
     setSpaceTypeFilter('all');
+    setMinCapacityFilter(0);
+    setEquipmentFilters([]);
+    setSelectedUnitBySpace({});
     setOnlyAvailableSpaces(false);
     setSpaceViewMode('images');
     setSearchParams({ tenantId: cw.id });
@@ -427,16 +454,47 @@ export default function BookingStep1({ session }) {
   };
 
   const handleBackToCoworkings = () => {
+    setHasLeftHomeTenant(true);
     setLiveData(null);
-    setSearchParams({});
+    setSearchParams({ browse: '1' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleQuickDuration = (hours) => {
-    const startH = parseInt(slotStart.split(':')[0], 10) || 9;
-    const endH = Math.min(22, startH + hours);
+  const openingHoursStr = liveData?.tenant?.horaires_ouverture || '08:00 - 20:00';
+  const minDurationMin = Number(liveData?.tenant?.min_duration_minutes || 60);
+  const parsedHours = useMemo(() => parseOpeningHours(openingHoursStr), [openingHoursStr]);
+  const startHoursOptions = useMemo(
+    () => buildHalfHourList(parsedHours.openHour, parsedHours.openMin, parsedHours.closeHour, parsedHours.closeMin, false),
+    [parsedHours]
+  );
+  const endHoursOptions = useMemo(
+    () => buildHalfHourList(parsedHours.openHour, parsedHours.openMin, parsedHours.closeHour, parsedHours.closeMin, true),
+    [parsedHours]
+  );
+
+  const handleSelectNowQuarter = () => {
+    const qSlot = getNextQuarterHourTunis({ horaires: openingHoursStr, durationMinutes: Math.max(60, minDurationMin) });
+    setSlotDate(qSlot.date);
+    setSlotStart(qSlot.start);
+    setSlotEnd(qSlot.end);
+    setSlotMode('now');
+  };
+
+  const handleSelectFullDay = () => {
+    const openStr = `${String(parsedHours.openHour).padStart(2, '0')}:${String(parsedHours.openMin).padStart(2, '0')}`;
+    const closeStr = `${String(parsedHours.closeHour).padStart(2, '0')}:${String(parsedHours.closeMin).padStart(2, '0')}`;
     setSlotMode('custom');
-    setSlotEnd(`${String(endH).padStart(2, '0')}:00`);
+    setSlotStart(openStr);
+    setSlotEnd(closeStr);
+  };
+
+  const handleQuickDuration = (hours) => {
+    const [hStr, mStr] = slotStart.split(':');
+    const startTotal = (parseInt(hStr, 10) || parsedHours.openHour) * 60 + (parseInt(mStr, 10) || 0);
+    const closeTotal = parsedHours.closeHour * 60 + parsedHours.closeMin;
+    const endTotal = Math.min(closeTotal, startTotal + hours * 60);
+    setSlotMode('custom');
+    setSlotEnd(`${String(Math.floor(endTotal / 60)).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`);
   };
 
   const activeSlot = liveData?.slot || {
@@ -450,17 +508,21 @@ export default function BookingStep1({ session }) {
     const s = new Date(`${activeSlot.date}T${activeSlot.start}:00+01:00`).getTime();
     const e = new Date(`${activeSlot.date}T${activeSlot.end}:00+01:00`).getTime();
     if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 2;
-    return Math.max(0.5, Number(((e - s) / 3600000).toFixed(2)));
+    return Math.max(0.25, Number(((e - s) / 3600000).toFixed(2)));
   }, [activeSlot.date, activeSlot.start, activeSlot.end]);
 
-  const handleBookDirect = (space, itemId = '', itemLabel = '') => {
+  const handleBookDirect = (space, itemId = '', itemLabel = '', uniteId = '') => {
+    const chosenUnit = uniteId
+      ? { id: uniteId, code: itemLabel, floor_plan_item_id: itemId }
+      : selectedUnitBySpace[space.id || space.space_id] || null;
     const qs = new URLSearchParams({
       espaceId: space.id || space.space_id,
       date: activeSlot.date,
       start: activeSlot.start,
       end: activeSlot.end,
-      ...(itemId ? { itemId } : {}),
-      ...(itemLabel ? { itemLabel } : {}),
+      ...(chosenUnit?.id ? { uniteId: chosenUnit.id } : {}),
+      ...(chosenUnit?.floor_plan_item_id || itemId ? { itemId: chosenUnit?.floor_plan_item_id || itemId } : {}),
+      ...(chosenUnit?.code || itemLabel ? { itemLabel: chosenUnit?.code || itemLabel } : {}),
     }).toString();
     navigate(`/book/step3?${qs}`);
   };
@@ -472,10 +534,16 @@ export default function BookingStep1({ session }) {
     const list = liveData?.spaces || [];
     return list.filter((sp) => {
       if (spaceTypeFilter !== 'all' && sp.type !== spaceTypeFilter) return false;
+      if (minCapacityFilter > 0 && Number(sp.capacite || 1) < minCapacityFilter) return false;
+      if (equipmentFilters.length > 0) {
+        const spEq = (Array.isArray(sp.equipements) ? sp.equipements : []).map((x) => String(x).toLowerCase());
+        const okEq = equipmentFilters.every((reqEq) => spEq.some((x) => x.includes(reqEq.toLowerCase())));
+        if (!okEq) return false;
+      }
       if (onlyAvailableSpaces && sp.live_status !== 'free' && sp.live_status !== 'limited') return false;
       return true;
     });
-  }, [liveData?.spaces, spaceTypeFilter, onlyAvailableSpaces]);
+  }, [liveData?.spaces, spaceTypeFilter, minCapacityFilter, equipmentFilters, onlyAvailableSpaces]);
 
   const availableSpaceTypes = useMemo(() => {
     const types = new Set((liveData?.spaces || []).map((s) => s.type).filter(Boolean));
@@ -535,15 +603,15 @@ export default function BookingStep1({ session }) {
               <div className="flex flex-wrap gap-1.5">
                 {c.is_featured && (
                   <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wide shadow"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide shadow"
                     style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
                   >
-                    ★ Mis en avant
+                    Sponsorisé
                   </span>
                 )}
                 {!c.is_featured && c.is_partner && (
                   <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wide shadow"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide shadow"
                     style={{ backgroundColor: '#100f0d', color: '#fbffff', border: '1px solid rgba(255,255,255,0.2)' }}
                   >
                     ✓ Partenaire
@@ -551,7 +619,7 @@ export default function BookingStep1({ session }) {
                 )}
                 {highlightBadge && (
                   <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold shadow"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold shadow"
                     style={{ backgroundColor: 'rgba(16,185,129,0.92)', color: '#ffffff' }}
                   >
                     {highlightBadge}
@@ -561,7 +629,7 @@ export default function BookingStep1({ session }) {
 
               {c.distanceKm != null ? (
                 <span
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md shrink-0"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold backdrop-blur-md shrink-0"
                   style={{ backgroundColor: 'rgba(16,15,13,0.72)', color: '#ffffff', border: '1px solid rgba(255,255,255,0.18)' }}
                 >
                   <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 13 }}>near_me</span>
@@ -569,7 +637,7 @@ export default function BookingStep1({ session }) {
                 </span>
               ) : c.ville ? (
                 <span
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md shrink-0"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold backdrop-blur-md shrink-0"
                   style={{ backgroundColor: 'rgba(16,15,13,0.72)', color: '#ffffff' }}
                 >
                   {c.ville}
@@ -580,7 +648,7 @@ export default function BookingStep1({ session }) {
             {/* Rangée inférieure : Pastille temps réel & Plan 2D */}
             <div className="absolute bottom-3 inset-x-3 flex items-center justify-between gap-2">
               <span
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold backdrop-blur-md"
                 style={{
                   backgroundColor: hasFreeNow ? 'rgba(6,95,70,0.88)' : 'rgba(153,27,27,0.88)',
                   color: '#ffffff',
@@ -594,7 +662,7 @@ export default function BookingStep1({ session }) {
 
               {c.has_floor_plan && (
                 <span
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold backdrop-blur-md"
                   style={{ backgroundColor: 'rgba(255,255,255,0.94)', color: '#100f0d' }}
                 >
                   <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 14 }}>map</span>
@@ -629,7 +697,7 @@ export default function BookingStep1({ session }) {
             <div className="flex flex-wrap gap-1.5">
               {c.visitCount > 0 && (
                 <span
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                  className="px-2.5 py-0.5 rounded-full text-xs font-bold"
                   style={{ backgroundColor: dark ? 'rgba(249,93,0,0.2)' : '#fff7ed', color: '#f95d00' }}
                 >
                   Déjà réservé {c.visitCount}×
@@ -637,7 +705,7 @@ export default function BookingStep1({ session }) {
               )}
               {c.has_promo && (
                 <span
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                  className="px-2.5 py-0.5 rounded-full text-xs font-bold"
                   style={{ backgroundColor: dark ? 'rgba(245,158,11,0.2)' : '#fef3c7', color: dark ? '#fcd34d' : '#b45309' }}
                 >
                   Code promo actif
@@ -646,7 +714,7 @@ export default function BookingStep1({ session }) {
               {(c.space_types || []).slice(0, 3).map((tp) => (
                 <span
                   key={tp}
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold"
+                  className="px-2.5 py-0.5 rounded-full text-xs font-semibold"
                   style={{ backgroundColor: subtleBg, color: textMuted, border: `1px solid ${cardBorder}` }}
                 >
                   {spaceTypeLabel(tp)}
@@ -662,11 +730,11 @@ export default function BookingStep1({ session }) {
           style={{ backgroundColor: subtleBg, borderTop: `1px solid ${cardBorder}` }}
         >
           <div>
-            <span className="text-[10px] font-semibold uppercase tracking-wide block" style={{ color: textMuted }}>
+            <span className="text-xs font-semibold uppercase tracking-wide block" style={{ color: textMuted }}>
               {c.min_tarif_horaire != null ? 'À partir de' : 'Tarification'}
             </span>
             <span className="font-sora font-extrabold text-base text-[#f95d00]">
-              {c.min_tarif_horaire != null ? `${formatDT(c.min_tarif_horaire)}/h` : 'Sur créneau'}
+              {c.min_tarif_horaire != null ? formatPriceOrFree(c.min_tarif_horaire, { zeroLabel: 'Gratuit', unit: '/ h' }) : 'Sur créneau'}
             </span>
           </div>
 
@@ -695,8 +763,6 @@ export default function BookingStep1({ session }) {
     <BookingShell
       activeStep={selectedTenantId ? 2 : 1}
       nav={nav}
-      backTo={selectedTenantId ? undefined : nav.home}
-      backLabel={selectedTenantId ? 'Quitter' : 'Annuler'}
       subtitle={selectedCoworking?.nom || null}
       onStepClick={(st) => {
         if (st === 1 && selectedTenantId) handleBackToCoworkings();
@@ -720,7 +786,7 @@ export default function BookingStep1({ session }) {
                 <span className="material-symbols-outlined" style={{ fontSize: 28 }}>school</span>
               </div>
               <div>
-                <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#f95d00]">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-[#f95d00]">
                   Compte Formateur Partenaire
                 </span>
                 <h2 className="font-sora font-extrabold text-xl m-0" style={{ color: textMain }}>
@@ -852,7 +918,7 @@ export default function BookingStep1({ session }) {
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5 mb-6">
               <div>
                 <span
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider mb-3"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider mb-3"
                   style={{ backgroundColor: dark ? 'rgba(249,93,0,0.18)' : '#ffedd8', color: '#f95d00' }}
                 >
                   <span className="w-2 h-2 rounded-full bg-[#f95d00] animate-pulse" />
@@ -973,7 +1039,7 @@ export default function BookingStep1({ session }) {
                 { id: 'priority', label: '✨ Par priorité', count: categorizedSections.allList.length },
                 { id: 'nearby', label: '📍 Plus proches', count: categorizedSections.nearbyList.length },
                 { id: 'recommended', label: '🎯 Recommandés', count: categorizedSections.recommendedList.length },
-                { id: 'partners', label: '⭐ Mis en avant & Partenaires', count: categorizedSections.partnersList.length },
+                { id: 'partners', label: '⭐ Sponsorisés & Partenaires', count: categorizedSections.partnersList.length },
                 { id: 'all', label: '🏢 Tous', count: categorizedSections.allList.length },
               ].map((tab) => {
                 const active = activeCategory === tab.id;
@@ -992,7 +1058,7 @@ export default function BookingStep1({ session }) {
                   >
                     <span>{tab.label}</span>
                     <span
-                      className="px-1.5 py-0.5 rounded-full text-[10px]"
+                      className="px-1.5 py-0.5 rounded-full text-xs"
                       style={{
                         backgroundColor: active ? 'rgba(249,93,0,0.9)' : (dark ? 'rgba(255,255,255,0.08)' : 'rgba(16,15,13,0.07)'),
                         color: active ? '#ffffff' : textMain,
@@ -1119,13 +1185,13 @@ export default function BookingStep1({ session }) {
                 </section>
               )}
 
-              {/* 3. Partenaires & Mis en avant */}
+              {/* 3. Sponsorisés & Partenaires */}
               {categorizedSections.partnersUnique.length > 0 && (
                 <section className="space-y-4">
                   <div>
                     <h2 className="font-sora font-extrabold text-xl m-0 flex items-center gap-2" style={{ color: textMain }}>
                       <span className="material-symbols-outlined text-[#f95d00]">workspace_premium</span>
-                      Partenaires & Mis en avant
+                      Établissements sponsorisés & Partenaires
                     </h2>
                     <p className="text-xs mt-0.5 mb-0" style={{ color: textMuted }}>
                       Établissements partenaires officiels sélectionnés par DeskyWork.
@@ -1189,20 +1255,19 @@ export default function BookingStep1({ session }) {
                   <button
                     type="button"
                     onClick={handleBackToCoworkings}
-                    className="inline-flex items-center gap-1 text-xs font-extrabold cursor-pointer px-2.5 py-1 rounded-full transition-colors"
-                    style={{ backgroundColor: subtleBg, color: '#f95d00', border: `1px solid ${cardBorder}` }}
+                    className="inline-flex items-center gap-1 text-xs font-semibold underline cursor-pointer bg-transparent border-none p-0"
+                    style={{ color: textMuted }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>arrow_back</span>
-                    Changer d&apos;établissement
+                    <span>Autre coworking</span>
                   </button>
                   {selectedCoworking?.is_featured && (
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-[#f95d00] text-white">
-                      ★ Mis en avant
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold uppercase bg-[#f95d00] text-white">
+                      Sponsorisé
                     </span>
                   )}
                   {selectedCoworking?.is_partner && !selectedCoworking?.is_featured && (
                     <span
-                      className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase"
+                      className="px-2.5 py-0.5 rounded-full text-xs font-extrabold uppercase"
                       style={{ backgroundColor: dark ? '#2e2c29' : '#100f0d', color: '#ffffff' }}
                     >
                       Partenaire
@@ -1237,7 +1302,7 @@ export default function BookingStep1({ session }) {
               </div>
             </div>
 
-            {/* Indicateurs live du coworking */}
+              {/* Indicateurs live du coworking */}
             <div className="flex flex-wrap items-center gap-2.5 shrink-0">
               <div
                 className="px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-2"
@@ -1246,7 +1311,11 @@ export default function BookingStep1({ session }) {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>
                   {liveData?.summary
-                    ? `${liveData.summary.free_spaces}/${liveData.summary.total_spaces} espace${liveData.summary.free_spaces > 1 ? 's' : ''} libre${liveData.summary.free_spaces > 1 ? 's' : ''}`
+                    ? `${liveData.summary.free_spaces}/${liveData.summary.total_spaces} espace${liveData.summary.free_spaces > 1 ? 's' : ''} libre${liveData.summary.free_spaces > 1 ? 's' : ''}${
+                        liveData.summary.total_units > 0
+                          ? ` (${liveData.summary.available_units}/${liveData.summary.total_units} unités)`
+                          : ''
+                      }`
                     : 'Synchronisation...'}
                 </span>
               </div>
@@ -1256,7 +1325,7 @@ export default function BookingStep1({ session }) {
                   type="button"
                   onClick={() => fetchLiveSpaces()}
                   title="Actualiser la disponibilité en temps réel"
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl text-[11px] font-semibold cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold cursor-pointer"
                   style={{ backgroundColor: subtleBg, color: textMuted, border: `1px solid ${cardBorder}` }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 14 }}>refresh</span>
@@ -1272,11 +1341,11 @@ export default function BookingStep1({ session }) {
             style={{ backgroundColor: cardBg, border: `1px solid ${cardBorder}` }}
           >
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-              {/* Mode Temps Réel vs Créneau Planifié */}
+              {/* Mode Maintenant (quart d'heure) vs Planifier un créneau vs Journée complète */}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setSlotMode('now')}
+                  onClick={handleSelectNowQuarter}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold cursor-pointer transition-all"
                   style={{
                     backgroundColor: slotMode === 'now' ? '#10b981' : subtleBg,
@@ -1286,7 +1355,21 @@ export default function BookingStep1({ session }) {
                   }}
                 >
                   <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                  ⚡ Maintenant (Temps réel)
+                  ⚡ Maintenant
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSelectFullDay}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-extrabold cursor-pointer transition-all"
+                  style={{
+                    backgroundColor: subtleBg,
+                    color: textMain,
+                    border: `1px solid ${cardBorder}`,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>today</span>
+                  Journée complète
                 </button>
 
                 <button
@@ -1349,11 +1432,11 @@ export default function BookingStep1({ session }) {
               </div>
             </div>
 
-            {/* Champs créneau si mode planifié */}
+            {/* Champs créneau selon horaires d'ouverture réels */}
             {slotMode === 'custom' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2" style={{ borderTop: `1px solid ${cardBorder}` }}>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase opacity-70 mb-1">Date (Tunis)</label>
+                  <label className="block text-xs font-bold uppercase opacity-70 mb-1">Date (Tunis)</label>
                   <input
                     type="date"
                     min={minDate}
@@ -1364,27 +1447,27 @@ export default function BookingStep1({ session }) {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase opacity-70 mb-1">Début</label>
+                  <label className="block text-xs font-bold uppercase opacity-70 mb-1">Début</label>
                   <select
                     value={slotStart}
                     onChange={(e) => setSlotStart(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-sm font-semibold outline-none"
                     style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
                   >
-                    {START_HOURS.map((h) => (
+                    {startHoursOptions.map((h) => (
                       <option key={h} value={h}>{h}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase opacity-70 mb-1">Fin</label>
+                  <label className="block text-xs font-bold uppercase opacity-70 mb-1">Fin</label>
                   <select
                     value={slotEnd}
                     onChange={(e) => setSlotEnd(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl text-sm font-semibold outline-none"
                     style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
                   >
-                    {END_HOURS.map((h) => (
+                    {endHoursOptions.map((h) => (
                       <option key={h} value={h}>{h}</option>
                     ))}
                   </select>
@@ -1394,7 +1477,6 @@ export default function BookingStep1({ session }) {
                     { label: '+1h', h: 1 },
                     { label: '+2h', h: 2 },
                     { label: '+4h', h: 4 },
-                    { label: 'Journée (8h)', h: 8 },
                   ].map((d) => (
                     <button
                       key={d.label}
@@ -1406,6 +1488,14 @@ export default function BookingStep1({ session }) {
                       {d.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={handleSelectFullDay}
+                    className="px-3 py-2 rounded-xl text-xs font-bold cursor-pointer"
+                    style={{ backgroundColor: subtleBg, color: '#f95d00', border: `1px solid ${cardBorder}` }}
+                  >
+                    Journée ({openingHoursStr})
+                  </button>
                 </div>
               </div>
             ) : (
@@ -1415,7 +1505,7 @@ export default function BookingStep1({ session }) {
                   <strong style={{ color: textMain }}>
                     {activeSlot.date} · {activeSlot.start} → {activeSlot.end}
                   </strong>{' '}
-                  (heure Africa/Tunis).
+                  (horaires : {openingHoursStr} · tampon {liveData?.tenant?.tampon_minutes ?? 15} min).
                 </span>
                 <span className="font-semibold text-[#f95d00]">Règlement 100 % sur place</span>
               </div>
@@ -1453,12 +1543,13 @@ export default function BookingStep1({ session }) {
               controlledStart={activeSlot.start}
               controlledEnd={activeSlot.end}
               hideSlotBar={true}
-              onReserve={({ espaceId, itemId, itemLabel, date, start, end }) => {
+              onReserve={({ espaceId, uniteId, itemId, itemLabel, date, start, end }) => {
                 const qs = new URLSearchParams({
                   espaceId,
                   date,
                   start,
                   end,
+                  ...(uniteId ? { uniteId } : {}),
                   itemId: itemId || '',
                   itemLabel: itemLabel || '',
                 }).toString();
@@ -1467,51 +1558,96 @@ export default function BookingStep1({ session }) {
             />
           ) : (
             <div className="space-y-5">
-              {/* Filtres de types d'espaces */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSpaceTypeFilter('all')}
-                    className="px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all"
-                    style={{
-                      backgroundColor: spaceTypeFilter === 'all' ? '#f95d00' : cardBg,
-                      color: spaceTypeFilter === 'all' ? '#ffffff' : textMain,
-                      border: `1px solid ${spaceTypeFilter === 'all' ? '#f95d00' : cardBorder}`,
-                    }}
-                  >
-                    Tous ({liveData?.spaces?.length || 0})
-                  </button>
-                  {availableSpaceTypes.map((tp) => (
+              {/* Filtres complets : type, capacité, équipements & disponibles uniquement */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      key={tp}
                       type="button"
-                      onClick={() => setSpaceTypeFilter(tp)}
+                      onClick={() => setSpaceTypeFilter('all')}
                       className="px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all"
                       style={{
-                        backgroundColor: spaceTypeFilter === tp ? '#f95d00' : cardBg,
-                        color: spaceTypeFilter === tp ? '#ffffff' : textMain,
-                        border: `1px solid ${spaceTypeFilter === tp ? '#f95d00' : cardBorder}`,
+                        backgroundColor: spaceTypeFilter === 'all' ? '#f95d00' : cardBg,
+                        color: spaceTypeFilter === 'all' ? '#ffffff' : textMain,
+                        border: `1px solid ${spaceTypeFilter === 'all' ? '#f95d00' : cardBorder}`,
                       }}
                     >
-                      {spaceTypeLabel(tp)}
+                      Tous ({liveData?.spaces?.length || 0})
                     </button>
-                  ))}
+                    {availableSpaceTypes.map((tp) => (
+                      <button
+                        key={tp}
+                        type="button"
+                        onClick={() => setSpaceTypeFilter(tp)}
+                        className="px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all"
+                        style={{
+                          backgroundColor: spaceTypeFilter === tp ? '#f95d00' : cardBg,
+                          color: spaceTypeFilter === tp ? '#ffffff' : textMain,
+                          border: `1px solid ${spaceTypeFilter === tp ? '#f95d00' : cardBorder}`,
+                        }}
+                      >
+                        {spaceTypeLabel(tp)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={minCapacityFilter}
+                      onChange={(e) => setMinCapacityFilter(Number(e.target.value) || 0)}
+                      aria-label="Capacité minimale"
+                      className="px-3 py-2 rounded-full text-xs font-bold outline-none cursor-pointer"
+                      style={{ backgroundColor: cardBg, color: textMain, border: `1px solid ${cardBorder}` }}
+                    >
+                      <option value={0}>Capacité : Toutes</option>
+                      <option value={2}>2+ personnes</option>
+                      <option value={4}>4+ personnes</option>
+                      <option value={6}>6+ personnes</option>
+                      <option value={10}>10+ personnes</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => setOnlyAvailableSpaces((v) => !v)}
+                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer"
+                      style={{
+                        backgroundColor: onlyAvailableSpaces ? '#10b981' : cardBg,
+                        color: onlyAvailableSpaces ? '#ffffff' : textMain,
+                        border: `1px solid ${onlyAvailableSpaces ? '#10b981' : cardBorder}`,
+                      }}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-current" />
+                      Disponibles uniquement
+                    </button>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setOnlyAvailableSpaces((v) => !v)}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer"
-                  style={{
-                    backgroundColor: onlyAvailableSpaces ? '#10b981' : cardBg,
-                    color: onlyAvailableSpaces ? '#ffffff' : textMain,
-                    border: `1px solid ${onlyAvailableSpaces ? '#10b981' : cardBorder}`,
-                  }}
-                >
-                  <span className="w-2 h-2 rounded-full bg-current" />
-                  Disponibles uniquement
-                </button>
+                {/* Filtre équipements */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-bold mr-1" style={{ color: textMuted }}>Équipements :</span>
+                  {EQUIPMENTS.slice(0, 6).map((eq) => {
+                    const activeEq = equipmentFilters.includes(eq);
+                    return (
+                      <button
+                        key={eq}
+                        type="button"
+                        onClick={() =>
+                          setEquipmentFilters((prev) =>
+                            prev.includes(eq) ? prev.filter((x) => x !== eq) : [...prev, eq]
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors"
+                        style={{
+                          backgroundColor: activeEq ? '#f95d00' : subtleBg,
+                          color: activeEq ? '#ffffff' : textMuted,
+                          border: `1px solid ${activeEq ? '#f95d00' : cardBorder}`,
+                        }}
+                      >
+                        {eq}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {filteredSpaces.length === 0 ? (
@@ -1565,14 +1701,14 @@ export default function BookingStep1({ session }) {
                             {/* Badges haut */}
                             <div className="absolute top-3 inset-x-3 flex items-center justify-between gap-2">
                               <span
-                                className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wide"
+                                className="px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide"
                                 style={{ backgroundColor: 'rgba(255,255,255,0.92)', color: '#100f0d' }}
                               >
                                 {spaceTypeLabel(space.type)}
                               </span>
 
                               <span
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold"
                                 style={{
                                   backgroundColor: isLimited
                                     ? 'rgba(217,119,6,0.92)'
@@ -1590,7 +1726,7 @@ export default function BookingStep1({ session }) {
                             {/* Bouton Galerie bas */}
                             <div className="absolute bottom-3 inset-x-3 flex items-center justify-between">
                               <span
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold backdrop-blur-md"
                                 style={{ backgroundColor: 'rgba(16,15,13,0.75)', color: '#ffffff' }}
                               >
                                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>photo_camera</span>
@@ -1604,7 +1740,7 @@ export default function BookingStep1({ session }) {
                                     e.stopPropagation();
                                     setSpaceViewMode('plan');
                                   }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold cursor-pointer"
                                   style={{ backgroundColor: '#f95d00', color: '#ffffff', border: 'none' }}
                                 >
                                   <span className="material-symbols-outlined" style={{ fontSize: 13 }}>map</span>
@@ -1622,9 +1758,11 @@ export default function BookingStep1({ session }) {
                               </h3>
                               <div className="text-right shrink-0">
                                 <span className="font-sora font-extrabold text-lg text-[#f95d00] block leading-none">
-                                  {formatDT(space.tarif_horaire)}
+                                  <Money amount={space.tarif_horaire} zeroLabel="Gratuit" />
                                 </span>
-                                <span className="text-[11px]" style={{ color: textMuted }}>/ heure</span>
+                                {Number(space.tarif_horaire || 0) > 0 && (
+                                  <span className="text-xs" style={{ color: textMuted }}>/ heure</span>
+                                )}
                               </div>
                             </div>
 
@@ -1637,10 +1775,47 @@ export default function BookingStep1({ session }) {
                                 }`}
                             </p>
 
+                            {/* Sélecteur d'unité / poste libre (Open space ou multi-unités) */}
+                            {Array.isArray(space.unites) && space.unites.filter((u) => u.is_free).length > 0 && (
+                              <div className="space-y-1.5">
+                                <span className="text-xs font-bold block" style={{ color: textMuted }}>
+                                  Poste / Unité (optionnel) :
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {space.unites
+                                    .filter((u) => u.is_free)
+                                    .slice(0, 6)
+                                    .map((u) => {
+                                      const isSelectedUnit = selectedUnitBySpace[space.id]?.id === u.id;
+                                      return (
+                                        <button
+                                          key={u.id}
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedUnitBySpace((prev) => ({
+                                              ...prev,
+                                              [space.id]: isSelectedUnit ? null : u,
+                                            }))
+                                          }
+                                          className="px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors"
+                                          style={{
+                                            backgroundColor: isSelectedUnit ? '#f95d00' : subtleBg,
+                                            color: isSelectedUnit ? '#ffffff' : textMain,
+                                            border: `1px solid ${isSelectedUnit ? '#f95d00' : cardBorder}`,
+                                          }}
+                                        >
+                                          {u.code || u.nom}
+                                        </button>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+
                             {/* Jauge d'occupation temps réel pour espaces partagés */}
                             {space.is_shared && (
                               <div className="p-2.5 rounded-xl space-y-1.5" style={{ backgroundColor: subtleBg }}>
-                                <div className="flex justify-between text-[11px] font-bold">
+                                <div className="flex justify-between text-xs font-bold">
                                   <span style={{ color: textMuted }}>Occupation temps réel</span>
                                   <span className={isFree ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}>
                                     {space.remaining_spots} / {space.capacity} libre{space.remaining_spots > 1 ? 's' : ''}
@@ -1659,7 +1834,7 @@ export default function BookingStep1({ session }) {
                             )}
 
                             {!isFree && space.conflict_reason && (
-                              <p className="text-[11px] font-semibold text-red-500 m-0">
+                              <p className="text-xs font-semibold text-red-500 m-0">
                                 {space.conflict_reason}
                                 {space.next_free_time
                                   ? ` · Libre vers ${new Date(space.next_free_time).toLocaleTimeString('fr-FR', {
@@ -1676,7 +1851,7 @@ export default function BookingStep1({ session }) {
                                 {space.equipements.slice(0, 4).map((eq, idx) => (
                                   <span
                                     key={idx}
-                                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                    className="px-2 py-0.5 rounded-full text-xs font-semibold"
                                     style={{ backgroundColor: subtleBg, color: textMain, border: `1px solid ${cardBorder}` }}
                                   >
                                     ✓ {eq}
@@ -1713,7 +1888,7 @@ export default function BookingStep1({ session }) {
                                 boxShadow: '0 6px 16px rgba(249,93,0,0.28)',
                               }}
                             >
-                              Réserver ({formatDT((space.tarif_horaire || 0) * durationHours)}) →
+                              Réserver ({formatPriceOrFree((space.tarif_horaire || 0) * durationHours, { zeroLabel: 'Gratuit' })}) →
                             </button>
                           ) : (
                             <button

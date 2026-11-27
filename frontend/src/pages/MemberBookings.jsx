@@ -5,30 +5,33 @@ import { useSessionUser } from '../hooks/useSessionUser';
 import { memberPortalApi, bookingApi, paymentApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
+import Money from '../components/common/Money';
+import { formatDateDMY, formatTime24h } from '../utils/format';
 
 const ITEMS_PER_PAGE = 10;
 
 const STATUS_CONFIG = {
   confirmed: { label: 'Confirmée', color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 ring-emerald-600/20', dot: 'bg-emerald-500' },
   pending: { label: 'En attente', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 ring-amber-600/20', dot: 'bg-amber-500' },
+  en_attente_confirmation: { label: 'En attente de confirmation', color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 ring-amber-600/20', dot: 'bg-amber-500' },
   refused: { label: 'Refusée', color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 ring-rose-600/20', dot: 'bg-rose-500' },
   cancelled: { label: 'Annulée', color: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 ring-red-600/20', dot: 'bg-red-500' },
   completed: { label: 'Terminée', color: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 ring-slate-500/20', dot: 'bg-slate-400' },
-  no_show: { label: 'Absent (no-show)', color: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 ring-orange-600/20', dot: 'bg-orange-500' },
+  no_show: { label: 'Absent', color: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 ring-orange-600/20', dot: 'bg-orange-500' },
   waitlisted: { label: "En liste d'attente", color: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 ring-violet-600/20', dot: 'bg-violet-500' },
 };
 
 const SPACE_TYPES_FR = {
-  open_space: 'Open Space',
-  private_office: 'Bureau Privé',
-  meeting_room: 'Salle de Réunion',
-  training_room: 'Salle de Formation',
-  event_space: 'Espace Événement',
-  hot_desk: 'Poste nomade (Hot Desk)',
-  dedicated_desk: 'Poste fixe (Dedicated Desk)',
-  bureau: 'Bureau Privé',
-  salle_reunion: 'Salle de Réunion',
-  espace_commun: 'Open Space',
+  open_space: 'Open space',
+  private_office: 'Bureau privé',
+  meeting_room: 'Salle de réunion',
+  training_room: 'Salle de formation',
+  event_space: 'Espace événementiel',
+  hot_desk: 'Poste nomade',
+  dedicated_desk: 'Poste fixe',
+  bureau: 'Bureau privé',
+  salle_reunion: 'Salle de réunion',
+  espace_commun: 'Open space',
 };
 
 const FILTERS = [
@@ -38,22 +41,20 @@ const FILTERS = [
   { key: 'waitlisted', label: "Liste d'attente" },
   { key: 'completed', label: 'Terminées' },
   { key: 'refused', label: 'Refusées' },
-  { key: 'no_show', label: 'Absent (no-show)' },
+  { key: 'no_show', label: 'Absent' },
   { key: 'cancelled', label: 'Annulées' },
 ];
 
 function formatDate(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  return formatDateDMY(d);
 }
 
 function formatTime(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  return formatTime24h(d);
 }
 
 function formatCurrency(v) {
-  return `${parseFloat(v || 0).toFixed(3)} DT`;
+  return <Money amount={v} zeroLabel="Gratuit" />;
 }
 
 function formatSpaceType(type) {
@@ -166,7 +167,7 @@ export default function MemberBookings({ session }) {
                   <span className="material-symbols-outlined" style={{ fontSize: 24 }}>{s.icon}</span>
                 </div>
                 <div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-bold">{s.label}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-bold">{s.label}</p>
                   <p className="font-sora text-xl font-extrabold text-primary dark:text-white mt-0.5">{s.value}</p>
                 </div>
               </div>
@@ -266,12 +267,12 @@ export default function MemberBookings({ session }) {
 
                         {/* Indication statut / paiement */}
                         {b.statut === 'pending' && (
-                          <p className="text-[11px] text-amber-600 font-medium mt-1">
-                            ⏳ Demande en attente d'approbation par l'administrateur.
+                          <p className="text-xs text-amber-600 font-medium mt-1">
+                            ⏳ Demande en attente d'approbation par l'établissement.
                           </p>
                         )}
                         {b.statut === 'confirmed' && (
-                          <p className="text-[11px] text-emerald-600 font-medium mt-1">
+                          <p className="text-xs text-emerald-600 font-medium mt-1">
                             Confirmée · Règlement à effectuer sur place (espèces, chèque ou virement).
                           </p>
                         )}
@@ -281,7 +282,7 @@ export default function MemberBookings({ session }) {
                     {/* Montant + Action Payer / Annuler */}
                     <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 border-slate-100 dark:border-slate-800 pt-3 sm:pt-0 flex-wrap">
                       <div className="text-left sm:text-right mr-2">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Montant</span>
+                        <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Montant</span>
                         <span className="font-sora font-extrabold text-primary dark:text-white text-base sm:text-lg">
                           {formatCurrency(b.montant_total)}
                         </span>
@@ -378,7 +379,7 @@ export default function MemberBookings({ session }) {
                   </>
                 )}
                 {cancelInfo.policy?.message_membre && (
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 italic border-t border-slate-200 dark:border-slate-800 pt-2">
+                  <p className="text-xs text-slate-400 dark:text-slate-500 italic border-t border-slate-200 dark:border-slate-800 pt-2">
                     {cancelInfo.policy.message_membre}
                   </p>
                 )}

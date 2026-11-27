@@ -20,8 +20,8 @@ const DOC_TYPE_ICONS = {
 };
 
 const SUBSCRIPTION_LABELS = {
-  day_pass: 'Day Pass',
-  week_pass: 'Week Pass',
+  day_pass: 'Pass journée',
+  week_pass: 'Pass semaine',
   mensuel: 'Mensuel',
   trimestriel: 'Trimestriel',
   annuel: 'Annuel',
@@ -48,7 +48,7 @@ function SectionHeader({ icon, title, subtitle }) {
 function FieldInput({ label, value, onChange, readOnly, type = 'text' }) {
   return (
     <div>
-      <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+      <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
         {label}
       </label>
       <input
@@ -627,7 +627,7 @@ export default function MemberProfile({ session }) {
                   onChange={handlePhotoUpload}
                 />
               </div>
-              <p className="text-[11px] text-on-surface-variant mt-2 text-center">
+              <p className="text-xs text-on-surface-variant mt-2 text-center">
                 Membre depuis<br />
                 <span className="font-semibold text-on-surface">{formatDate(memberSince)}</span>
               </p>
@@ -661,7 +661,7 @@ export default function MemberProfile({ session }) {
                 onChange={(e) => setForm((f) => ({ ...f, cin: e.target.value }))}
               />
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant mb-1.5">
                   Rôle & Profil (figé)
                 </label>
                 <div className="w-full rounded-xl border border-outline-variant/20 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700 flex items-center justify-between">
@@ -669,7 +669,7 @@ export default function MemberProfile({ session }) {
                     <span className="material-symbols-outlined text-[16px] text-slate-500">lock</span>
                     Membre ({MEMBER_TYPE_LABELS[profile?.type_membre] || 'Individuel'})
                   </span>
-                  <span className="text-[10px] uppercase font-bold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                  <span className="text-xs uppercase font-bold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
                     Fixe
                   </span>
                 </div>
@@ -698,32 +698,32 @@ export default function MemberProfile({ session }) {
         <div
           className="md:col-span-4 rounded-3xl p-6 flex flex-col items-center text-white relative overflow-hidden"
           style={{
-            background: 'linear-gradient(160deg, #0d1f3c 0%, #10233f 50%, #0a1628 100%)',
-            boxShadow: '0 8px 32px rgba(10,22,40,0.35)',
+            background: 'linear-gradient(160deg, #100f0d 0%, #1d1b18 65%, #2a211b 100%)',
+            boxShadow: '0 8px 32px rgba(16,15,13,0.35)',
           }}
         >
           <div
             className="absolute top-0 right-0 w-32 h-32 rounded-full pointer-events-none"
-            style={{ background: 'radial-gradient(circle, rgba(0,84,203,0.2), transparent)', transform: 'translate(30%, -30%)' }}
+            style={{ background: 'radial-gradient(circle, rgba(249,93,0,0.22), transparent)', transform: 'translate(30%, -30%)' }}
           />
           <div
             className="absolute bottom-0 left-0 w-24 h-24 rounded-full pointer-events-none"
-            style={{ background: 'radial-gradient(circle, rgba(45,109,235,0.15), transparent)', transform: 'translate(-20%, 20%)' }}
+            style={{ background: 'radial-gradient(circle, rgba(249,93,0,0.12), transparent)', transform: 'translate(-20%, 20%)' }}
           />
 
           <SectionHeader
             icon="qr_code_2"
-            title={<span className="text-white">QR Code Acces</span>}
-            subtitle={<span className="text-white/60">Presentez ce code a l'entree</span>}
+            title={<span className="text-white">Mon accès (5 min)</span>}
+            subtitle={<span className="text-white/60">Présentez ce code à l&apos;accueil</span>}
           />
 
           <div className="relative mt-2 mb-4">
             {/* Pulse ring for active access */}
-            {effectiveQr && (
+            {effectiveQr && qrData?.status !== 'blocked' && (
               <div
                 className="absolute inset-0 rounded-2xl"
                 style={{
-                  background: 'rgba(0,84,203,0.15)',
+                  background: 'rgba(249,93,0,0.16)',
                   animation: 'pulse-ring 2.5s ease-out infinite',
                 }}
               />
@@ -732,13 +732,18 @@ export default function MemberProfile({ session }) {
               className="relative bg-white rounded-2xl p-3 flex items-center justify-center"
               style={{ width: 160, height: 160 }}
             >
-              {effectiveQr ? (
+              {qrData?.status === 'blocked' ? (
+                <div className="flex flex-col items-center gap-1.5 text-red-600 px-2 text-center">
+                  <span className="material-symbols-outlined" style={{ fontSize: 36 }}>lock</span>
+                  <span className="text-xs font-bold">Accès bloqué</span>
+                </div>
+              ) : effectiveQr ? (
                 <QRCodeSVG
                   id="member-qr-code"
                   value={effectiveQr}
                   size={136}
                   bgColor="#ffffff"
-                  fgColor="#0d1f3c"
+                  fgColor="#100f0d"
                   level="M"
                   includeMargin={false}
                 />
@@ -750,6 +755,11 @@ export default function MemberProfile({ session }) {
               )}
             </div>
           </div>
+          {qrData?.short_code && qrData?.status !== 'blocked' && (
+            <p className="text-xs font-bold tracking-widest text-[#ffedd8] mb-3">
+              Code de secours : {qrData.short_code}
+            </p>
+          )}
 
           {(() => {
             const todayStr = new Date().toISOString().slice(0, 10);
@@ -763,7 +773,7 @@ export default function MemberProfile({ session }) {
             if (isSubActive) {
               return (
                 <div className="text-center mb-4 w-full">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold mb-2"
                     style={{ background: 'rgba(47,190,143,0.15)', color: '#2fbe8f' }}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'pulse-dot 2s ease-in-out infinite' }} />
@@ -781,7 +791,7 @@ export default function MemberProfile({ session }) {
 
             return (
               <div className="text-center mb-4 w-full">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold mb-2"
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold mb-2"
                   style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-current" />
@@ -829,7 +839,7 @@ export default function MemberProfile({ session }) {
             <div className="flex flex-col items-center py-8 text-center">
               <div
                 className="flex items-center justify-center w-14 h-14 rounded-2xl mb-3"
-                style={{ background: 'rgba(0,84,203,0.06)' }}
+                style={{ background: 'rgba(249,93,0,0.08)' }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 28, color: '#b0c4de' }}>drive_file_move</span>
               </div>
@@ -853,7 +863,7 @@ export default function MemberProfile({ session }) {
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-on-surface truncate">{doc.nom || 'Document'}</p>
-                    <p className="text-[11px] text-on-surface-variant capitalize">{doc.type || 'autre'}</p>
+                    <p className="text-xs text-on-surface-variant capitalize">{doc.type || 'autre'}</p>
                   </div>
                   <button
                     onClick={() => handleRemoveDocument(idx)}
@@ -879,7 +889,7 @@ export default function MemberProfile({ session }) {
                 </span>
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-primary">Ajouter un document</h4>
-                  <p className="text-[11px] text-on-surface-variant">Téléversez un fichier ou renseignez un lien sécurisé</p>
+                  <p className="text-xs text-on-surface-variant">Téléversez un fichier ou renseignez un lien sécurisé</p>
                 </div>
               </div>
 
@@ -996,7 +1006,7 @@ export default function MemberProfile({ session }) {
             </span>
             <div className="text-left">
               <p>Exporter mes donnees</p>
-              <p className="text-[11px] font-normal opacity-70">Telecharger une copie de vos informations</p>
+              <p className="text-xs font-normal opacity-70">Telecharger une copie de vos informations</p>
             </div>
           </button>
 
@@ -1039,7 +1049,7 @@ export default function MemberProfile({ session }) {
                 <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete_forever</span>
                 <div className="text-left">
                   <p>Supprimer mon compte</p>
-                  <p className="text-[11px] font-normal opacity-70">Suppression permanente de toutes vos donnees</p>
+                  <p className="text-xs font-normal opacity-70">Suppression permanente de toutes vos donnees</p>
                 </div>
               </button>
             )}
@@ -1048,10 +1058,10 @@ export default function MemberProfile({ session }) {
           {/* Notification preferences & Channels (CDC v3.0 — D2 : In-App & E-mail uniquement) */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">
+              <p className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">
                 Canaux de notification actifs
               </p>
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-secondary/10 text-secondary">
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-secondary/10 text-secondary">
                 In-App &amp; E-mail
               </span>
             </div>
@@ -1061,20 +1071,20 @@ export default function MemberProfile({ session }) {
                 <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 22 }}>mail</span>
                 <div>
                   <p className="text-xs font-bold text-primary">E-mail</p>
-                  <p className="text-[10px] text-on-surface-variant">Confirmations, reçus PDF et rappels</p>
+                  <p className="text-xs text-on-surface-variant">Confirmations, reçus PDF et rappels</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 rounded-2xl border-2 border-emerald-500/40 bg-emerald-50/60">
                 <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: 22 }}>notifications</span>
                 <div>
                   <p className="text-xs font-bold text-primary">Notifications In-App</p>
-                  <p className="text-[10px] text-on-surface-variant">Alertes en temps réel dans votre portail</p>
+                  <p className="text-xs text-on-surface-variant">Alertes en temps réel dans votre portail</p>
                 </div>
               </div>
             </div>
 
             {/* Catégories de notifications */}
-            <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-2">
               Types de notifications actives
             </p>
             <div className="flex flex-col gap-2">
@@ -1114,10 +1124,10 @@ export default function MemberProfile({ session }) {
           </div>
 
           {/* Privacy text */}
-          <div className="mt-5 p-3 rounded-xl" style={{ background: 'rgba(0,84,203,0.03)' }}>
+          <div className="mt-5 p-3 rounded-xl" style={{ background: 'rgba(249,93,0,0.04)' }}>
             <div className="flex items-start gap-2">
               <span className="material-symbols-outlined mt-0.5" style={{ fontSize: 15, color: '#94a3b8' }}>info</span>
-              <p className="text-[11px] text-on-surface-variant/70 leading-relaxed">
+              <p className="text-xs text-on-surface-variant/70 leading-relaxed">
                 Conformement au RGPD, vous pouvez exporter ou supprimer vos donnees a tout moment.
                 Vos donnees ne sont jamais partagees avec des tiers sans votre consentement explicite.
                 Pour toute question, contactez-nous a <span className="font-semibold">privacy@coworking.ma</span>.

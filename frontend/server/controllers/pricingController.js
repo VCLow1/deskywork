@@ -237,23 +237,39 @@ async function updatePricing(req, res) {
 
 async function validatePromoCode(req, res) {
   try {
-    const { code, type_abonnement, plan_tarifaire } = req.body;
+    const { code, type_abonnement, plan_tarifaire, tenant_id, montant_ht, montant } = req.body;
     const type_espace = normalizeTypeEspace(req.body.type_espace);
+    const effectiveTenantId = tenant_id || req.tenantId || null;
 
-    if (!code || !type_abonnement) {
-      return res.status(400).json({ error: 'code et type_abonnement sont requis.' });
+    if (!code) {
+      return res.status(400).json({ error: 'Le code promo est requis.' });
+    }
+
+    const promo = await findValidPromoCode(code, effectiveTenantId);
+    if (!promo) {
+      return res.status(404).json({ valid: false, error: 'Code promo invalide ou expiré.' });
+    }
+
+    // Mode réservation / montant direct (tunnel de réservation)
+    if (!type_abonnement) {
+      const baseAmount = Number(montant_ht ?? montant ?? 0);
+      const { prixFinal, reduction } = applyPromoDiscount(Math.max(0, baseAmount), promo);
+      return res.json({
+        valid: true,
+        code: promo.code,
+        type_reduction: promo.type_reduction,
+        valeur: Number(promo.valeur),
+        prix_initial: baseAmount,
+        prix_final: prixFinal,
+        reduction,
+      });
     }
 
     const plan = plan_tarifaire
       || MEMBER_TYPE_TO_PLAN[req.profile.type_membre]
       || 'standard';
 
-    const promo = await findValidPromoCode(code, req.tenantId);
-    if (!promo) {
-      return res.status(404).json({ valid: false, error: 'Code promo invalide ou expiré.' });
-    }
-
-    const tarif = await findActiveTarif(type_abonnement, plan, req.tenantId, type_espace);
+    const tarif = await findActiveTarif(type_abonnement, plan, effectiveTenantId, type_espace);
     if (!tarif) {
       return res.status(404).json({ valid: false, error: 'Tarif introuvable pour cet abonnement.' });
     }

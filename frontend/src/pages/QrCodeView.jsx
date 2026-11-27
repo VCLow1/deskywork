@@ -1,456 +1,365 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { QRCodeSVG } from 'qrcode.react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { memberApi, subscriptionApi } from '../services/api';
+import { memberApi } from '../services/api';
+import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
-
-const formatDate = (d) => {
-  if (!d) return '—';
-  try {
-    return new Date(d).toLocaleDateString('fr-FR', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
-  } catch {
-    return d;
-  }
-};
+import Money from '../components/common/Money';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function QrCodeView({ session }) {
-  const [profile, setProfile] = useState(null);
-  const [qrData, setQrData] = useState(null);
-  const [subscription, setSubscription] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
-  const cardRef = useRef(null);
   const navigate = useNavigate();
+  const { userId, email, metadata } = useSessionUser(session);
+  const [profile, setProfile] = useState(() =>
+    userId ? { id: userId, email, role: metadata.role || 'member', ...metadata } : null
+  );
+  const [qrData, setQrData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [driftMs, setDriftMs] = useState(0);
 
-  useEffect(() => {
-    loadData();
-  }, [session]);
-
-  const loadData = async () => {
+  const loadQr = useCallback(async ({ silent = false } = {}) => {
     try {
-      const [prof, qr, sub] = await Promise.allSettled([
-        supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single(),
-        memberApi.getQr().catch(() => null),
-        subscriptionApi.getActive().catch(() => ({ subscription: null })),
+      if (silent) setRefreshing(true);
+      else setLoading(true);
+      setError('');
+
+      const [meRes, qrRes] = await Promise.allSettled([
+        memberApi.getMe(),
+        memberApi.getQr(),
       ]);
 
-      let profData = null;
-      if (prof.status === 'fulfilled' && prof.value?.data) {
-        profData = prof.value.data;
-        setProfile(profData);
+      if (meRes.status === 'fulfilled') {
+        setProfile(meRes.value?.profile || meRes.value);
       }
-
-      if (qr.status === 'fulfilled' && qr.value) {
-        setQrData(qr.value);
-      }
-
-      // Source de vérité unique pour l'abonnement
-      let actualSub = null;
-      if (sub.status === 'fulfilled' && sub.value?.subscription?.id) {
-        actualSub = sub.value.subscription;
+      if (qrRes.status === 'fulfilled') {
+        const q = qrRes.value;
+        setQrData(q);
+        if (q?.server_now) {
+          const sMs = new Date(q.server_now).getTime();
+          if (Number.isFinite(sMs)) setDriftMs(sMs - Date.now());
+        }
       } else {
-        // Fallback Supabase direct en base pour garantir l'exactitude
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const { data: dbSub } = await supabase
-          .from('abonnements')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .eq('statut', 'active')
-          .gte('date_fin', todayStr)
-          .order('date_fin', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        actualSub = dbSub || null;
+        setError(qrRes.reason?.message || 'Impossible de charger votre code d’accès.');
       }
-      setSubscription(actualSub);
-    } catch (err) {
-      setError(err.message || 'Erreur de chargement du QR code.');
+    } catch (e) {
+      setError(e.message || 'Impossible de charger votre code d’accès.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadQr();
+  }, [loadQr]);
+
+  // Horloge synchronisée sur l'heure serveur (1s)
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNowMs(Date.now() + driftMs);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [driftMs]);
+
+  const ttlSeconds = qrData?.ttl_seconds || 300;
+  const expiresMs = qrData?.expires_at ? new Date(qrData.expires_at).getTime() : 0;
+  const secondsLeft = useMemo(() => {
+    if (!expiresMs || qrData?.status === 'blocked') return 0;
+    return Math.max(0, Math.floor((expiresMs - nowMs) / 1000));
+  }, [expiresMs, nowMs, qrData?.status]);
+
+  // Régénération automatique dès expiration d'un code actif
+  useEffect(() => {
+    if (loading || refreshing) return undefined;
+    if (qrData?.status === 'active' && expiresMs > 0 && secondsLeft === 0) {
+      const t = setTimeout(() => {
+        loadQr({ silent: true });
+      }, 600);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [loading, refreshing, qrData?.status, expiresMs, secondsLeft, loadQr]);
+
+  const effectiveStatus = useMemo(() => {
+    if (!qrData) return 'expired';
+    if (qrData.status === 'blocked') return 'blocked';
+    if (qrData.status === 'expired') return 'expired';
+    if (qrData.status === 'active' && (!expiresMs || secondsLeft <= 0)) return 'expired';
+    return 'active';
+  }, [qrData, expiresMs, secondsLeft]);
+
+  const countdownLabel = useMemo(() => {
+    const mins = Math.floor(secondsLeft / 60);
+    const secs = secondsLeft % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }, [secondsLeft]);
+
+  const progressPct = Math.min(100, Math.max(0, Math.round((secondsLeft / ttlSeconds) * 100)));
+
+  const handleCopyShortCode = async () => {
+    if (!qrData?.short_code) return;
+    try {
+      await navigator.clipboard.writeText(qrData.short_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
   };
 
-  const handleMouseMove = useCallback((e) => {
-    const card = cardRef.current;
-    if (!card) return;
-    const rect = card.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
-    setTilt({
-      x: ((y - cy) / cy) * -5,
-      y: ((x - cx) / cx) * 5,
-    });
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setTilt({ x: 0, y: 0 });
-  }, []);
-
-  const handleDownload = useCallback(() => {
-    const svg = document.querySelector('#qr-svg-container svg');
+  const handleDownloadQr = () => {
+    if (effectiveStatus !== 'active') return;
+    const svg = document.getElementById('member-qr-svg');
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
     const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 640;
     const ctx = canvas.getContext('2d');
     const img = new Image();
     img.onload = () => {
-      canvas.width = 1024;
-      canvas.height = 1024;
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, 1024, 1024);
-      ctx.drawImage(img, 64, 64, 896, 896);
+      ctx.fillRect(0, 0, 640, 640);
+      ctx.drawImage(img, 40, 40, 560, 560);
       const a = document.createElement('a');
-      a.download = 'mamespace-qr-access.png';
+      a.download = 'deskywork-acces-qr.png';
       a.href = canvas.toDataURL('image/png');
       a.click();
     };
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-  }, []);
-
-  const qrPayload = qrData?.payload || qrData?.qr_token || qrData?.token || (profile?.qr_token ? JSON.stringify({ user_id: session?.user?.id || profile?.id, qr_token: profile.qr_token }) : (session?.user?.id ? JSON.stringify({ user_id: session.user.id }) : 'deskywork-pass'));
-
-  const handleShare = useCallback(async () => {
-    if (navigator.share && qrPayload) {
-      try {
-        await navigator.share({
-          title: 'Mon Pass d\'Accès DeskyWork',
-          text: 'Voici mon QR code d\'accès pour les espaces DeskyWork.',
-          url: window.location.href,
-        });
-      } catch { /* cancelled */ }
-    } else {
-      const subject = encodeURIComponent('Mon Pass d\'Accès DeskyWork');
-      const body = encodeURIComponent(
-        `Bonjour,\n\nVoici le lien vers mon QR code d'accès :\n${window.location.href}\n\nMerci de le présenter à l'accueil.`
-      );
-      window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
-    }
-  }, [qrPayload]);
+    img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgData)))}`;
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    navigate('/');
+    navigate('/login');
   };
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const hasAccess = Boolean(
-    subscription &&
-    subscription.id &&
-    (subscription.statut === 'active' || subscription.status === 'active') &&
-    (!subscription.date_fin || subscription.date_fin >= todayIso)
-  );
-
-  const subName = hasAccess
-    ? (subscription?.plan_name || subscription?.name || subscription?.type || 'Abonnement actif')
-    : 'Sans abonnement';
-  const subExpiry = hasAccess
-    ? (subscription?.date_fin || subscription?.end_date || subscription?.expires_at || subscription?.period_end)
-    : null;
-
-  if (loading) {
-    return (
-      <PortalLayout profile={null} onLogout={handleLogout}>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-4 border-secondary/20 border-t-secondary rounded-full animate-spin" />
-            <p className="text-on-surface-variant text-sm">Chargement de votre pass d&apos;accès...</p>
-          </div>
-        </div>
-      </PortalLayout>
-    );
-  }
+  const fullName = `${profile?.prenom || ''} ${profile?.nom || ''}`.trim() || 'Membre';
+  const initials = `${profile?.prenom?.[0] || ''}${profile?.nom?.[0] || ''}`.toUpperCase() || 'M';
 
   return (
     <PortalLayout profile={profile} onLogout={handleLogout}>
-      <div className="flex-1 p-4 sm:p-6 md:p-8 max-w-[1280px] mx-auto w-full pb-24 md:pb-8">
-
-        {/* ── Header ── */}
-        <div className="mb-6 md:mb-8">
-          <h2
-            className="text-2xl sm:text-[28px]/[36px] md:text-[32px]/[40px] tracking-[-0.01em] font-semibold text-primary"
-            style={{ fontFamily: 'Sora, sans-serif' }}
+      <div className="max-w-lg mx-auto py-2 sm:py-6 space-y-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="font-sora font-bold text-2xl text-primary dark:text-white">Mon accès</h1>
+            <p className="text-xs sm:text-sm text-on-surface-variant mt-0.5">
+              QR code dynamique renouvelé toutes les 5 minutes + code de secours.
+            </p>
+          </div>
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-outline-variant/25 text-primary dark:text-white hover:bg-black/5 transition-colors"
           >
-            Votre Pass d&apos;Accès
-          </h2>
-          <p className="text-on-surface-variant text-base leading-6 mt-1">
-            Scannez ce code aux bornes d&apos;entrée de nos espaces DeskyWork pour déverrouiller vos privilèges.
-          </p>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_back</span>
+            Accueil
+          </Link>
         </div>
 
-        {/* ── Error Banner ── */}
         {error && (
-          <div className="mb-6 p-3 bg-[#ffdad6] text-[#93000a] text-sm rounded-xl flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px]">warning</span>
-            {error}
+          <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold flex items-center justify-between gap-2">
+            <span>{error}</span>
+            <button type="button" onClick={() => loadQr()} className="underline font-bold cursor-pointer">
+              Réessayer
+            </button>
           </div>
         )}
 
-        {/* ── Centered Access Card ── */}
-        <div className="flex justify-center items-center py-2">
-          <div
-            ref={cardRef}
-            onMouseMove={handleMouseMove}
-            onMouseLeave={handleMouseLeave}
-            className="w-full max-w-[480px] rounded-3xl overflow-hidden relative transition-transform duration-300 ease-out"
-            style={{
-              background: 'linear-gradient(135deg, #10233f 0%, #0d1a30 50%, #0a1525 100%)',
-              boxShadow: '0 25px 60px -12px rgba(0,13,35,0.45), 0 8px 24px -8px rgba(0,0,0,0.3)',
-              transform: `perspective(1000px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) scale3d(1,1,1)`,
-              transition: tilt.x === 0 && tilt.y === 0
-                ? 'transform 0.5s cubic-bezier(0.23,1,0.32,1)'
-                : 'transform 0.1s ease-out',
-            }}
-          >
-            {/* Atmospheric Glow Effect */}
-            <div
-              className="absolute -top-24 -right-24 w-64 h-64 rounded-full pointer-events-none"
-              style={{
-                background: 'radial-gradient(circle, rgba(0,84,203,0.25) 0%, rgba(0,84,203,0.08) 40%, transparent 70%)',
-                filter: 'blur(80px)',
-              }}
-            />
-            <div
-              className="absolute -bottom-16 -left-16 w-48 h-48 rounded-full pointer-events-none"
-              style={{
-                background: 'radial-gradient(circle, rgba(0,84,203,0.12) 0%, transparent 60%)',
-                filter: 'blur(60px)',
-              }}
-            />
-
-            <div className="p-6 md:p-8 relative z-10 flex flex-col items-center">
-
-              {/* ── Status Badge ── */}
-              {hasAccess ? (
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6"
-                  style={{ background: 'rgba(47,190,143,0.1)' }}
-                >
-                  <span className="w-2 h-2 rounded-full bg-[#2fbe8f] shadow-[0_0_8px_rgba(47,190,143,0.6)]" />
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#2fbe8f]">
-                    Abonnement actif
-                  </span>
-                </div>
-              ) : (
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6"
-                  style={{ background: 'rgba(245,158,11,0.1)' }}
-                >
-                  <span className="w-2 h-2 rounded-full bg-[#f59e0b] shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#b45309]">
-                    Sans abonnement actif
-                  </span>
-                </div>
-              )}
-
-              {/* ── QR Code Area ── */}
+        <div
+          className="rounded-3xl overflow-hidden shadow-2xl border border-white/10"
+          style={{ background: 'linear-gradient(145deg, #100f0d 0%, #1d1b18 65%, #2a211b 100%)' }}
+        >
+          {/* Bandeau supérieur */}
+          <div className="px-6 pt-6 pb-4 flex items-center justify-between gap-3 border-b border-white/10">
+            <div className="flex items-center gap-3 min-w-0">
               <div
-                className="relative p-5 bg-white rounded-xl mb-6 shadow-xl cursor-pointer transition-transform duration-500 hover:scale-[1.02]"
-                id="qr-svg-container"
+                className="w-11 h-11 rounded-full flex items-center justify-center font-sora font-bold text-sm text-white shrink-0"
+                style={{ backgroundColor: '#f95d00' }}
               >
-                <div className="w-56 h-56 flex items-center justify-center bg-white relative">
-                  {qrPayload ? (
+                {initials}
+              </div>
+              <div className="min-w-0">
+                <p className="font-sora font-bold text-white text-sm truncate">{fullName}</p>
+                <p className="text-xs text-[#a3a09b] truncate">{profile?.email || ''}</p>
+              </div>
+            </div>
+
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shrink-0 ${
+                effectiveStatus === 'active'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  : effectiveStatus === 'blocked'
+                  ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  effectiveStatus === 'active'
+                    ? 'bg-emerald-400 animate-pulse'
+                    : effectiveStatus === 'blocked'
+                    ? 'bg-red-400'
+                    : 'bg-amber-400'
+                }`}
+              />
+              {effectiveStatus === 'active' ? 'Actif' : effectiveStatus === 'blocked' ? 'Bloqué' : 'Expiré'}
+            </span>
+          </div>
+
+          <div className="p-6 text-center space-y-5">
+            {loading ? (
+              <div className="py-16 flex flex-col items-center gap-3">
+                <div className="animate-spin rounded-full h-10 w-10 border-4 border-[#f95d00] border-t-transparent" />
+                <p className="text-xs text-[#a3a09b]">Génération de votre code sécurisé…</p>
+              </div>
+            ) : effectiveStatus === 'blocked' ? (
+              /* État Bloqué (impayé ou compte suspendu) */
+              <div className="py-6 px-4 rounded-2xl bg-red-500/10 border border-red-500/30 space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-red-500/20 text-red-300 flex items-center justify-center mx-auto">
+                  <span className="material-symbols-outlined" style={{ fontSize: 34 }}>lock</span>
+                </div>
+                <div className="space-y-2">
+                  <h2 className="font-sora font-bold text-lg text-white">Accès temporairement bloqué</h2>
+                  <p className="text-xs text-red-200 leading-relaxed">
+                    {qrData?.reason || 'Votre accès est bloqué suite à un impayé dépassant le seuil autorisé.'}
+                  </p>
+                  {Number(qrData?.overdue_amount || 0) > 0 && (
+                    <p className="text-sm font-extrabold text-white">
+                      Solde à régulariser : <Money amount={qrData.overdue_amount} />
+                    </p>
+                  )}
+                </div>
+                <Link
+                  to="/member/payments"
+                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white"
+                  style={{ backgroundColor: '#f95d00', textDecoration: 'none' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>receipt_long</span>
+                  Voir mes paiements et régulariser
+                </Link>
+              </div>
+            ) : (
+              /* État Actif ou Expiré */
+              <>
+                <div className="relative bg-white p-5 rounded-2xl inline-flex items-center justify-center shadow-lg">
+                  <div className={effectiveStatus === 'expired' ? 'opacity-20 blur-[2px] transition-all' : ''}>
                     <QRCodeSVG
-                      value={qrPayload}
-                      size={192}
-                      level="H"
-                      fgColor="#0a1525"
+                      id="member-qr-svg"
+                      value={qrData?.payload || qrData?.qr_token || 'deskywork-expire'}
+                      size={220}
                       bgColor="#ffffff"
-                      imageSettings={{
-                        src: '',
-                        height: 0,
-                        width: 0,
-                        excavate: false,
-                      }}
+                      fgColor="#100f0d"
+                      level="M"
+                      includeMargin={false}
                     />
-                  ) : (
-                    <div className="w-48 h-48 bg-[#f5f3f6] rounded-lg flex items-center justify-center">
-                      <span className="material-symbols-outlined text-5xl text-on-surface-variant">qr_code_2</span>
+                  </div>
+                  {effectiveStatus === 'expired' && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/65 rounded-2xl p-4 text-white">
+                      <span className="material-symbols-outlined text-amber-400 mb-1" style={{ fontSize: 36 }}>timer_off</span>
+                      <p className="font-sora font-bold text-sm">Code expiré</p>
+                      <button
+                        type="button"
+                        onClick={() => loadQr({ silent: true })}
+                        disabled={refreshing}
+                        className="mt-3 px-4 py-2 rounded-xl text-xs font-bold text-white cursor-pointer"
+                        style={{ backgroundColor: '#f95d00' }}
+                      >
+                        {refreshing ? 'Actualisation…' : 'Générer un nouveau code'}
+                      </button>
                     </div>
                   )}
-
-                  {/* Corner Frame Accents */}
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-secondary rounded-tl-lg" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-secondary rounded-tr-lg" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-secondary rounded-bl-lg" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-secondary rounded-br-lg" />
                 </div>
-              </div>
 
-              {/* ── Subscription Info Grid ── */}
-              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 py-4 px-2 mb-6"
-                style={{ borderTop: '1px solid rgba(181,199,235,0.1)', borderBottom: '1px solid rgba(181,199,235,0.1)' }}
-              >
-                <div>
-                  <p className="text-xs uppercase tracking-[0.08em] mb-1"
-                    style={{ color: 'rgba(181,199,235,0.5)', fontFamily: 'Inter, sans-serif' }}
+                {/* Compte à rebours validité 5 min */}
+                <div className="space-y-2 text-left bg-white/5 rounded-2xl p-4 border border-white/10">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#a3a09b] font-medium">Validité restante</span>
+                    <span className="font-sora font-bold text-white tabular-nums">
+                      {effectiveStatus === 'active' ? countdownLabel : '00:00'}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${progressPct}%`,
+                        backgroundColor: secondsLeft <= 45 ? '#ef4444' : '#f95d00',
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-[#a3a09b]">
+                    Présentez ce QR code à l&apos;accueil à votre arrivée. Renouvellement automatique toutes les 5 minutes.
+                  </p>
+                </div>
+
+                {/* Code court alphanumérique de secours */}
+                {qrData?.short_code && (
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between gap-3">
+                    <div className="text-left">
+                      <p className="text-xs font-semibold text-[#a3a09b] uppercase tracking-wider">
+                        Code de secours
+                      </p>
+                      <p className="font-sora font-extrabold text-xl tracking-[0.18em] text-white mt-0.5 tabular-nums">
+                        {qrData.short_code}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyShortCode}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white bg-white/10 hover:bg-white/20 cursor-pointer transition-colors"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                        {copied ? 'check' : 'content_copy'}
+                      </span>
+                      {copied ? 'Copié' : 'Copier'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => loadQr({ silent: true })}
+                    disabled={refreshing}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-white flex items-center justify-center gap-1.5 cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: '#f95d00' }}
                   >
-                    Abonnement
-                  </p>
-                  <p className="text-xl font-semibold text-white" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    {subName}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs uppercase tracking-[0.08em] mb-1"
-                    style={{ color: 'rgba(181,199,235,0.5)', fontFamily: 'Inter, sans-serif' }}
+                    <span className="material-symbols-outlined" style={{ fontSize: 17 }}>refresh</span>
+                    {refreshing ? 'Actualisation…' : 'Actualiser'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadQr}
+                    disabled={effectiveStatus !== 'active'}
+                    className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                   >
-                    Expire le
-                  </p>
-                  <p className="text-xl font-semibold text-white" style={{ fontFamily: 'Sora, sans-serif' }}>
-                    {formatDate(subExpiry)}
-                  </p>
+                    <span className="material-symbols-outlined" style={{ fontSize: 17 }}>download</span>
+                    Télécharger
+                  </button>
                 </div>
-              </div>
-
-              {/* ── Action Buttons ── */}
-              <div className="w-full flex flex-col gap-3">
-                <button
-                  onClick={handleDownload}
-                  className="w-full text-white font-semibold text-sm py-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.97]"
-                  style={{
-                    background: 'linear-gradient(135deg, #f95d00 0%, #ff7a28 100%)',
-                  }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>download</span>
-                  Télécharger le QR Code
-                </button>
-                <button
-                  onClick={handleShare}
-                  className="w-full font-semibold text-sm py-4 rounded-lg flex items-center justify-center gap-2 transition-all"
-                  style={{
-                    color: 'rgba(181,199,235,0.8)',
-                    border: '1px solid rgba(181,199,235,0.2)',
-                    background: 'transparent',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(181,199,235,0.05)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>ios_share</span>
-                  Partager par email
-                </button>
-              </div>
-
-              {/* ── Footer Note ── */}
-              <p className="mt-6 text-center text-xs leading-relaxed px-4"
-                style={{ color: 'rgba(181,199,235,0.4)', fontFamily: 'Inter, sans-serif' }}
-              >
-                Ce code est lié à votre abonnement actif et se régénère automatiquement à chaque renouvellement.
-              </p>
-            </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* ── Help Links Grid ── */}
-        <div className="mt-8 md:mt-12 grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="flex flex-wrap gap-3">
           <Link
-            to="/portal/support"
-            className="p-4 bg-white rounded-xl flex items-start gap-4 hover:shadow-md transition-all duration-200 group"
-            style={{
-              boxShadow: '0 1px 3px rgba(16,35,63,0.04)',
-              border: '1px solid rgba(197,198,206,0.3)',
-            }}
+            to="/dashboard/bookings"
+            className="flex-1 min-w-[160px] text-center py-3 px-4 rounded-2xl bg-white dark:bg-[#1a1917] border border-outline-variant/20 text-primary dark:text-white text-xs font-bold hover:border-[#f95d00]/40 transition-colors"
           >
-            <div className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200"
-              style={{ background: 'rgba(181,199,235,0.2)' }}
-            >
-              <span className="material-symbols-outlined text-secondary">help_center</span>
-            </div>
-            <div>
-              <h4 className="text-lg font-semibold text-primary mb-1 group-hover:text-secondary transition-colors"
-                style={{ fontFamily: 'Sora, sans-serif' }}
-              >
-                Support
-              </h4>
-              <p className="text-sm text-on-surface-variant leading-snug">Besoin d&apos;aide pour l&apos;accès ?</p>
-            </div>
+            Mes réservations
           </Link>
-
           <Link
-            to="/portal/spaces"
-            className="p-4 bg-white rounded-xl flex items-start gap-4 hover:shadow-md transition-all duration-200 group"
-            style={{
-              boxShadow: '0 1px 3px rgba(16,35,63,0.04)',
-              border: '1px solid rgba(197,198,206,0.3)',
-            }}
+            to="/book/step1"
+            className="flex-1 min-w-[160px] text-center py-3 px-4 rounded-2xl text-white text-xs font-bold transition-opacity hover:opacity-90"
+            style={{ backgroundColor: '#f95d00' }}
           >
-            <div className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200"
-              style={{ background: 'rgba(181,199,235,0.2)' }}
-            >
-              <span className="material-symbols-outlined text-secondary">location_on</span>
-            </div>
-            <div>
-              <h4 className="text-lg font-semibold text-primary mb-1 group-hover:text-secondary transition-colors"
-                style={{ fontFamily: 'Sora, sans-serif' }}
-              >
-                Espaces
-              </h4>
-              <p className="text-sm text-on-surface-variant leading-snug">Voir les accès autorisés</p>
-            </div>
-          </Link>
-
-          <Link
-            to="/portal/history"
-            className="p-4 bg-white rounded-xl flex items-start gap-4 hover:shadow-md transition-all duration-200 group"
-            style={{
-              boxShadow: '0 1px 3px rgba(16,35,63,0.04)',
-              border: '1px solid rgba(197,198,206,0.3)',
-            }}
-          >
-            <div className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200"
-              style={{ background: 'rgba(181,199,235,0.2)' }}
-            >
-              <span className="material-symbols-outlined text-secondary">history</span>
-            </div>
-            <div>
-              <h4 className="text-lg font-semibold text-primary mb-1 group-hover:text-secondary transition-colors"
-                style={{ fontFamily: 'Sora, sans-serif' }}
-              >
-                Historique
-              </h4>
-              <p className="text-sm text-on-surface-variant leading-snug">Consulter vos passages</p>
-            </div>
+            + Réserver un espace
           </Link>
         </div>
-      </div>
-
-      {/* ── Mobile Bottom Nav (hidden on md+) ── */}
-      <div className="md:hidden fixed bottom-0 left-0 w-full bg-white px-4 py-2 flex justify-around items-center z-50"
-        style={{
-          boxShadow: '0 -2px 10px rgba(0,0,0,0.05)',
-          borderTop: '1px solid rgba(197,198,206,0.1)',
-        }}
-      >
-        <Link to="/portal" className="flex flex-col items-center p-2 text-on-surface-variant">
-          <span className="material-symbols-outlined" style={{ fontSize: 24 }}>dashboard</span>
-          <span className="text-[10px] font-medium mt-0.5">Dashboard</span>
-        </Link>
-        <Link to="/portal/access" className="flex flex-col items-center p-2 text-secondary font-bold">
-          <span
-            className="material-symbols-outlined"
-            style={{ fontSize: 24, fontVariationSettings: "'FILL' 1" }}
-          >
-            qr_code_2
-          </span>
-          <span className="text-[10px] mt-0.5">Accès</span>
-        </Link>
-        <Link to="/portal/bookings" className="flex flex-col items-center p-2 text-on-surface-variant">
-          <span className="material-symbols-outlined" style={{ fontSize: 24 }}>calendar_month</span>
-          <span className="text-[10px] font-medium mt-0.5">Book</span>
-        </Link>
-        <Link to="/portal/profile" className="flex flex-col items-center p-2 text-on-surface-variant">
-          <span className="material-symbols-outlined" style={{ fontSize: 24 }}>person</span>
-          <span className="text-[10px] font-medium mt-0.5">Profil</span>
-        </Link>
       </div>
     </PortalLayout>
   );

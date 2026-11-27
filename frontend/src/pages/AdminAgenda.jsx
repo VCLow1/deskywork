@@ -315,33 +315,42 @@ export default function AdminAgenda({ session, embedded = false, initialView = n
   };
 
   const extractQrToken = (raw) => {
-    let token = (raw || '').trim();
-    if (!token) return null;
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) return null;
     try {
-      const parsed = JSON.parse(token);
-      token = parsed.qr_token || parsed.token || token;
+      const parsed = JSON.parse(trimmed);
+      if (parsed.token || parsed.qr_token || parsed.code) {
+        return trimmed;
+      }
     } catch {
-      // token brut
+      // QR brut (DWQR2....) ou code court (XXX-XXX)
     }
-    return token;
+    return trimmed;
   };
 
   const runQrCheckIn = async (token, source) => {
     if (actionId === 'qr') return;
     setActionId('qr');
+    setError('');
     try {
       const result = await sessionApi.checkIn({ qr_token: token, force: true });
       const memberLabel = result.member
         ? `${result.member.prenom || ''} ${result.member.nom || ''}`.trim()
         : '';
-      const prefix = source === 'camera' ? 'Check-in QR (caméra) effectué.' : 'Check-in QR effectué.';
-      setSuccess(`${prefix}${memberLabel ? ` Entrée vérifiée : ${memberLabel}.` : ''}${result.warning ? ` ${result.warning}` : ''}`);
+      const methodLabel = result.qr_method === 'short_code'
+        ? 'Check-in par code de secours effectué.'
+        : source === 'camera'
+        ? 'Check-in QR dynamique (caméra) effectué.'
+        : 'Check-in QR dynamique effectué.';
+      setSuccess(`${methodLabel}${memberLabel ? ` Entrée vérifiée : ${memberLabel}.` : ''}${result.warning ? ` ${result.warning}` : ''}`);
       setQrInput('');
       await loadCalendar();
     } catch (e) {
       setError(e.message);
       const member = e.body?.member;
-      if (member) setSuccess(`Membre identifié : ${member.prenom} ${member.nom}`);
+      if (member && e.body?.qr_status !== 'blocked') {
+        setSuccess(`Membre identifié : ${member.prenom || ''} ${member.nom || ''}`.trim());
+      }
     } finally {
       setActionId(null);
     }

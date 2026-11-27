@@ -3,6 +3,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const { ensureQrToken, sanitizeProfileForClient } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 const { notifyNouveauMembre, sendNotification } = require('../services/notificationService');
+const { issueDynamicMemberQr } = require('../models/dynamicQr');
 
 async function getMe(req, res) {
   try {
@@ -475,17 +476,12 @@ async function updateMyCompany(req, res) {
 
 async function getMyQr(req, res) {
   try {
-    const qr_token = await ensureQrToken(req.user.id);
-    res.json({
-      qr_token,
-      payload: JSON.stringify({ user_id: req.user.id, qr_token }),
-      member: {
-        id: req.user.id,
-        nom: req.profile.nom,
-        prenom: req.profile.prenom,
-        statut_compte: req.profile.statut_compte,
-      },
+    const result = await issueDynamicMemberQr(supabaseAdmin, {
+      userId: req.user.id,
+      profile: req.profile,
+      tenantId: req.profile?.tenant_id || req.tenantId || null,
     });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

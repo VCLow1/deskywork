@@ -1,5 +1,8 @@
-// models/bookingAvailability.js — Contrôle atomique de disponibilité, tampon, alternatives & gardes Responsable (LOT 3)
+// models/bookingAvailability.js — Contrôle atomique de disponibilité, tampon, alternatives & gardes Responsable (LOT 3 + LOT 1 Membre)
 const { parseOpeningHoursRange } = require('./walkinBilling');
+const { listActiveHolds } = require('./bookingHolds');
+
+const pastSweepLastRun = new Map();
 
 const SHARED_SPACE_TYPES = ['open_space', 'hot_desk', 'dedicated_desk'];
 
@@ -87,11 +90,12 @@ function formatTunisHHMM(utcMs) {
 function findAlternativeSlots({
   dateYmd,
   durationMinutes = 60,
+  minDurationMinutes = 30,
   horaires = '08:00 - 20:00',
   busyIntervals = [],
   bufferMinutes = 15,
   maxResults = 6,
-  stepMinutes = 30,
+  stepMinutes = 15,
   skipPast = false,
 }) {
   const { openHour, openMin, closeHour, closeMin } = parseOpeningHoursRange(horaires);
@@ -99,8 +103,9 @@ function findAlternativeSlots({
   const closeMs = tunisLocalYmdToUtcMs(dateYmd, closeHour, closeMin);
   if (!Number.isFinite(openMs) || !Number.isFinite(closeMs) || closeMs <= openMs) return [];
 
-  const durMs = Math.max(30, Number(durationMinutes) || 60) * 60 * 1000;
-  const stepMs = Math.max(15, Number(stepMinutes) || 30) * 60 * 1000;
+  const minDur = Math.max(15, Number(minDurationMinutes) || 30);
+  const durMs = Math.max(minDur, Number(durationMinutes) || 60) * 60 * 1000;
+  const stepMs = Math.max(15, Number(stepMinutes) || 15) * 60 * 1000;
   const nowMs = Date.now();
   const slots = [];
 
@@ -213,6 +218,8 @@ async function checkAvailabilityWithBuffer({
   tamponMinutes = 15,
   nbParticipants = 1,
   excludeReservationId = null,
+  excludeUserId = null,
+  excludeHoldId = null,
 }) {
   const bufMs = Math.max(0, Number(tamponMinutes || 0)) * 60 * 1000;
   const startMs = new Date(dateDebut).getTime();
@@ -262,6 +269,28 @@ async function checkAvailabilityWithBuffer({
     }
     return true;
   });
+
+  // Verrous temporaires 5 min actifs d'autres utilisateurs (RM-08)
+  const activeHolds = await listActiveHolds(supabaseAdmin, {
+    tenantId,
+    espaceId: espace.id,
+    dateDebut: windowStartIso,
+    dateFin: windowEndIso,
+    excludeUserId,
+    excludeHoldId,
+  }).catch(() => []);
+
+  for (const h of activeHolds) {
+    activeOverlaps.push({
+      id: `hold-${h.id}`,
+      espace_id: h.espace_id,
+      unite_id: h.unite_id || null,
+      date_debut: h.date_debut,
+      date_fin: h.date_fin,
+      statut: 'hold',
+      is_hold: true,
+    });
+  }
 
   // Vérifier sessions encore actives (non libérées)
   let activeSessionOverlaps = 0;
@@ -410,6 +439,81 @@ async function sweepExpiredConfirmations({ supabaseAdmin, tenantId }) {
   return { expired, reminded };
 }
 
+/**
+ * Transition automatique d'état :
+ * Une réservation dont la date_fin est passée ne doit JAMAIS rester au statut `confirmed`
+ * (ni en `pending` / `en_attente_confirmation`).
+ */
+async function sweepPastConfirmedReservations(supabaseAdmin, { tenantId = null, userId = null, force = false } = {}) {
+  const scopeKey = tenantId ? `t:${tenantId}` : userId ? `u:${userId}` : 'global';
+  const lastRun = pastSweepLastRun.get(scopeKey) || 0;
+  if (!force && Date.now() - lastRun < 30 * 1000) {
+    return { skipped: true, updated: 0 };
+  }
+  pastSweepLastRun.set(scopeKey, Date.now());
+
+  const nowIso = new Date().toISOString();
+  let updated = 0;
+
+  try {
+    let q = supabaseAdmin
+      .from('reservations')
+      .select('id, statut, date_fin, tenant_id, user_id')
+      .in('statut', ['confirmed', 'pending', 'en_attente_confirmation'])
+      .lt('date_fin', nowIso)
+      .limit(60);
+
+    if (tenantId) q = q.eq('tenant_id', tenantId);
+    if (userId) q = q.eq('user_id', userId);
+
+    const { data: rows, error } = await q;
+    if (error || !rows || rows.length === 0) return { updated: 0 };
+
+    const { canMarkReservationNoShow } = require('./helpers');
+
+    for (const r of rows) {
+      if (r.statut === 'pending' || r.statut === 'en_attente_confirmation') {
+        const { error: uErr } = await supabaseAdmin
+          .from('reservations')
+          .update({ statut: 'cancelled', motif_annulation: 'Créneau expiré sans validation.' })
+          .eq('id', r.id)
+          .catch(() => supabaseAdmin.from('reservations').update({ statut: 'cancelled' }).eq('id', r.id));
+        if (!uErr) updated++;
+        continue;
+      }
+
+      // Ne pas fermer si une session encore active (non libérée) est liée à cette réservation
+      const { data: openSess } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('reservation_id', r.id)
+        .is('check_out', null)
+        .limit(1);
+      if ((openSess || []).length > 0) continue;
+
+      const noShowCheck = await canMarkReservationNoShow(r.id);
+      if (noShowCheck.allowed) {
+        const { error: nsErr } = await supabaseAdmin
+          .from('reservations')
+          .update({ statut: 'no_show', no_show: true })
+          .eq('id', r.id)
+          .catch(() => supabaseAdmin.from('reservations').update({ statut: 'no_show' }).eq('id', r.id));
+        if (!nsErr) updated++;
+      } else {
+        const { error: cmpErr } = await supabaseAdmin
+          .from('reservations')
+          .update({ statut: 'completed' })
+          .eq('id', r.id);
+        if (!cmpErr) updated++;
+      }
+    }
+  } catch (err) {
+    console.warn('sweepPastConfirmedReservations warning:', err.message);
+  }
+
+  return { updated };
+}
+
 module.exports = {
   SHARED_SPACE_TYPES,
   isManagerRole,
@@ -422,4 +526,5 @@ module.exports = {
   loadSpaceUnitsForTenant,
   checkAvailabilityWithBuffer,
   sweepExpiredConfirmations,
+  sweepPastConfirmedReservations,
 };

@@ -149,7 +149,7 @@ export const MEMBER_NAV = [
   {
     group: 'Général',
     items: [
-      { id: 'dashboard', label: 'Tableau de bord', icon: 'dashboard', to: '/dashboard' },
+      { id: 'dashboard', label: 'Accueil', icon: 'home', to: '/dashboard' },
     ],
   },
   {
@@ -157,7 +157,7 @@ export const MEMBER_NAV = [
     items: [
       { id: 'member_bookings', label: 'Mes réservations', icon: 'calendar_month', to: '/dashboard/bookings' },
       { id: 'book', label: 'Réserver un espace', icon: 'calendar_today', to: '/book/step1' },
-      { id: 'qr', label: 'Mon accès QR', icon: 'qr_code_2', to: '/dashboard/qr' },
+      { id: 'qr', label: 'Mon accès', icon: 'qr_code_2', to: '/dashboard/qr' },
     ],
   },
   {

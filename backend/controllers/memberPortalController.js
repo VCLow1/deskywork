@@ -1,8 +1,11 @@
 // controllers/memberPortalController.js — MODULE E : Portail Membre (Historique, Stats, Notifs, Settings)
 const { supabaseAdmin } = require('../config/supabase');
+const { sweepPastConfirmedReservations } = require('../models/bookingAvailability');
+const { computeTenantLiveAvailability } = require('../models/availabilitySummary');
 
 // ── GET /api/bookings/history ─────────────────────────────────────────────
 async function bookingsHistory(req, res) {
+  await sweepPastConfirmedReservations(supabaseAdmin, { userId: req.user.id }).catch(() => {});
   const { page = 1, limit = 10, statut } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -75,6 +78,7 @@ async function bookingsHistory(req, res) {
 // ── GET /api/member/stats ─────────────────────────────────────────────────
 async function memberStats(req, res) {
   const userId = req.user.id;
+  await sweepPastConfirmedReservations(supabaseAdmin, { userId }).catch(() => {});
 
   const [bookingsRes, subsRes, paymentsRes] = await Promise.all([
     supabaseAdmin.from('reservations').select('id, statut, date_debut, date_fin, espaces(tarif_horaire)').eq('user_id', userId),
@@ -127,82 +131,76 @@ async function spacesNearby(req, res) {
   try {
     const userId = req.user.id;
 
-    // Espaces des coworkings actifs (avec info coworking)
-    const { data: tenants } = await supabaseAdmin
-      .from('tenants')
-      .select('id')
-      .eq('statut', 'actif');
-    const activeTenantIds = (tenants || []).map(t => t.id);
+    const [{ data: prof }, { data: tenants }, { data: memberBookings }] = await Promise.all([
+      supabaseAdmin.from('profiles').select('tenant_id').eq('id', userId).maybeSingle(),
+      supabaseAdmin.from('tenants').select('id, nom, ville, adresse, pays, settings').eq('statut', 'actif'),
+      supabaseAdmin.from('reservations').select('tenant_id, espaces(tenant_id)').eq('user_id', userId),
+    ]);
 
-    let spaceQuery = supabaseAdmin
-      .from('espaces')
-      .select('id, nom, type, capacite, tarif_horaire, photo_url, tenant_id, tenants!tenant_id(nom, ville, adresse, pays, latitude, longitude)')
-      .order('tarif_horaire', { ascending: true });
-    if (activeTenantIds.length > 0) spaceQuery = spaceQuery.in('tenant_id', activeTenantIds);
-
-    const { data: espaces, error: espErr } = await spaceQuery;
-    if (espErr) return res.status(500).json({ error: espErr.message });
-
-    // Coworking habituel : fréquence des réservations du membre par tenant
-    const { data: memberBookings } = await supabaseAdmin
-      .from('reservations')
-      .select('espaces(tenant_id)')
-      .eq('user_id', userId);
+    const tenantById = new Map((tenants || []).map((t) => [t.id, t]));
     const tenantFreq = {};
-    (memberBookings || []).forEach(b => {
-      const tid = b.espaces?.tenant_id;
+    (memberBookings || []).forEach((b) => {
+      const tid = b.tenant_id || b.espaces?.tenant_id;
       if (tid) tenantFreq[tid] = (tenantFreq[tid] || 0) + 1;
     });
 
-    // Fenêtre « maintenant » (prochaine heure)
+    const homeTenantId = prof?.tenant_id && tenantById.has(prof.tenant_id) ? prof.tenant_id : null;
     const now = new Date();
-    const windowEnd = new Date(now.getTime() + 60 * 60 * 1000);
+    const windowEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-    const [bookingsRes, formationsRes] = await Promise.all([
-      supabaseAdmin
-        .from('reservations')
-        .select('espace_id')
-        .in('statut', ['confirmed', 'pending'])
-        .lt('date_debut', windowEnd.toISOString())
-        .gt('date_fin', now.toISOString()),
-      supabaseAdmin
-        .from('formations')
-        .select('espace_id')
-        .in('statut', ['planifiee', 'en_cours'])
-        .lt('date_debut', windowEnd.toISOString())
-        .gt('date_fin', now.toISOString()),
-    ]);
+    // Source unique de vérité alignée sur `unites` (comme Tunnel étape 2 & Plan 2D)
+    const targetTenants = homeTenantId
+      ? [tenantById.get(homeTenantId)]
+      : (tenants || []).slice(0, 6);
 
-    const occupiedByBookings = {};
-    (bookingsRes.data || []).forEach(r => {
-      occupiedByBookings[r.espace_id] = (occupiedByBookings[r.espace_id] || 0) + 1;
-    });
-    const occupiedByFormations = new Set((formationsRes.data || []).map(f => f.espace_id));
+    const results = await Promise.all(
+      targetTenants.map(async (t) => {
+        const live = await computeTenantLiveAvailability(supabaseAdmin, {
+          tenantId: t.id,
+          rangeStartDate: now,
+          rangeEndDate: windowEnd,
+          isNow: true,
+          excludeUserId: userId,
+          tenantSettings: t.settings || {},
+        });
+        return { tenant: t, live };
+      })
+    );
 
-    const spaces = (espaces || []).map(e => {
-      const isExclusive = e.type !== 'open_space';
-      const capacity = Math.max(1, parseInt(e.capacite, 10) || 1);
-      const overlappingCount = occupiedByBookings[e.id] || 0;
-      const blockedByFormation = occupiedByFormations.has(e.id);
-      const remaining = isExclusive
-        ? (overlappingCount > 0 ? 0 : 1)
-        : Math.max(0, capacity - overlappingCount);
-      const disponible = !blockedByFormation && remaining > 0;
-      return {
-        id: e.id,
-        nom: e.nom,
-        type: e.type,
-        capacite: capacity,
-        tarif_horaire: parseFloat(e.tarif_horaire) || 0,
-        photo_url: e.photo_url || null,
-        disponible,
-        places_restantes: remaining,
-        proche: !!tenantFreq[e.tenant_id],
-        coworking: e.tenants
-          ? { nom: e.tenants.nom, ville: e.tenants.ville, adresse: e.tenants.adresse, pays: e.tenants.pays }
-          : null,
-      };
-    });
+    const spaces = [];
+    let totalUnits = 0;
+    let availableUnits = 0;
+    let totalSpacesCount = 0;
+    let freeSpacesCount = 0;
+
+    for (const { tenant, live } of results) {
+      totalUnits += live.summary.total_units || 0;
+      availableUnits += live.summary.available_units || 0;
+      totalSpacesCount += live.summary.total_spaces || 0;
+      freeSpacesCount += live.summary.free_spaces || 0;
+
+      for (const sp of live.spaces || []) {
+        spaces.push({
+          id: sp.id,
+          tenant_id: sp.tenant_id,
+          nom: sp.nom,
+          type: sp.type,
+          capacite: sp.capacite,
+          tarif_horaire: sp.tarif_horaire,
+          tarif_horaire_ht: sp.tarif_horaire_ht,
+          tva_pct: sp.tva_pct,
+          photo_url: sp.photo_url || null,
+          disponible: sp.live_status === 'free' || sp.live_status === 'limited',
+          live_status: sp.live_status,
+          status_label: sp.status_label,
+          places_restantes: sp.available_units ?? sp.remaining_spots,
+          total_units: sp.total_units,
+          available_units: sp.available_units,
+          proche: tenant.id === homeTenantId || !!tenantFreq[tenant.id],
+          coworking: { nom: tenant.nom, ville: tenant.ville, adresse: tenant.adresse, pays: tenant.pays },
+        });
+      }
+    }
 
     spaces.sort((a, b) => {
       if (a.disponible !== b.disponible) return a.disponible ? -1 : 1;
@@ -211,9 +209,12 @@ async function spacesNearby(req, res) {
     });
 
     res.json({
+      home_tenant_id: homeTenantId,
       espaces: spaces.slice(0, 6),
-      total: spaces.length,
-      disponibles: spaces.filter(s => s.disponible).length,
+      total: totalSpacesCount,
+      disponibles: freeSpacesCount,
+      total_units: totalUnits,
+      available_units: availableUnits,
       heure: now.toISOString(),
     });
   } catch (err) {

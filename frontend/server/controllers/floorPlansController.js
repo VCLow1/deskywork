@@ -4,7 +4,9 @@
 const crypto = require('crypto');
 const { supabaseAdmin } = require('../config/supabase');
 const { computeOvertime15Min } = require('../models/walkinBilling');
-const { loadSpaceUnitsForTenant } = require('../models/bookingAvailability');
+const { loadSpaceUnitsForTenant, getTenantTamponMinutes } = require('../models/bookingAvailability');
+const { computeTenantLiveAvailability } = require('../models/availabilitySummary');
+const { getCancellationPolicy } = require('../models/helpers');
 
 const VALID_ITEM_TYPES = ['desk', 'quiet_desk', 'private_office', 'meeting_room', 'training_room', 'event_space'];
 const SHARED_SPACE_TYPES = ['open_space', 'hot_desk'];
@@ -1228,11 +1230,20 @@ async function getPublicSpacesLive(req, res) {
     const rangeStartMs = rangeStartDate.getTime();
     const rangeEndMs = rangeEndDate.getTime();
 
-    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
+    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }, unifiedAvail, cancellationPolicy, tamponMinutes] = await Promise.all([
       loadTenantPlansWithItems(tenant.id, { onlyActive: true }),
       loadTenantEspacesMap(tenant.id),
       loadSpaceUnitsForTenant(supabaseAdmin, tenant.id),
       loadTenantReservationsAndSessions(tenant.id, rangeStartDate.toISOString(), rangeEndDate.toISOString()),
+      computeTenantLiveAvailability(supabaseAdmin, {
+        tenantId: tenant.id,
+        rangeStartDate,
+        rangeEndDate,
+        isNow,
+        tenantSettings: tenant.settings || {},
+      }),
+      getCancellationPolicy(tenant.id),
+      getTenantTamponMinutes(supabaseAdmin, tenant.id),
     ]);
 
     const enrichedPlans = enrichPlansForClientOrLive({
@@ -1251,31 +1262,6 @@ async function getPublicSpacesLive(req, res) {
       overtimeRate: null,
     });
 
-    const activeSessionResIds = new Set(
-      (sessions || []).filter((s) => !s.check_out && s.statut !== 'completed').map((s) => s.reservation_id)
-    );
-
-    const bookingsBySpace = new Map();
-    for (const r of reservations || []) {
-      const deb = new Date(r.date_debut).getTime();
-      const fin = new Date(r.date_fin).getTime();
-      const hasOpenSession = isNow && activeSessionResIds.has(r.id);
-      const overlaps = hasOpenSession || (deb < rangeEndMs && fin > rangeStartMs);
-      if (overlaps && r.espace_id) {
-        if (!bookingsBySpace.has(r.espace_id)) bookingsBySpace.set(r.espace_id, []);
-        bookingsBySpace.get(r.espace_id).push(r);
-      }
-    }
-
-    const formationBySpace = new Map();
-    for (const f of formations || []) {
-      const deb = new Date(f.date_debut).getTime();
-      const fin = new Date(f.date_fin).getTime();
-      if (deb < rangeEndMs && fin > rangeStartMs && f.espace_id && !formationBySpace.has(f.espace_id)) {
-        formationBySpace.set(f.espace_id, f);
-      }
-    }
-
     const planItemsBySpace = new Map();
     let totalPlanItems = 0;
     let freePlanItems = 0;
@@ -1291,71 +1277,11 @@ async function getPublicSpacesLive(req, res) {
       }
     }
 
-    const spaces = Array.from(espacesById.values())
-      .map((esp) => {
-        const hourly = Number(esp.tarif_horaire || 0);
-        const capacity = Math.max(1, parseInt(esp.capacite, 10) || 1);
-        const isShared = SHARED_SPACE_TYPES.includes(esp.type);
-        const activeBookings = bookingsBySpace.get(esp.id) || [];
-        const occupiedCount = activeBookings.length;
-        const form = formationBySpace.get(esp.id) || null;
-        const photos = [...new Set([
-          esp.photo_url,
-          ...(Array.isArray(esp.photos_urls) ? esp.photos_urls : []),
-          ...(Array.isArray(esp.images) ? esp.images : []),
-        ].filter(Boolean))];
-        const fpStats = planItemsBySpace.get(esp.id) || { total: 0, free: 0 };
-
-        let remainingSpots = isShared ? Math.max(0, capacity - occupiedCount) : (occupiedCount > 0 ? 0 : 1);
-        let liveStatus = 'free';
-        let statusLabel = 'Disponible';
-        let nextFreeTime = null;
-        let conflictReason = null;
-
-        if (esp.actif === false) {
-          remainingSpots = 0;
-          liveStatus = 'maintenance';
-          statusLabel = 'Indisponible';
-          conflictReason = 'Espace temporairement en maintenance';
-        } else if (form) {
-          remainingSpots = 0;
-          liveStatus = 'formation';
-          statusLabel = 'Formation en cours';
-          nextFreeTime = form.date_fin || null;
-          conflictReason = `Réservé pour la formation « ${form.titre} »`;
-        } else if (remainingSpots === 0) {
-          liveStatus = 'occupied';
-          statusLabel = isShared ? 'Complet sur ce créneau' : 'Occupé sur ce créneau';
-          const endTimes = activeBookings.map((b) => b.date_fin).filter(Boolean).sort();
-          nextFreeTime = endTimes[0] || null;
-          conflictReason = isShared
-            ? `Toutes les places (${capacity}) sont réservées sur ce créneau`
-            : 'Cet espace est déjà réservé sur ce créneau';
-        } else if (isShared && remainingSpots <= Math.max(2, Math.ceil(capacity * 0.25))) {
-          liveStatus = 'limited';
-          statusLabel = `Plus que ${remainingSpots} place${remainingSpots > 1 ? 's' : ''}`;
-        }
-
+    const spaces = (unifiedAvail.spaces || [])
+      .map((sp) => {
+        const fpStats = planItemsBySpace.get(sp.id) || { total: 0, free: 0 };
         return {
-          id: esp.id,
-          tenant_id: esp.tenant_id,
-          nom: esp.nom,
-          type: esp.type,
-          description: esp.description || null,
-          capacite: capacity,
-          capacity,
-          is_shared: isShared,
-          tarif_horaire: hourly,
-          tarif_journalier: Number((hourly * 8).toFixed(3)),
-          photo_url: photos[0] || null,
-          photos,
-          equipements: Array.isArray(esp.equipements) ? esp.equipements : [],
-          occupied_count: occupiedCount,
-          remaining_spots: remainingSpots,
-          live_status: liveStatus,
-          status_label: statusLabel,
-          next_free_time: nextFreeTime,
-          conflict_reason: conflictReason,
+          ...sp,
           floor_plan_items_count: fpStats.total,
           floor_plan_free_items_count: fpStats.free,
         };
@@ -1367,7 +1293,10 @@ async function getPublicSpacesLive(req, res) {
       });
 
     const saasPack = tenant.settings?.saas_pack || 'essentiel';
-    const freeSpaces = spaces.filter((s) => s.live_status === 'free' || s.live_status === 'limited').length;
+    const freeSpaces = unifiedAvail.summary.free_spaces;
+    const rawServices = Array.isArray(tenant.settings?.services) ? tenant.settings.services : [];
+    const rawRessources = Array.isArray(tenant.settings?.ressources) ? tenant.settings.ressources : [];
+    const tvaDefautPct = Number(tenant.settings?.tva_defaut_pct ?? 19);
 
     res.json({
       tenant: {
@@ -1382,6 +1311,13 @@ async function getPublicSpacesLive(req, res) {
         logo_url: tenant.logo_url || null,
         cover_url: tenant.cover_url || null,
         description: tenant.description || null,
+        horaires_ouverture: tenant.horaires_ouverture || tenant.settings?.horaires_ouverture || '08:00 - 20:00',
+        tampon_minutes: tamponMinutes,
+        min_duration_minutes: Math.max(15, Number(tenant.settings?.min_duration_minutes || 60)),
+        tva_defaut_pct: tvaDefautPct,
+        cancellation_policy: cancellationPolicy,
+        services: rawServices.filter((s) => s && s.actif !== false && !s.archived_at),
+        ressources: rawRessources.filter((r) => r && r.actif !== false && !r.archived_at),
         is_featured: saasPack === 'premium',
         is_partner: ['premium', 'standard'].includes(saasPack) || Boolean(tenant.settings?.is_partner),
       },
@@ -1398,9 +1334,11 @@ async function getPublicSpacesLive(req, res) {
       spaces,
       floor_plans: enrichedPlans,
       summary: {
-        total_spaces: spaces.length,
+        total_spaces: unifiedAvail.summary.total_spaces,
         free_spaces: freeSpaces,
-        occupied_spaces: spaces.length - freeSpaces,
+        occupied_spaces: unifiedAvail.summary.occupied_spaces,
+        total_units: unifiedAvail.summary.total_units,
+        available_units: unifiedAvail.summary.available_units,
         has_floor_plan: enrichedPlans.length > 0,
         total_plan_items: totalPlanItems,
         free_plan_items: freePlanItems,

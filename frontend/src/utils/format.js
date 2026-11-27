@@ -27,6 +27,141 @@ export function formatDT(amount, { suffix = true, showTaxType = null } = {}) {
   return `${formatted} DT${taxSuffix}`;
 }
 
+/**
+ * Formate un montant ou retourne `zeroLabel` ("Gratuit" / "Inclus") si le prix est <= 0.
+ * Jamais de "0,000 DT / heure".
+ */
+export function formatPriceOrFree(amount, { zeroLabel = 'Gratuit', suffix = true, showTaxType = null, unit = '' } = {}) {
+  const n = Number(amount);
+  const safe = Number.isFinite(n) ? n : 0;
+  if (Math.abs(safe) < 0.0005 && zeroLabel) {
+    return zeroLabel;
+  }
+  const base = formatDT(safe, { suffix, showTaxType });
+  return unit ? `${base} ${unit}` : base;
+}
+
+const AVATAR_PALETTE = [
+  '#f95d00',
+  '#c2410c',
+  '#0f766e',
+  '#b45309',
+  '#7c2d12',
+  '#4d7c0f',
+  '#9a3412',
+  '#374151',
+];
+
+/** Couleur d'avatar déterministe sans bleu hors-charte. */
+export function getStableAvatarColor(seed) {
+  const str = String(seed || 'deskywork');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+/** Parse une chaîne d'horaires ("08:00 - 20:00") -> { openHour, openMin, closeHour, closeMin }. */
+export function parseOpeningHours(horairesStr) {
+  const fallback = { openHour: 8, openMin: 0, closeHour: 20, closeMin: 0 };
+  if (!horairesStr || typeof horairesStr !== 'string') return fallback;
+  const m = horairesStr.match(/(\d{1,2})\s*[:hH]\s*(\d{2})?\s*[-–àa]\s*(\d{1,2})\s*[:hH]\s*(\d{2})?/);
+  if (!m) return fallback;
+  const openHour = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+  const openMin = Math.min(59, Math.max(0, parseInt(m[2] || '0', 10)));
+  const closeHour = Math.min(23, Math.max(0, parseInt(m[3], 10)));
+  const closeMin = Math.min(59, Math.max(0, parseInt(m[4] || '0', 10)));
+  if (closeHour < openHour || (closeHour === openHour && closeMin <= openMin)) return fallback;
+  return { openHour, openMin, closeHour, closeMin };
+}
+
+/**
+ * Calcule le créneau « Maintenant » en Africa/Tunis arrondi au prochain quart d'heure (:00/:15/:30/:45),
+ * borné aux horaires d'ouverture et avec une durée minimale.
+ */
+export function getNextQuarterHourTunis({
+  nowMs = Date.now(),
+  horaires = '08:00 - 20:00',
+  durationMinutes = 60,
+} = {}) {
+  const { openHour, openMin, closeHour, closeMin } = parseOpeningHours(horaires);
+  const { hour, minute } = getTunisHourMinute(nowMs);
+  const totalMinNow = hour * 60 + minute;
+  const roundedStartMin = Math.ceil((totalMinNow + 1) / 15) * 15;
+  const openTotal = openHour * 60 + openMin;
+  const closeTotal = closeHour * 60 + closeMin;
+  const minDur = Math.max(15, Number(durationMinutes) || 60);
+
+  let date = getTunisDateKey(nowMs);
+  let startMin = Math.max(openTotal, roundedStartMin);
+  if (startMin + minDur > closeTotal) {
+    // Trop tard aujourd'hui : proposer dès l'ouverture demain
+    date = getTunisDateKey(nowMs + 24 * 3600 * 1000);
+    startMin = openTotal;
+  }
+  const endMin = Math.min(closeTotal, startMin + minDur);
+  const toHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return {
+    date,
+    start: toHHMM(startMin),
+    end: toHHMM(endMin),
+  };
+}
+
+/** Génère le contenu d'un fichier calendrier RFC 5545 (.ics) pour une réservation confirmée/enregistrée. */
+export function generateBookingIcs({
+  id,
+  title,
+  spaceName = 'Espace DeskyWork',
+  unitLabel = '',
+  coworkingName = 'DeskyWork',
+  address = '',
+  dateDebut,
+  dateFin,
+  statusLabel = 'Confirmée',
+} = {}) {
+  const toIcsUtc = (iso) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  };
+  const escapeIcs = (str) => String(str || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  const summary = title || `${spaceName}${unitLabel ? ` (${unitLabel})` : ''} — ${coworkingName}`;
+  const location = [coworkingName, address].filter(Boolean).join(', ');
+  const description = `Réservation DeskyWork\\nEspace : ${spaceName}${unitLabel ? ` (${unitLabel})` : ''}\\nStatut : ${statusLabel}\\nRèglement sur place à l'accueil.`;
+
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//DeskyWork//Reservation//FR',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${id || `dw-${Date.now()}`}@deskywork.tn`,
+    `DTSTAMP:${toIcsUtc(new Date().toISOString())}`,
+    `DTSTART:${toIcsUtc(dateDebut)}`,
+    `DTEND:${toIcsUtc(dateFin)}`,
+    `SUMMARY:${escapeIcs(summary)}`,
+    `LOCATION:${escapeIcs(location)}`,
+    `DESCRIPTION:${description}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+}
+
+export function downloadBookingIcs(bookingInfo) {
+  const content = generateBookingIcs(bookingInfo);
+  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `deskywork-reservation-${(bookingInfo?.id || 'creneau').slice(0, 8)}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /** Date stricte jj/mm/aaaa au fuseau Africa/Tunis. */
 export function formatDateDMY(value) {
   if (!value) return '—';

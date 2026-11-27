@@ -5,8 +5,8 @@ import { memberApi, pricingApi, subscriptionApi } from '../services/api';
 import PortalLayout from '../components/layout/PortalLayout';
 
 const SUBSCRIPTION_LABELS = {
-  day_pass: 'Day Pass',
-  week_pass: 'Week Pass',
+  day_pass: 'Pass journée',
+  week_pass: 'Pass semaine',
   mensuel: 'Mensuel',
   trimestriel: 'Trimestriel',
   annuel: 'Annuel',
@@ -34,8 +34,8 @@ const ESPACE_TYPE_LABELS = {
   meeting_room: 'Salle de réunion',
   training_room: 'Salle de formation',
   event_space: 'Espace événementiel',
-  hot_desk: 'Poste nomade (Hot Desk)',
-  dedicated_desk: 'Poste fixe (Dedicated Desk)',
+  hot_desk: 'Poste nomade',
+  dedicated_desk: 'Poste fixe',
 };
 
 export default function MemberSubscription({ session }) {
@@ -320,7 +320,7 @@ export default function MemberSubscription({ session }) {
                         <div className="flex items-start gap-3 mb-3">
                           <span
                             className="flex items-center justify-center w-10 h-10 rounded-xl shrink-0"
-                            style={{ background: 'rgba(0,84,203,0.06)' }}
+                            style={{ background: 'rgba(249,93,0,0.08)' }}
                           >
                             <span className="material-symbols-outlined text-secondary" style={{ fontSize: 22 }}>
                               {SUBSCRIPTION_ICONS[tarif.type_abonnement] || 'card_membership'}
@@ -331,7 +331,7 @@ export default function MemberSubscription({ session }) {
                               {SUBSCRIPTION_LABELS[tarif.type_abonnement] || tarif.label}
                             </h3>
                             {tarif.type_espace && (
-                              <span className="inline-flex mt-1 items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                              <span className="inline-flex mt-1 items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
                                 style={{ background: 'rgba(249,93,0,0.1)', color: '#b34a00' }}
                               >
                                 <span className="material-symbols-outlined" style={{ fontSize: 12 }}>meeting_room</span>
@@ -409,7 +409,7 @@ export default function MemberSubscription({ session }) {
                       <div className="flex items-center gap-3">
                         <span
                           className="flex items-center justify-center w-9 h-9 rounded-lg"
-                          style={{ background: 'rgba(0,84,203,0.06)' }}
+                          style={{ background: 'rgba(249,93,0,0.08)' }}
                         >
                           <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>
                             {SUBSCRIPTION_ICONS[item.type_abonnement] || 'card_membership'}
@@ -482,7 +482,7 @@ export default function MemberSubscription({ session }) {
               <div className="flex items-center gap-3 mb-5">
                 <span
                   className="flex items-center justify-center w-11 h-11 rounded-full"
-                  style={{ background: 'rgba(0,84,203,0.06)' }}
+                  style={{ background: 'rgba(249,93,0,0.08)' }}
                 >
                   <span className="material-symbols-outlined text-secondary" style={{ fontSize: 22 }}>card_membership</span>
                 </span>

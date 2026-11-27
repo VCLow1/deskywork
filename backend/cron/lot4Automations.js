@@ -13,6 +13,7 @@
 const cron = require('node-cron');
 const { canMarkReservationNoShow } = require('../models/helpers');
 const { getUnpaidBlockingConfig } = require('../models/financeHelpers');
+const { sweepPastConfirmedReservations } = require('../models/bookingAvailability');
 
 const lastSweepByTenant = new Map();
 const THROTTLE_MS = 60 * 1000;
@@ -192,6 +193,9 @@ async function runLot4AutomationsForTenant(supabaseAdmin, tenantId, options = {}
       });
     }
   }
+
+  // 3b. Transitions automatiques des réservations passées (jamais rester "confirmed" après date_fin)
+  await sweepPastConfirmedReservations(supabaseAdmin, { tenantId, force: true }).catch(() => {});
 
   // 4. Proposition de No-show 15 min après le début (uniquement si 0 paiement et 0 check-in)
   const noshowCutoffIso = new Date(now.getTime() - rules.auto_proposal_noshow_minutes * 60000).toISOString();

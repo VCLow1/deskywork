@@ -25,6 +25,7 @@ router.post('/sessions/walkin/start', authenticate, requireRoles('super_admin', 
 router.post('/sessions/auto-close-sweep', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.autoCloseSweep);
 router.post('/sessions/:id/stop', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.stopSession);
 router.post('/sessions/:id/extend', authenticate, ctrl.extendSession);
+router.patch('/sessions/:id/adjust', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.adjustSession);
 router.post('/sessions/:id/release', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.releaseSession);
 router.get('/sessions', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.listSessions);
 

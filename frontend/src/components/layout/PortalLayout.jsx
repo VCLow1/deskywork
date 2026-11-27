@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../supabaseClient';
+import { getStableAvatarColor } from '../../utils/format';
 import { joinUser, onNotificationCreated, onNotificationChanged } from '../../services/socket';
 import { memberPortalApi, tenantAdminApi } from '../../services/api';
 import {
@@ -711,13 +712,18 @@ export default function PortalLayout({ children, profile, onLogout }) {
     return () => window.removeEventListener('profile-updated', handleProfileUpdate);
   }, []);
 
-  const avatarUrl = livePhotoUrl || profile?.photo_url || profile?.avatar_url || profile?.avatar || profile?.tenant?.logo_url || tenantLogo || null;
-
   const isSuperAdmin = profile?.role === 'super_admin';
   const isStaff = profile?.role === 'staff';
   const adminView = isAdminRole(profile?.role);
   const isTrainer = profile?.role === 'formateur';
   const isCompany = isCompanyRole(profile?.role, profile?.type_membre);
+  const isRegularMember = !isSuperAdmin && !adminView && !isTrainer && !isCompany;
+
+  const avatarUrl = isRegularMember
+    ? (livePhotoUrl || profile?.photo_url || profile?.avatar_url || profile?.avatar || null)
+    : (livePhotoUrl || profile?.photo_url || profile?.avatar_url || profile?.avatar || profile?.tenant?.logo_url || tenantLogo || null);
+  const stableAvatarBg = getStableAvatarColor(profile?.id || profile?.email || initials);
+  const showStickyMemberReserveCta = isRegularMember && !location.pathname.startsWith('/book');
   const navSections = isSuperAdmin
     ? SUPER_ADMIN_NAV
     : isStaff
@@ -1015,8 +1021,25 @@ export default function PortalLayout({ children, profile, onLogout }) {
           </div>
         )}
 
-        {/* Right: + Nouveau (Admin/Staff) + User profile + Notification Bell + Dark toggle + Clickable Avatar */}
+        {/* Right: + Réserver (Membre) / + Nouveau (Admin/Staff) + Nom + Cloche + Mode sombre + Avatar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', flexShrink: 0 }}>
+
+          {showStickyMemberReserveCta && (
+            <Link
+              to="/book/step1"
+              className="hidden sm:inline-flex items-center gap-1.5"
+              style={{
+                height: 36, padding: '0 14px', borderRadius: 10,
+                fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                backgroundColor: '#f95d00', color: '#ffffff',
+                boxShadow: '0 2px 10px rgba(249,93,0,0.28)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add</span>
+              <span>Réserver</span>
+            </Link>
+          )}
 
           {['admin', 'staff'].includes(profile?.role) && (
             <div style={{ position: 'relative' }} ref={quickNewRef}>
@@ -1076,14 +1099,14 @@ export default function PortalLayout({ children, profile, onLogout }) {
 
           {/* Nom et rôle */}
           <div
-            className="hidden sm:flex"
+            className="flex"
             onClick={() => { setDropdownOpen(v => !v); setNotifOpen(false); }}
-            style={{ flexDirection: 'column', alignItems: 'flex-end', cursor: 'pointer' }}
+            style={{ flexDirection: 'column', alignItems: 'flex-end', cursor: 'pointer', maxWidth: 150 }}
           >
-            <span style={{ fontSize: 14, fontWeight: 600, color: dark ? '#fbffff' : '#100f0d', lineHeight: 1.2 }}>
+            <span className="truncate max-w-[110px] sm:max-w-[150px]" style={{ fontSize: 13, fontWeight: 600, color: dark ? '#fbffff' : '#100f0d', lineHeight: 1.2 }}>
               {profile?.prenom} {profile?.nom}
             </span>
-            <span style={{ fontSize: 12, color: dark ? 'rgba(251,255,255,0.6)' : '#44474d', marginTop: 2 }}>
+            <span className="hidden sm:block" style={{ fontSize: 12, color: dark ? 'rgba(251,255,255,0.6)' : '#44474d', marginTop: 2 }}>
               {getRoleLabel(profile?.role)}
             </span>
           </div>
@@ -1358,7 +1381,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                 width: 40, height: 40, borderRadius: '50%',
                 flexShrink: 0, border: '2px solid #ffffff',
                 boxShadow: dropdownOpen ? '0 0 0 3px #f95d00' : '0 2px 10px rgba(16,15,13,0.15)',
-                background: avatarUrl ? '#ffffff' : 'linear-gradient(135deg, #100f0d, #f95d00)',
+                background: avatarUrl ? '#ffffff' : stableAvatarBg,
                 color: '#fbffff', cursor: 'pointer', overflow: 'hidden',
                 transition: 'all 0.2s ease', padding: 0,
                 fontFamily: 'Sora, sans-serif', fontWeight: 700, fontSize: 14,
@@ -1398,7 +1421,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                     width: 44, height: 44, borderRadius: '50%',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontFamily: 'Sora, sans-serif', fontWeight: 700, fontSize: 15,
-                    background: avatarUrl ? '#ffffff' : 'linear-gradient(135deg, #100f0d, #f95d00)', color: '#fbffff',
+                    background: avatarUrl ? '#ffffff' : stableAvatarBg, color: '#fbffff',
                     overflow: 'hidden', flexShrink: 0, border: '1px solid rgba(249,93,0,0.2)',
                   }}>
                     {avatarUrl ? (
@@ -1733,6 +1756,22 @@ export default function PortalLayout({ children, profile, onLogout }) {
           </div>
         </main>
       </div>
+
+      {/* Bouton collant mobile "+ Réserver" (Membre) */}
+      {showStickyMemberReserveCta && (
+        <Link
+          to="/book/step1"
+          className="sm:hidden fixed bottom-5 right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full text-sm font-bold text-white shadow-xl active:scale-95 transition-transform"
+          style={{
+            backgroundColor: '#f95d00',
+            textDecoration: 'none',
+            boxShadow: '0 10px 26px rgba(249,93,0,0.38)',
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+          <span>Réserver</span>
+        </Link>
+      )}
 
       {/* ── Toasts Temps Réel + Barre de progression (Portal document.body) ── */}
       {liveToasts.length > 0 && typeof document !== 'undefined' && createPortal(

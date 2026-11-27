@@ -17,6 +17,8 @@ const { notifyConfirmationReservation, notifyAnnulationReservation } = require('
 const { sendEmailUniversal } = require('../utils/sendEmail');
 const { DEFAULT_TVA_PCT, roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
 const { logActivity } = require('../models/activityLogger');
+const { parseOpeningHoursRange } = require('../models/walkinBilling');
+const { createBookingHold, releaseBookingHold } = require('../models/bookingHolds');
 const {
   isManagerRole,
   assertManagerGuards,
@@ -25,6 +27,7 @@ const {
   checkAvailabilityWithBuffer,
   findAlternativeSlots,
   sweepExpiredConfirmations,
+  sweepPastConfirmedReservations,
   tunisLocalYmdToUtcMs,
 } = require('../models/bookingAvailability');
 
@@ -57,6 +60,9 @@ async function getBookingsCalendar(req, res) {
 
     if (req.tenantId && isStaff) {
       await sweepExpiredConfirmations({ supabaseAdmin, tenantId: req.tenantId }).catch(() => {});
+      await sweepPastConfirmedReservations(supabaseAdmin, { tenantId: req.tenantId }).catch(() => {});
+    } else if (!isSuperAdmin && !isStaff) {
+      await sweepPastConfirmedReservations(supabaseAdmin, { userId: req.user.id }).catch(() => {});
     }
 
     let query = supabaseAdmin
@@ -286,6 +292,7 @@ async function createBooking(req, res) {
       ressources = [],
       promo_code = null,
       code_promo = null,
+      hold_id = null,
       deduire_quota_abonnement = true,
       mode_paiement = 'cash',
       confirmation_manuelle = false,
@@ -330,7 +337,8 @@ async function createBooking(req, res) {
     // Résolution cible client (membre / invité / création invité avec dédoublonnage tél)
     let targetUserId = isStaff ? (bodyUserId || null) : req.user.id;
     let targetGuestId = isStaff ? (bodyGuestId || null) : null;
-    let resolvedPhone = telephone_contact ? normalizePhoneTN(telephone_contact) : null;
+    const rawPhoneInput = telephone_contact || (!isStaff ? req.profile?.telephone : null);
+    let resolvedPhone = rawPhoneInput ? normalizePhoneTN(rawPhoneInput) : null;
 
     if (telephone_contact && !resolvedPhone) {
       return res.status(400).json({ error: 'Numéro de téléphone invalide : format attendu +216 suivi de 8 chiffres.' });
@@ -451,9 +459,10 @@ async function createBooking(req, res) {
     let computedMontantHT = roundMillime(spaceSubtotalHT + servicesSubtotalHT);
 
     // Code promo éventuel
+    const effectivePromoCode = code_promo || promo_code || null;
     let promoApplied = null;
-    if (code_promo) {
-      const promo = await findValidPromoCode(code_promo, bookingTenantId);
+    if (effectivePromoCode) {
+      const promo = await findValidPromoCode(effectivePromoCode, bookingTenantId);
       if (promo) {
         const disc = applyPromoDiscount(computedMontantHT, promo);
         computedMontantHT = roundMillime(disc.prixFinal);
@@ -606,6 +615,8 @@ async function createBooking(req, res) {
               dateFin: date_fin,
               tamponMinutes,
               nbParticipants: parsedParticipants,
+              excludeUserId: req.user?.id || null,
+              excludeHoldId: hold_id || null,
             }).catch(() => ({ alternatives: { slots: [], units: [] } }));
             alternatives = availInfo.alternatives || alternatives;
           }
@@ -634,6 +645,8 @@ async function createBooking(req, res) {
           dateFin: date_fin,
           tamponMinutes,
           nbParticipants: parsedParticipants,
+          excludeUserId: req.user?.id || null,
+          excludeHoldId: hold_id || null,
         });
         if (!bufferCheck.isAvailable) {
           return res.status(409).json({
@@ -861,7 +874,27 @@ async function createBooking(req, res) {
       console.error('⚠️ Notification admin/client nouvelle réservation:', notifErr.message);
     }
 
-    res.status(201).json({ reservation: data, payment });
+    if (hold_id) {
+      await releaseBookingHold(supabaseAdmin, {
+        holdId: hold_id,
+        userId: req.user?.id || null,
+        tenantId: bookingTenantId,
+      }).catch(() => {});
+    }
+
+    const montantTva = roundMillime(computedMontant - computedMontantHT);
+    res.status(201).json({
+      reservation: data,
+      payment,
+      pricing: {
+        montant_ht: computedMontantHT,
+        tva_pct: tvaApplique,
+        montant_tva: montantTva,
+        montant_ttc: computedMontant,
+        promo_applied: promoApplied,
+        quota_deduit: quotaDeduit,
+      },
+    });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
@@ -1112,6 +1145,9 @@ async function listBookings(req, res) {
   try {
     if (req.tenantId && isStaff) {
       await sweepExpiredConfirmations({ supabaseAdmin, tenantId: req.tenantId }).catch(() => {});
+      await sweepPastConfirmedReservations(supabaseAdmin, { tenantId: req.tenantId }).catch(() => {});
+    } else if (!isSuperAdmin && !isStaff) {
+      await sweepPastConfirmedReservations(supabaseAdmin, { userId: req.user.id }).catch(() => {});
     }
 
     let query = supabaseAdmin
@@ -1542,8 +1578,16 @@ async function checkSlots(req, res) {
     if (!espace) return res.status(404).json({ error: 'Espace introuvable.' });
 
     const tenantId = espace.tenant_id || req.tenantId;
-    const tamponMinutes = await getTenantTamponMinutes(supabaseAdmin, tenantId);
-    const units = tenantId ? await loadSpaceUnitsForTenant(supabaseAdmin, tenantId, espace_id) : [];
+    const [tamponMinutes, units, tRowRes, policy] = await Promise.all([
+      getTenantTamponMinutes(supabaseAdmin, tenantId),
+      tenantId ? loadSpaceUnitsForTenant(supabaseAdmin, tenantId, espace_id) : Promise.resolve([]),
+      tenantId ? supabaseAdmin.from('tenants').select('settings, horaires_ouverture').eq('id', tenantId).maybeSingle() : Promise.resolve({ data: null }),
+      getCancellationPolicy(tenantId),
+    ]);
+    const tSettings = tRowRes?.data?.settings || {};
+    const effectiveHoraires = espace.horaires || tRowRes?.data?.horaires_ouverture || tSettings.horaires_ouverture || '08:00 - 20:00';
+    const parsedHours = parseOpeningHoursRange(effectiveHoraires);
+    const minDurationMinutes = Math.max(15, Number(tSettings.min_duration_minutes || 60));
 
     const dayStartIso = new Date(tunisLocalYmdToUtcMs(date, 0, 0)).toISOString();
     const dayEndIso = new Date(tunisLocalYmdToUtcMs(date, 23, 59)).toISOString();
@@ -1558,20 +1602,38 @@ async function checkSlots(req, res) {
     const busy = (dayRows || []).filter((r) => (!unite_id ? true : (!r.unite_id || r.unite_id === unite_id)));
     const slots = findAlternativeSlots({
       dateYmd: date,
-      durationMinutes: Number(duration_minutes) || 60,
-      horaires: espace.horaires || '08:00 - 20:00',
+      durationMinutes: Number(duration_minutes) || minDurationMinutes,
+      minDurationMinutes,
+      horaires: effectiveHoraires,
       busyIntervals: busy,
       bufferMinutes: tamponMinutes,
-      maxResults: 24,
-      stepMinutes: 30,
+      maxResults: 48,
+      stepMinutes: 15,
       skipPast: false,
     });
 
+    const rawServices = Array.isArray(tSettings.services) ? tSettings.services : [];
+    const rawRessources = Array.isArray(tSettings.ressources) ? tSettings.ressources : [];
+    const tvaPct = Number(espace.tva_pct ?? tSettings.tva_defaut_pct ?? DEFAULT_TVA_PCT);
+
     res.json({
-      espace,
+      espace: {
+        ...espace,
+        horaires: effectiveHoraires,
+        tva_pct: tvaPct,
+        tarif_horaire_ht: espace.tarif_horaire_ht != null
+          ? roundMillime(espace.tarif_horaire_ht)
+          : computeHTFromTTC(espace.tarif_horaire || 0, tvaPct),
+      },
       date,
-      horaires: espace.horaires || '08:00 - 20:00',
+      horaires: effectiveHoraires,
+      opening_hours: parsedHours,
+      min_duration_minutes: minDurationMinutes,
       tampon_minutes: tamponMinutes,
+      tva_pct: tvaPct,
+      cancellation_policy: policy,
+      services: rawServices.filter((s) => s && s.actif !== false && !s.archived_at),
+      ressources: rawRessources.filter((r) => r && r.actif !== false && !r.archived_at),
       available_slots: slots,
       units_status: units.map((u) => ({
         id: u.id,
@@ -1580,6 +1642,7 @@ async function checkSlots(req, res) {
         type_unite: u.type_unite,
         capacite: u.capacite,
         statut: u.statut,
+        floor_plan_item_id: u.floor_plan_item_id || null,
         date_retour_auto: u.date_retour_auto || null,
       })),
       nb_participants: Number(nb_participants) || 1,
@@ -1853,9 +1916,83 @@ async function archiveBooking(req, res) {
   }
 }
 
+// POST /api/bookings/hold — Verrou temporaire 5 min lors du passage à l'étape 3 (RM-08)
+async function createHold(req, res) {
+  try {
+    const { espace_id, unite_id = null, floor_plan_item_id = null, date_debut, date_fin, nb_participants = 1 } = req.body || {};
+    if (!espace_id || !date_debut || !date_fin) {
+      return res.status(400).json({ error: 'espace_id, date_debut et date_fin sont requis.' });
+    }
+    if (new Date(date_debut) >= new Date(date_fin)) {
+      return res.status(400).json({ error: 'date_fin doit être postérieure à date_debut.' });
+    }
+
+    const { data: espace, error: espErr } = await supabaseAdmin
+      .from('espaces')
+      .select('id, tenant_id, nom, type, capacite, horaires, actif')
+      .eq('id', espace_id)
+      .maybeSingle();
+    if (espErr || !espace) return res.status(404).json({ error: 'Espace introuvable.' });
+
+    const tid = espace.tenant_id || req.tenantId;
+    const tamponMinutes = await getTenantTamponMinutes(supabaseAdmin, tid);
+    const units = tid ? await loadSpaceUnitsForTenant(supabaseAdmin, tid, espace_id) : [];
+    const targetUnite = unite_id ? units.find((u) => u.id === unite_id) : null;
+
+    const avail = await checkAvailabilityWithBuffer({
+      supabaseAdmin,
+      tenantId: tid,
+      espace,
+      unite: targetUnite,
+      dateDebut: date_debut,
+      dateFin: date_fin,
+      tamponMinutes,
+      nbParticipants: Number(nb_participants) || 1,
+      excludeUserId: req.user.id,
+    });
+    if (!avail.isAvailable) {
+      return res.status(409).json({
+        error: avail.reason || 'Ce créneau vient d’être réservé ou verrouillé.',
+        conflict: true,
+        alternatives: avail.alternatives,
+      });
+    }
+
+    const hold = await createBookingHold(supabaseAdmin, {
+      tenantId: tid,
+      espaceId: espace_id,
+      uniteId: unite_id || null,
+      floorPlanItemId: floor_plan_item_id || targetUnite?.floor_plan_item_id || null,
+      userId: req.user.id,
+      dateDebut: date_debut,
+      dateFin: date_fin,
+    });
+
+    res.status(201).json(hold);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE /api/bookings/hold/:id — Libération explicite du verrou temporaire
+async function releaseHold(req, res) {
+  try {
+    const result = await releaseBookingHold(supabaseAdmin, {
+      holdId: req.params.id,
+      userId: req.user.id,
+      tenantId: req.tenantId || null,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getBookingsCalendar,
   createBooking,
+  createHold,
+  releaseHold,
   deleteBooking,
   cancelInfoBooking,
   checkAvailability,

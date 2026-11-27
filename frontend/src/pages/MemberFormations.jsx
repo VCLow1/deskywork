@@ -167,9 +167,9 @@ export default function MemberFormations({ session }) {
             </span>
             <span className="text-xs font-bold uppercase tracking-widest text-secondary">Espace Formation</span>
           </div>
-          <h1 className="font-sora font-bold text-primary text-2xl sm:text-3xl">Formations & Ateliers</h1>
+          <h1 className="font-sora font-bold text-primary text-2xl sm:text-3xl">Formations &amp; Ateliers</h1>
           <p className="text-sm text-on-surface-variant mt-0.5">
-            Inscrivez-vous à nos workshops et sessions de formation professionnelle.
+            Inscrivez-vous à nos ateliers et sessions de formation professionnelle.
           </p>
         </div>
 
@@ -204,7 +204,7 @@ export default function MemberFormations({ session }) {
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h2 className="font-sora font-semibold text-primary text-base flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>explore</span>
-                Workshops &amp; Formations
+                Ateliers &amp; Formations
                 <span className="text-xs font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-full ml-1">
                   {filteredFormations.length} / {formations.length}
                 </span>
@@ -300,7 +300,7 @@ export default function MemberFormations({ session }) {
                       setFilterDispo('all');
                       setPageCatalogue(1);
                     }}
-                    className="text-[11px] text-secondary font-bold hover:underline flex items-center gap-1"
+                    className="text-xs text-secondary font-bold hover:underline flex items-center gap-1"
                   >
                     <span className="material-symbols-outlined text-[14px]">refresh</span>
                     Réinitialiser les filtres
@@ -335,7 +335,7 @@ export default function MemberFormations({ session }) {
                         <div className="p-5 flex flex-col flex-1">
                           {/* Badges */}
                           <div className="flex justify-between items-center gap-2 mb-3">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary bg-secondary/8 px-2 py-0.5 rounded-full truncate max-w-[140px]">
+                            <span className="text-xs font-bold uppercase tracking-widest text-secondary bg-secondary/8 px-2 py-0.5 rounded-full truncate max-w-[140px]">
                               {f.espaces?.nom || 'Atelier'}
                             </span>
                             <span className={`text-xs font-bold shrink-0 ${f.prix_inscription > 0 ? 'text-primary' : (f.est_gratuit || f.programme?.includes('[SESSION_GRATUITE]')) ? 'text-emerald-600' : 'text-slate-400 italic'}`}>
@@ -351,7 +351,7 @@ export default function MemberFormations({ session }) {
                           <p className="text-xs text-on-surface-variant line-clamp-2 mb-4">{f.description || 'Aucune description.'}</p>
 
                           {/* Info lines */}
-                          <div className="space-y-1.5 text-[11px] text-on-surface-variant mb-4 mt-auto">
+                          <div className="space-y-1.5 text-xs text-on-surface-variant mb-4 mt-auto">
                             <div className="flex items-center gap-1.5">
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>person</span>
                               <span>{f.profiles ? `${f.profiles.prenom} ${f.profiles.nom}` : 'Formateur'}</span>
@@ -450,13 +450,13 @@ export default function MemberFormations({ session }) {
                     <div key={my.id} className="bg-surface-container-lowest rounded-3xl border border-outline-variant/20 p-4 shadow-sm hover:border-secondary/20 transition-colors">
                       <div className="flex justify-between items-start gap-2 mb-2">
                         <h4 className="font-semibold text-primary text-sm leading-snug line-clamp-2 flex-1">{item.titre}</h4>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ${my.statut === 'confirmee' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${my.statut === 'confirmee' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                           }`}>
                           {STATUT_INSCRIPTION_LABELS[my.statut] || my.statut}
                         </span>
                       </div>
 
-                      <div className="space-y-1 text-[11px] text-on-surface-variant mb-3">
+                      <div className="space-y-1 text-xs text-on-surface-variant mb-3">
                         <div className="flex items-center gap-1">
                           <span className="material-symbols-outlined" style={{ fontSize: 11 }}>person</span>
                           {item.profiles ? `${item.profiles.prenom} ${item.profiles.nom}` : 'Formateur'}
@@ -471,18 +471,18 @@ export default function MemberFormations({ session }) {
                       <div className="flex flex-wrap items-center justify-between gap-1.5 mb-3 pt-2 border-t border-outline-variant/10">
                         {item.prix_inscription > 0 ? (
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-semibold text-on-surface-variant">Mode :</span>
-                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200">
+                            <span className="text-xs font-semibold text-on-surface-variant">Mode :</span>
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200">
                               Sur place
                             </span>
                           </div>
                         ) : (
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${(my.formations?.est_gratuit || my.formations?.programme?.includes('[SESSION_GRATUITE]')) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${(my.formations?.est_gratuit || my.formations?.programme?.includes('[SESSION_GRATUITE]')) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                             {(my.formations?.est_gratuit || my.formations?.programme?.includes('[SESSION_GRATUITE]')) ? 'Gratuit' : 'Tarif non défini'}
                           </span>
                         )}
 
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${my.statut_paiement === 'paye' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${my.statut_paiement === 'paye' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
                             my.statut_paiement === 'gratuit' ? 'bg-gray-100 text-gray-600' :
                               'bg-amber-50 text-amber-700 border border-amber-200'
                           }`}>
@@ -494,7 +494,7 @@ export default function MemberFormations({ session }) {
                         <button
                           onClick={() => handleUnregister(item.id)}
                           disabled={isSaving}
-                          className="flex-1 py-1.5 border border-error/30 text-error font-semibold rounded-lg text-[10px] hover:bg-error/5 disabled:opacity-50"
+                          className="flex-1 py-1.5 border border-error/30 text-error font-semibold rounded-lg text-xs hover:bg-error/5 disabled:opacity-50"
                         >
                           {isSaving ? '...' : 'Annuler'}
                         </button>
@@ -523,7 +523,7 @@ export default function MemberFormations({ session }) {
             {/* Header Modal */}
             <div className="p-6 bg-surface-container-low border-b border-outline-variant/20 flex justify-between items-start">
               <div>
-                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-secondary bg-secondary/10 px-2.5 py-1 rounded-full">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-secondary bg-secondary/10 px-2.5 py-1 rounded-full">
                   <span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span>
                   Modalités de paiement
                 </span>
@@ -595,7 +595,7 @@ export default function MemberFormations({ session }) {
           <div className="relative w-full max-w-3xl bg-surface-container-lowest rounded-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border border-outline-variant/10">
             <div className="p-5 sm:p-6 border-b border-outline-variant/20 flex justify-between items-start gap-4">
               <div className="min-w-0">
-                <span className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-secondary bg-secondary/10 px-3 py-1 rounded-full">
+                <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-secondary bg-secondary/10 px-3 py-1 rounded-full">
                   <span className="material-symbols-outlined" style={{ fontSize: 14 }}>view_carousel</span>
                   Programme
                 </span>
@@ -632,7 +632,7 @@ export default function MemberFormations({ session }) {
 
                 <div className="space-y-4 rounded-3xl bg-surface-container-lowest border border-outline-variant/10 p-4 sm:p-5">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-2">Détails</p>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-2">Détails</p>
                     <ul className="space-y-3 text-sm text-primary">
                       <li className="flex items-start gap-3">
                         <span className="material-symbols-outlined text-secondary" style={{ fontSize: 18 }}>person</span>

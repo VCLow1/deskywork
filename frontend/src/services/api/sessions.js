@@ -13,8 +13,12 @@ export const sessionApi = {
     apiFetch('/api/sessions/walkin/start', { method: 'POST', body: JSON.stringify(payload) }),
   stop: (id, payload = {}) =>
     apiFetch(`/api/sessions/${id}/stop`, { method: 'POST', body: JSON.stringify(payload) }),
-  extend: (id, payload = { minutes: 30 }) =>
-    apiFetch(`/api/sessions/${id}/extend`, { method: 'POST', body: JSON.stringify(payload) }),
+  extend: (id, payload = { minutes: 30 }) => {
+    const body = typeof payload === 'number' ? { minutes: payload } : (payload || { minutes: 30 });
+    return apiFetch(`/api/sessions/${id}/extend`, { method: 'POST', body: JSON.stringify(body) });
+  },
+  adjust: (id, payload) =>
+    apiFetch(`/api/sessions/${id}/adjust`, { method: 'PATCH', body: JSON.stringify(payload) }),
   autoCloseSweep: () =>
     apiFetch('/api/sessions/auto-close-sweep', { method: 'POST' }),
   release: (id) => apiFetch(`/api/sessions/${id}/release`, { method: 'POST' }),

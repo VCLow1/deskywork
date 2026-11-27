@@ -10,7 +10,8 @@ import {
   getItemTypeMeta,
   getFloorPlanPalette,
 } from './floorPlanConstants';
-import { formatDT } from '../../utils/format';
+import { formatPriceOrFree } from '../../utils/format';
+import Money from '../common/Money';
 
 const START_HOURS = Array.from({ length: 14 }, (_, i) => `${String(7 + i).padStart(2, '0')}:00`);
 const END_HOURS = Array.from({ length: 15 }, (_, i) => `${String(8 + i).padStart(2, '0')}:00`);
@@ -175,7 +176,7 @@ export default function FloorPlanBookingView({
         <div className="rounded-2xl border p-4 shadow-sm" style={boxStyle}>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider opacity-70 mb-1">
                 Date (Africa/Tunis)
               </label>
               <input
@@ -189,7 +190,7 @@ export default function FloorPlanBookingView({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider opacity-70 mb-1">
                 Heure de début
               </label>
               <select
@@ -205,7 +206,7 @@ export default function FloorPlanBookingView({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider opacity-70 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider opacity-70 mb-1">
                 Heure de fin
               </label>
               <select
@@ -333,14 +334,14 @@ export default function FloorPlanBookingView({
                     {isFree ? 'Libre' : isMaint ? 'En maintenance' : 'Occupé'}
                   </span>
                 </p>
-                {item.space_name && <p className="text-[11px] opacity-75">{item.space_name}</p>}
-                {isFree && Number(item.tarif_horaire) > 0 && (
-                  <p className="text-[11px] font-bold text-[#f95d00]">
-                    {formatDT(item.tarif_horaire)}/h · {formatDT(item.tarif_journalier)}/jour
+                {item.space_name && <p className="text-xs opacity-75">{item.space_name}</p>}
+                {isFree && (
+                  <p className="text-xs font-bold text-[#f95d00]">
+                    {formatPriceOrFree(item.tarif_horaire, { zeroLabel: 'Gratuit', unit: '/ h' })}
                   </p>
                 )}
                 {!isFree && item.conflict_reason && (
-                  <p className="text-[11px] opacity-80">{item.conflict_reason}</p>
+                  <p className="text-xs opacity-80">{item.conflict_reason}</p>
                 )}
               </div>
             );
@@ -365,7 +366,7 @@ export default function FloorPlanBookingView({
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase bg-[#f95d00]/15 text-[#f95d00]">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-[#f95d00]/15 text-[#f95d00]">
                   {getItemTypeMeta(selectedItem.item_type).shortLabel}
                 </span>
                 <h4 className="font-sora font-bold text-lg">
@@ -382,7 +383,7 @@ export default function FloorPlanBookingView({
                   {selectedItem.equipements.slice(0, 4).map((eq, idx) => (
                     <span
                       key={idx}
-                      className="px-2 py-0.5 rounded-full text-[10px] font-semibold border"
+                      className="px-2 py-0.5 rounded-full text-xs font-semibold border"
                       style={{ borderColor: boxStyle.borderColor }}
                     >
                       ✓ {eq}
@@ -394,9 +395,9 @@ export default function FloorPlanBookingView({
 
             <div className="flex flex-wrap items-center gap-4">
               <div className="text-right">
-                <p className="text-[11px] opacity-70 font-semibold">Estimation créneau</p>
+                <p className="text-xs opacity-70 font-semibold">Estimation créneau</p>
                 <p className="font-sora font-extrabold text-xl text-[#f95d00]">
-                  {formatDT((selectedItem.tarif_horaire || 0) * durationHours)}
+                  <Money amount={(selectedItem.tarif_horaire || 0) * durationHours} zeroLabel="Gratuit" />
                 </p>
               </div>
               <button
@@ -405,8 +406,9 @@ export default function FloorPlanBookingView({
                 onClick={() =>
                   onReserve?.({
                     espaceId: selectedItem.space_id,
+                    uniteId: selectedItem.unite_id || '',
                     itemId: selectedItem.id,
-                    itemLabel: selectedItem.label,
+                    itemLabel: selectedItem.unite_code || selectedItem.label,
                     date,
                     start: startTime,
                     end: endTime,

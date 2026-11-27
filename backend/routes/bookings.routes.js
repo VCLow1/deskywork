@@ -5,10 +5,12 @@ const { authenticate } = require('../middleware/authenticate');
 const { requireRoles } = require('../middleware/requireRoles');
 const ctrl = require('../controllers/bookingsController');
 
-// Routes calendrier & disponibilité
+// Routes calendrier, disponibilité & verrous temporaires 5 min (RM-08)
 router.get('/bookings/calendar', authenticate, ctrl.getBookingsCalendar);
 router.post('/bookings/check-availability', authenticate, ctrl.checkAvailability);
 router.post('/bookings/check-slots', authenticate, ctrl.checkSlots);
+router.post('/bookings/hold', authenticate, ctrl.createHold);
+router.delete('/bookings/hold/:id', authenticate, ctrl.releaseHold);
 
 // CRUD & actions LOT 3 réservations (membres & admin)
 router.post('/bookings', authenticate, ctrl.createBooking);

@@ -26,10 +26,10 @@ export const SAAS_PACKS = [
     id: 'premium',
     title: 'Premium',
     price: 220,
-    badge: 'Mis en avant',
+    badge: 'Sponsorisé',
     highlighted: true,
     desc: 'Visibilité maximale sur la marketplace.',
-    features: ['Ressources & membres illimités', '10 staffs', 'Badge « Mis en avant »', 'Priorité algorithmique tournante sur la marketplace', 'Tous les avantages Standard'],
+    features: ['Ressources & membres illimités', '10 staffs', 'Badge « Sponsorisé »', 'Priorité algorithmique tournante sur la marketplace', 'Tous les avantages Standard'],
   },
 ];
 
