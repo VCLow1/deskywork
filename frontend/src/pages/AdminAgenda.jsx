@@ -13,8 +13,9 @@ const HOUR_END = 22;
 const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
 
 const STATUT_CONFIG = {
-  pending:    { label: 'En attente',        icon: 'hourglass_empty', bg: '#fef3c7', text: '#92400e' },
-  confirmed:  { label: 'Confirmée',         icon: 'check_circle',    bg: '#dcfce7', text: '#15803d' },
+  pending:                   { label: 'En attente',                 icon: 'hourglass_empty', bg: '#fef3c7', text: '#92400e' },
+  en_attente_confirmation:   { label: 'En attente de confirmation', icon: 'phone_callback',  bg: '#fff7ed', text: '#c2410c' },
+  confirmed:                 { label: 'Confirmée',                  icon: 'check_circle',    bg: '#dcfce7', text: '#15803d' },
   completed:  { label: 'Terminée',          icon: 'task_alt',        bg: '#ecfdf5', text: '#065f46' },
   cancelled:  { label: 'Annulée',           icon: 'cancel',          bg: '#f1f5f9', text: '#475569' },
   refused:    { label: 'Refusée',           icon: 'block',           bg: '#fee2e2', text: '#991b1b' },

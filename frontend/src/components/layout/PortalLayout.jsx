@@ -934,7 +934,7 @@ export default function PortalLayout({ children, profile, onLogout }) {
                             type="button"
                             onClick={() => {
                               setSearchOpen(false);
-                              navigate(`/admin/clients?search=${encodeURIComponent(m.email || m.nom)}`);
+                              navigate(`/admin/clients/${m.id}`);
                             }}
                             style={{
                               width: '100%', textAlign: 'left', border: 'none', background: 'transparent',

@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { bookingApi, memberApi, paymentApi } from '../services/api';
+import { bookingApi, paymentApi, sessionApi, tenantAdminApi } from '../services/api';
 import { useSessionUser } from '../hooks/useSessionUser';
 import PortalLayout from '../components/layout/PortalLayout';
 import Pagination from '../components/Pagination';
 import AdminAgenda from './AdminAgenda';
+import NewReservationModal from '../components/reservations/NewReservationModal';
+import WalkInSessionModal from '../components/sessions/WalkInSessionModal';
+import Money from '../components/common/Money';
 import { formatDateDMY, formatTime24h, tunisLocalToISO } from '../utils/format';
 
 const STATUT_CONFIG = {
@@ -13,6 +16,11 @@ const STATUT_CONFIG = {
     label: 'En attente',
     badgeClass: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50',
     icon: 'hourglass_empty',
+  },
+  en_attente_confirmation: {
+    label: 'En attente de confirmation',
+    badgeClass: 'bg-orange-100 text-[#c2410c] border-orange-300',
+    icon: 'phone_callback',
   },
   confirmed: {
     label: 'Confirmée',
@@ -69,44 +77,36 @@ export default function AdminReservations({ session }) {
   const [filterStatut, setFilterStatut] = useState('all');
   const [filterEspace, setFilterEspace] = useState('all');
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') || '');
-  const [showNewModal, setShowNewModal] = useState(() => searchParams.get('new') === '1' || searchParams.get('walkin') === '1');
-  const [membersList, setMembersList] = useState([]);
-  const [creatingBooking, setCreatingBooking] = useState(false);
-  const [newBookingForm, setNewBookingForm] = useState(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    return {
-      user_id: '',
-      espace_id: '',
-      date: today,
-      heure_debut: '09:00',
-      heure_fin: '12:00',
-      nb_participants: 1,
-      notes: searchParams.get('walkin') === '1' ? 'Client sur place' : '',
-    };
-  });
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [showNewModal, setShowNewModal] = useState(() => searchParams.get('new') === '1');
+  const [showWalkinModal, setShowWalkinModal] = useState(() => searchParams.get('walkin') === '1');
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [unites, setUnites] = useState([]);
+  const [cancelModalBooking, setCancelModalBooking] = useState(null);
+  const [cancelMotif, setCancelMotif] = useState('');
+  const [moveModalBooking, setMoveModalBooking] = useState(null);
+  const [moveForm, setMoveForm] = useState({ date: '', heure_debut: '09:00', heure_fin: '12:00', unite_id: '' });
+  const [moveAlternatives, setMoveAlternatives] = useState(null);
+
+  const initialPersonneId = searchParams.get('personne_id') || '';
+  const isManager = ['admin', 'super_admin'].includes(String(profile?.role || '').toLowerCase());
 
   const navigate = useNavigate();
 
   useEffect(() => {
     const q = searchParams.get('search');
     if (q !== null) setSearchQuery(q);
-    if (searchParams.get('new') === '1' || searchParams.get('walkin') === '1') {
+    if (searchParams.get('new') === '1') {
       setShowNewModal(true);
-      if (searchParams.get('walkin') === '1') {
-        setNewBookingForm((p) => ({ ...p, notes: p.notes || 'Client sur place' }));
-      }
+    }
+    if (searchParams.get('walkin') === '1') {
+      setShowWalkinModal(true);
     }
     const v = searchParams.get('view');
     if (v && ['list', 'calendar', 'plan'].includes(v)) {
       setHubTab(v);
     }
   }, [searchParams]);
-
-  useEffect(() => {
-    if (showNewModal && membersList.length === 0) {
-      memberApi.getAll().then((r) => setMembersList(r.members || [])).catch(() => {});
-    }
-  }, [showNewModal]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -115,20 +115,22 @@ export default function AdminReservations({ session }) {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [includeArchived]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       setError('');
 
-      const [bookingsData, espacesData] = await Promise.all([
-        bookingApi.getAll(),
+      const [bookingsData, espacesData, unitesData] = await Promise.all([
+        bookingApi.getAll(includeArchived ? { include_archived: 'true' } : {}),
         bookingApi.getEspaces().catch(() => ({ espaces: [] })),
+        tenantAdminApi.getUnites().catch(() => ({ unites: [] })),
       ]);
 
       setBookings(bookingsData.reservations || []);
       setEspaces(espacesData.espaces || []);
+      setUnites(unitesData.unites || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -312,6 +314,14 @@ export default function AdminReservations({ session }) {
           </button>
           <button
             type="button"
+            onClick={() => setShowWalkinModal(true)}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-orange-300 text-[#f95d00] rounded-xl font-bold text-xs sm:text-sm hover:bg-orange-50 transition-all shadow-sm"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>directions_walk</span>
+            <span>Client sur place</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setShowNewModal(true)}
             style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
             className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm hover:opacity-95 transition-all shadow-sm"
@@ -439,6 +449,7 @@ export default function AdminReservations({ session }) {
             >
               <option value="all">Tous les statuts</option>
               <option value="pending">En attente</option>
+              <option value="en_attente_confirmation">En attente de confirmation</option>
               <option value="confirmed">Confirmée</option>
               <option value="refused">Refusée</option>
               <option value="completed">Terminée</option>
@@ -447,6 +458,16 @@ export default function AdminReservations({ session }) {
               <option value="cancelled">Annulée</option>
             </select>
           </div>
+
+          <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant cursor-pointer px-2">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(e) => setIncludeArchived(e.target.checked)}
+              className="accent-[#f95d00]"
+            />
+            Afficher les archivés
+          </label>
 
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs font-semibold text-on-surface-variant whitespace-nowrap hidden sm:inline">Espace :</span>
@@ -509,22 +530,35 @@ export default function AdminReservations({ session }) {
                   const memberRole = isGuestBooking ? 'Invité' : (member.role === 'formateur' ? 'Formateur' : 'Membre');
                   const isActing = actionId === b.id;
                   const paidPayment = (b.paiements || []).find((p) => p.statut === 'paid');
+                  const pendingPayment = (b.paiements || []).find((p) => p.statut === 'pending');
                   const hasPaidOrPartial = (b.paiements || []).some((p) => p.statut === 'paid' || p.statut === 'partial');
-                  const noShowBlocked = hasPaidOrPartial || Boolean(b.checked_in_at || b.no_show_blocked);
+                  const activeSess = Array.isArray(b.sessions) ? b.sessions.find((s) => !s.check_out && s.statut !== 'completed') : null;
+                  const hasCheckedIn = Array.isArray(b.sessions) ? b.sessions.some((s) => Boolean(s.check_in)) : false;
+                  const noShowBlocked = hasPaidOrPartial || hasCheckedIn || Boolean(b.checked_in_at || b.no_show_blocked);
+                  const ownerId = b.user_id || b.guest_id || null;
 
                   return (
-                    <tr key={b.id} className="hover:bg-surface-container-low/40 transition-colors">
+                    <tr key={b.id} className={`hover:bg-surface-container-low/40 transition-colors ${b.archived_at ? 'opacity-60 bg-slate-50/70' : ''}`}>
                       {/* Membre / Invité */}
                       <td className="py-2.5 px-3.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-secondary/10 text-secondary font-bold flex items-center justify-center text-xs shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-orange-100 text-[#f95d00] font-bold flex items-center justify-center text-xs shrink-0">
                             {(member.prenom || b.guests?.prenom || 'I')?.[0] || 'I'}{(member.nom || b.guests?.nom || '')?.[0] || ''}
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <p className="font-semibold text-primary truncate max-w-[150px] text-xs sm:text-sm">
-                                {memberName}
-                              </p>
+                              {ownerId ? (
+                                <Link
+                                  to={`/admin/clients/${ownerId}`}
+                                  className="font-semibold text-primary hover:text-[#f95d00] truncate max-w-[150px] text-xs sm:text-sm"
+                                >
+                                  {memberName}
+                                </Link>
+                              ) : (
+                                <p className="font-semibold text-primary truncate max-w-[150px] text-xs sm:text-sm">
+                                  {memberName}
+                                </p>
+                              )}
                               <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-xs font-semibold">
                                 <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{memberRole === 'Formateur' ? 'school' : 'person'}</span>
                                 {memberRole}
@@ -543,12 +577,15 @@ export default function AdminReservations({ session }) {
                         </div>
                       </td>
 
-                      {/* Espace */}
+                      {/* Espace & Unité */}
                       <td className="py-2.5 px-3 font-semibold text-primary">
                         <div className="flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-secondary shrink-0" style={{ fontSize: 16 }}>meeting_room</span>
+                          <span className="material-symbols-outlined text-[#f95d00] shrink-0" style={{ fontSize: 16 }}>meeting_room</span>
                           <span className="truncate max-w-[140px] text-xs sm:text-sm" title={b.espaces?.nom}>{b.espaces?.nom || 'Espace inconnu'}</span>
                         </div>
+                        {b.unite?.code && (
+                          <p className="text-xs text-on-surface-variant pl-5">Unité : {b.unite.code}</p>
+                        )}
                       </td>
 
                       {/* Date & Heures strictes Africa/Tunis jj/mm/aaaa 24h */}
@@ -582,97 +619,272 @@ export default function AdminReservations({ session }) {
                           <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{cfg.icon}</span>
                           <span>{cfg.label}</span>
                         </span>
+                        {b.statut === 'en_attente_confirmation' && b.confirmation_expires_at && (
+                          <p className="text-xs text-[#c2410c] font-semibold mt-0.5">
+                            Expire à {formatTime24h(b.confirmation_expires_at)}
+                          </p>
+                        )}
                       </td>
 
-                      {/* Actions */}
+                      {/* Menu d'actions explicites avec libellés (LOT 3) */}
                       <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                          {b.statut === 'pending' && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleConfirmBooking(b)}
-                                disabled={isActing}
-                                title="Accepter (règlement sur place à l'accueil)"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
-                                <span className="hidden xs:inline">Accepter</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateStatus(b.id, 'refused', 'Refuser cette demande de réservation ?', 'Réservation refusée.')}
-                                disabled={isActing}
-                                title="Refuser la demande"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>block</span>
-                                <span className="hidden xs:inline">Refuser</span>
-                              </button>
-                            </>
-                          )}
-
-                          {b.statut === 'confirmed' && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateStatus(b.id, 'completed', null, 'Réservation marquée terminée.')}
-                                disabled={isActing}
-                                title="Marquer comme terminée"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-emerald-700 hover:bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span>
-                                <span className="hidden sm:inline">Terminée</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => !noShowBlocked && handleUpdateStatus(b.id, 'no_show', 'Marquer ce client en No-show (Absent) ?', 'Statut No-show (Absent) enregistré.')}
-                                disabled={isActing || noShowBlocked}
-                                title={
-                                  noShowBlocked
-                                    ? 'Impossible : un paiement ou un check-in validé existe déjà pour cette réservation.'
-                                    : 'Marquer No-show (Absent)'
-                                }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-orange-700 hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person_off</span>
-                                <span className="hidden sm:inline">No-show (Absent)</span>
-                              </button>
-                            </>
-                          )}
-
-                          {paidPayment && (
+                        <div className="inline-flex items-center justify-end gap-1.5 relative">
+                          {(b.statut === 'pending' || b.statut === 'en_attente_confirmation') && (
                             <button
                               type="button"
-                              onClick={() => paymentApi.downloadReceipt(paidPayment.id)}
-                              title="Télécharger le reçu PDF"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[#f95d00] hover:bg-orange-50 border border-orange-200 rounded-xl text-xs font-semibold transition-all"
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>receipt_long</span>
-                              <span className="hidden md:inline">Télécharger le reçu</span>
-                            </button>
-                          )}
-
-                          {['pending', 'confirmed', 'waitlisted'].includes(b.statut) && (
-                            <button
-                              type="button"
-                              onClick={() => handleCancelBooking(b.id)}
+                              onClick={() => handleConfirmBooking(b)}
                               disabled={isActing}
-                              title="Annuler la réservation"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-50"
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                              <span className="hidden xs:inline">Annuler</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
+                              <span>Confirmer</span>
                             </button>
                           )}
 
-                          <Link
-                            to="/admin/agenda"
-                            title="Voir dans le calendrier"
-                            className="inline-flex items-center justify-center w-7 h-7 rounded-xl border border-outline-variant/30 text-on-surface-variant hover:text-secondary hover:border-secondary transition-all"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>calendar_month</span>
-                          </Link>
+                          {b.statut === 'confirmed' && !activeSess && (
+                            <button
+                              type="button"
+                              disabled={isActing}
+                              onClick={async () => {
+                                setActionId(b.id);
+                                try {
+                                  await sessionApi.start({ reservation_id: b.id });
+                                  showToast('Check-in effectué et chronomètre démarré.');
+                                  await loadData();
+                                } catch (err) {
+                                  setError(err.message);
+                                } finally {
+                                  setActionId(null);
+                                }
+                              }}
+                              style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold disabled:opacity-50"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>login</span>
+                              <span>Check-in</span>
+                            </button>
+                          )}
+
+                          {activeSess && (
+                            <button
+                              type="button"
+                              disabled={isActing}
+                              onClick={async () => {
+                                setActionId(b.id);
+                                try {
+                                  await sessionApi.stop(activeSess.id);
+                                  showToast('Check-out effectué.');
+                                  await loadData();
+                                } catch (err) {
+                                  setError(err.message);
+                                } finally {
+                                  setActionId(null);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-bold disabled:opacity-50"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>logout</span>
+                              <span>Check-out</span>
+                            </button>
+                          )}
+
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setOpenMenuId((cur) => (cur === b.id ? null : b.id))}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-outline-variant/30 bg-white text-xs font-bold text-primary hover:bg-surface-container-low"
+                            >
+                              <span>Actions</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>expand_more</span>
+                            </button>
+
+                            {openMenuId === b.id && (
+                              <div className="absolute right-0 mt-1.5 w-56 rounded-2xl border border-outline-variant/25 bg-white shadow-xl z-40 py-1.5 text-left text-xs font-semibold">
+                                {(b.statut === 'pending' || b.statut === 'en_attente_confirmation') && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setOpenMenuId(null); handleConfirmBooking(b); }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+                                      Confirmer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setOpenMenuId(null); handleUpdateStatus(b.id, 'refused', 'Refuser cette réservation ?', 'Réservation refusée.'); }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>block</span>
+                                      Refuser
+                                    </button>
+                                  </>
+                                )}
+
+                                {['pending', 'confirmed', 'en_attente_confirmation', 'waitlisted'].includes(b.statut) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      setCancelModalBooking(b);
+                                      setCancelMotif('');
+                                    }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>cancel</span>
+                                    Annuler (avec motif)
+                                  </button>
+                                )}
+
+                                {['pending', 'confirmed', 'en_attente_confirmation'].includes(b.statut) && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenuId(null);
+                                        setMoveModalBooking(b);
+                                        setMoveAlternatives(null);
+                                        setMoveForm({
+                                          date: new Date(b.date_debut).toISOString().slice(0, 10),
+                                          heure_debut: formatTime24h(b.date_debut) || '09:00',
+                                          heure_fin: formatTime24h(b.date_fin) || '12:00',
+                                          unite_id: b.unite_id || '',
+                                        });
+                                      }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>drive_file_move</span>
+                                      Déplacer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        setOpenMenuId(null);
+                                        setActionId(b.id);
+                                        try {
+                                          const r = await bookingApi.extend(b.id, { minutes: 60 });
+                                          showToast(r.message || 'Prolongée de +1h (facturable).');
+                                          await loadData();
+                                        } catch (err) {
+                                          setError(err.message);
+                                        } finally {
+                                          setActionId(null);
+                                        }
+                                      }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>more_time</span>
+                                      Prolonger (+1h)
+                                    </button>
+                                  </>
+                                )}
+
+                                {b.statut === 'confirmed' && !activeSess && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenMenuId(null);
+                                      await sessionApi.start({ reservation_id: b.id });
+                                      showToast('Check-in validé.');
+                                      await loadData();
+                                    }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>login</span>
+                                    Check-in
+                                  </button>
+                                )}
+
+                                {activeSess && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenMenuId(null);
+                                      await sessionApi.stop(activeSess.id);
+                                      showToast('Check-out validé.');
+                                      await loadData();
+                                    }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>logout</span>
+                                    Check-out
+                                  </button>
+                                )}
+
+                                {pendingPayment && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenMenuId(null);
+                                      await paymentApi.collect(pendingPayment.id, { mode_paiement: 'cash' });
+                                      showToast('Paiement encaissé.');
+                                      await loadData();
+                                    }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>payments</span>
+                                    Encaisser
+                                  </button>
+                                )}
+
+                                {paidPayment && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setOpenMenuId(null); paymentApi.downloadReceipt(paidPayment.id); }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>receipt_long</span>
+                                      Télécharger le reçu
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenuId(null);
+                                        navigate(`/admin/payments?tab=remboursements&search=${encodeURIComponent(paidPayment.id)}`);
+                                      }}
+                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>currency_exchange</span>
+                                      Rembourser
+                                    </button>
+                                  </>
+                                )}
+
+                                {b.statut === 'confirmed' && !noShowBlocked && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setOpenMenuId(null); handleUpdateStatus(b.id, 'no_show', 'Marquer No-show (Absent) ?', 'No-show (Absent) enregistré.'); }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_off</span>
+                                    No-show (Absent)
+                                  </button>
+                                )}
+
+                                {isManager && !b.archived_at && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenMenuId(null);
+                                      if (!window.confirm('Archiver cette réservation ? Elle restera dans l\'historique.')) return;
+                                      try {
+                                        await bookingApi.archive(b.id);
+                                        showToast('Réservation archivée.');
+                                        await loadData();
+                                      } catch (err) {
+                                        setError(err.message);
+                                      }
+                                    }}
+                                    className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-on-surface-variant border-t border-outline-variant/10 mt-1"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>archive</span>
+                                    Archiver
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -693,164 +905,149 @@ export default function AdminReservations({ session }) {
         />
       </div>
 
-      {showNewModal && (
+      <NewReservationModal
+        isOpen={showNewModal}
+        onClose={() => {
+          setShowNewModal(false);
+          if (searchParams.get('new') || searchParams.get('personne_id')) setSearchParams({});
+        }}
+        onCreated={() => {
+          showToast('Réservation créée avec succès.');
+          loadData();
+        }}
+        espaces={espaces}
+        userRole={profile?.role}
+        initialPersonneId={initialPersonneId}
+      />
+
+      <WalkInSessionModal
+        isOpen={showWalkinModal}
+        onClose={() => {
+          setShowWalkinModal(false);
+          if (searchParams.get('walkin')) setSearchParams({});
+        }}
+        onSuccess={() => loadData()}
+        espaces={espaces}
+      />
+
+      {cancelModalBooking && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              setError('');
-              const chosenEsp = espaces.find((sp) => sp.id === newBookingForm.espace_id);
-              const maxCap = Math.max(1, parseInt(chosenEsp?.capacite, 10) || 1);
-              const nbPart = parseInt(newBookingForm.nb_participants, 10);
-              if (chosenEsp?.type === 'meeting_room' && (!Number.isInteger(nbPart) || nbPart < 1 || nbPart > maxCap)) {
-                setError(`Pour une salle de réunion, le nombre de participants doit être compris entre 1 et ${maxCap}.`);
-                return;
-              }
-              setCreatingBooking(true);
+              if (!cancelMotif.trim()) return;
               try {
-                const date_debut = tunisLocalToISO(`${newBookingForm.date}T${newBookingForm.heure_debut}`);
-                const date_fin = tunisLocalToISO(`${newBookingForm.date}T${newBookingForm.heure_fin}`);
-                await bookingApi.create({
-                  user_id: newBookingForm.user_id,
-                  espace_id: newBookingForm.espace_id,
-                  date_debut,
-                  date_fin,
-                  ...(chosenEsp?.type === 'meeting_room' ? { nb_participants: nbPart } : {}),
-                  notes: newBookingForm.notes,
+                await bookingApi.update(cancelModalBooking.id, {
+                  statut: 'cancelled',
+                  motif_annulation: cancelMotif.trim(),
                 });
-                showToast('Réservation créée avec succès.');
-                setShowNewModal(false);
-                if (searchParams.get('new')) setSearchParams({});
+                setCancelModalBooking(null);
+                showToast('Réservation annulée avec motif.');
                 await loadData();
               } catch (err) {
                 setError(err.message);
-              } finally {
-                setCreatingBooking(false);
               }
             }}
-            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3"
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3 text-left"
           >
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-sora text-lg font-bold text-slate-900">Nouvelle réservation</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNewModal(false);
-                  if (searchParams.get('new')) setSearchParams({});
-                }}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                ✕
+            <h3 className="font-sora text-base font-bold text-primary">Annuler la réservation</h3>
+            <p className="text-xs text-on-surface-variant">
+              Saisissez le motif d&apos;annulation (conservé dans le journal d&apos;activité) :
+            </p>
+            <textarea
+              required
+              rows={3}
+              value={cancelMotif}
+              onChange={(e) => setCancelMotif(e.target.value)}
+              placeholder="Ex : Annulation demandée par téléphone par le client…"
+              className="w-full rounded-xl border border-slate-300 p-3 text-xs"
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setCancelModalBooking(null)} className="rounded-xl border px-4 py-2 text-xs font-semibold">
+                Fermer
+              </button>
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="rounded-xl px-4 py-2 text-xs font-bold">
+                Confirmer l&apos;annulation
               </button>
             </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">Membre *</label>
-              <select
-                required
-                value={newBookingForm.user_id}
-                onChange={(e) => setNewBookingForm((p) => ({ ...p, user_id: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              >
-                <option value="">— Sélectionner un membre —</option>
-                {membersList.map((m) => (
-                  <option key={m.id} value={m.id}>{m.prenom} {m.nom} ({m.email})</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">Espace *</label>
-              <select
-                required
-                value={newBookingForm.espace_id}
-                onChange={(e) => setNewBookingForm((p) => ({ ...p, espace_id: e.target.value, nb_participants: 1 }))}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              >
-                <option value="">— Sélectionner un espace —</option>
-                {espaces.map((esp) => (
-                  <option key={esp.id} value={esp.id}>{esp.nom} ({esp.tarif_horaire} DT/h)</option>
-                ))}
-              </select>
-            </div>
-            {(() => {
-              const sel = espaces.find((sp) => sp.id === newBookingForm.espace_id);
-              if (sel?.type !== 'meeting_room') return null;
-              const maxCap = Math.max(1, parseInt(sel.capacite, 10) || 1);
-              return (
-                <div>
-                  <label className="block text-xs font-semibold mb-1">
-                    Nombre de participants * (1 à {maxCap} max)
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={maxCap}
-                    value={newBookingForm.nb_participants}
-                    onChange={(e) => setNewBookingForm((p) => ({ ...p, nb_participants: e.target.value }))}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold"
-                  />
-                </div>
-              );
-            })()}
+          </form>
+        </div>
+      )}
+
+      {moveModalBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setMoveAlternatives(null);
+              try {
+                await bookingApi.move(moveModalBooking.id, {
+                  date_debut: tunisLocalToISO(`${moveForm.date}T${moveForm.heure_debut}`),
+                  date_fin: tunisLocalToISO(`${moveForm.date}T${moveForm.heure_fin}`),
+                  unite_id: moveForm.unite_id || null,
+                });
+                setMoveModalBooking(null);
+                showToast('Réservation déplacée.');
+                await loadData();
+              } catch (err) {
+                const errData = err?.data || err?.body;
+                if (err?.status === 409 && errData?.alternatives) {
+                  setMoveAlternatives(errData.alternatives);
+                }
+                setError(err.message);
+              }
+            }}
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3 text-left"
+          >
+            <h3 className="font-sora text-base font-bold text-primary">Déplacer la réservation</h3>
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="block text-xs font-semibold mb-1">Date *</label>
-                <input
-                  type="date"
-                  required
-                  value={newBookingForm.date}
-                  onChange={(e) => setNewBookingForm((p) => ({ ...p, date: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
-                />
+                <label className="block text-xs font-bold mb-1">Date</label>
+                <input type="date" required value={moveForm.date} onChange={(e) => setMoveForm((f) => ({ ...f, date: e.target.value }))} className="w-full rounded-xl border px-2.5 py-2 text-xs" />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1">Début *</label>
-                <input
-                  type="time"
-                  required
-                  value={newBookingForm.heure_debut}
-                  onChange={(e) => setNewBookingForm((p) => ({ ...p, heure_debut: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
-                />
+                <label className="block text-xs font-bold mb-1">Début</label>
+                <input type="time" required value={moveForm.heure_debut} onChange={(e) => setMoveForm((f) => ({ ...f, heure_debut: e.target.value }))} className="w-full rounded-xl border px-2.5 py-2 text-xs" />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1">Fin *</label>
-                <input
-                  type="time"
-                  required
-                  value={newBookingForm.heure_fin}
-                  onChange={(e) => setNewBookingForm((p) => ({ ...p, heure_fin: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs"
-                />
+                <label className="block text-xs font-bold mb-1">Fin</label>
+                <input type="time" required value={moveForm.heure_fin} onChange={(e) => setMoveForm((f) => ({ ...f, heure_fin: e.target.value }))} className="w-full rounded-xl border px-2.5 py-2 text-xs" />
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold mb-1">Notes</label>
-              <input
-                type="text"
-                value={newBookingForm.notes}
-                onChange={(e) => setNewBookingForm((p) => ({ ...p, notes: e.target.value }))}
-                placeholder="Besoin particulier..."
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              />
+              <label className="block text-xs font-bold mb-1">Unité / Poste</label>
+              <select value={moveForm.unite_id} onChange={(e) => setMoveForm((f) => ({ ...f, unite_id: e.target.value }))} className="w-full rounded-xl border px-3 py-2 text-xs">
+                <option value="">— Conserver / Attribution libre —</option>
+                {unites
+                  .filter((u) => u.espace_id === moveModalBooking.espace_id && !u.archived_at && u.statut === 'disponible')
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>{u.code} · {u.nom}</option>
+                  ))}
+              </select>
             </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNewModal(false);
-                  if (searchParams.get('new')) setSearchParams({});
-                }}
-                className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-700"
-              >
+            {moveAlternatives?.slots?.length > 0 && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-2.5 text-xs space-y-1">
+                <p className="font-bold text-amber-900">Créneaux alternatifs disponibles :</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {moveAlternatives.slots.map((sl) => (
+                    <button
+                      key={sl.label}
+                      type="button"
+                      onClick={() => setMoveForm((f) => ({ ...f, heure_debut: sl.heure_debut, heure_fin: sl.heure_fin }))}
+                      className="rounded-lg border border-orange-300 bg-white px-2 py-1 font-bold text-[#f95d00]"
+                    >
+                      {sl.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setMoveModalBooking(null)} className="rounded-xl border px-4 py-2 text-xs font-semibold">
                 Annuler
               </button>
-              <button
-                type="submit"
-                disabled={creatingBooking}
-                className="flex-1 rounded-xl bg-[#f95d00] py-2.5 text-xs font-bold text-white hover:bg-[#e55500] disabled:opacity-50"
-              >
-                {creatingBooking ? 'Création…' : 'Confirmer la réservation'}
+              <button type="submit" style={{ backgroundColor: '#f95d00', color: '#ffffff' }} className="rounded-xl px-4 py-2 text-xs font-bold">
+                Valider le déplacement
               </button>
             </div>
           </form>

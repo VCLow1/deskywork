@@ -227,9 +227,11 @@ export default function FloorPlanCanvas({
   const getItemColors = (item) => {
     if (mode === 'editor') {
       if (item.status === 'maintenance') return palette.statuses.maintenance;
+      if (item.status === 'unavailable') return palette.statuses.unavailable;
       return item.space_id ? palette.statuses.free : palette.unlinked;
     }
-    const key = item.live_status || (item.status === 'maintenance' ? 'maintenance' : 'free');
+    const key = item.live_status
+      || (item.status === 'maintenance' ? 'maintenance' : item.status === 'unavailable' ? 'unavailable' : 'free');
     return palette.statuses[key] || palette.statuses.free;
   };
 
@@ -258,7 +260,7 @@ export default function FloorPlanCanvas({
         <div className="flex items-center gap-2 font-semibold" style={{ color: palette.textPrimary }}>
           <span className="material-symbols-outlined text-[#f95d00]" style={{ fontSize: 17 }}>layers</span>
           <span>{plan?.name || 'Plan 2D'}</span>
-          <span className="text-[11px] font-normal opacity-70">
+          <span className="text-xs font-normal opacity-70">
             ({items.length} emplacement{items.length > 1 ? 's' : ''})
           </span>
         </div>
@@ -276,7 +278,7 @@ export default function FloorPlanCanvas({
           <button
             type="button"
             onClick={() => setZoom(1)}
-            className="px-2.5 py-1 rounded-lg border text-[11px] font-semibold hover:opacity-80"
+            className="px-2.5 py-1 rounded-lg border text-xs font-semibold hover:opacity-80"
             style={{ borderColor: dark ? 'rgba(255,255,255,0.14)' : '#cbd5e1', color: palette.textPrimary }}
           >
             {Math.round(zoom * 100)}%
@@ -325,7 +327,7 @@ export default function FloorPlanCanvas({
                 />
               </pattern>
 
-              {/* Motifs hachurés maintenance */}
+              {/* Motifs hachurés maintenance & indisponibilité */}
               <pattern id="fp-hatch-light" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
                 <rect width="10" height="10" fill="#e2e8f0" />
                 <line x1="0" y1="0" x2="0" y2="10" stroke="#94a3b8" strokeWidth="3.5" />
@@ -333,6 +335,14 @@ export default function FloorPlanCanvas({
               <pattern id="fp-hatch-dark" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
                 <rect width="10" height="10" fill="#292524" />
                 <line x1="0" y1="0" x2="0" y2="10" stroke="#57534e" strokeWidth="3.5" />
+              </pattern>
+              <pattern id="fp-hatch-unavailable-light" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                <rect width="10" height="10" fill="#fef3c7" />
+                <line x1="0" y1="0" x2="0" y2="10" stroke="#f59e0b" strokeWidth="3" />
+              </pattern>
+              <pattern id="fp-hatch-unavailable-dark" width="10" height="10" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                <rect width="10" height="10" fill="#3b2f16" />
+                <line x1="0" y1="0" x2="0" y2="10" stroke="#d97706" strokeWidth="3" />
               </pattern>
             </defs>
 
@@ -640,3 +650,4 @@ export default function FloorPlanCanvas({
     </div>
   );
 }
+

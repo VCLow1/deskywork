@@ -16,6 +16,7 @@ import PeriodFilter from '../components/dashboard/PeriodFilter';
 import { DEFAULT_PERIOD, periodWindow, windowLabel } from '../utils/dashboardPeriod';
 import { ROLE_LABELS, isCompanyRole } from '../utils/roles';
 import { useSessionUser } from '../hooks/useSessionUser';
+import { useServerTimer } from '../hooks/useServerTimer';
 import { QRCodeSVG } from 'qrcode.react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -162,12 +163,21 @@ export default function Dashboard({ session }) {
     }
   }, [metadata, profile, navigate]);
 
-  /* ── Session state ── */
+  /* ── Session state (synchronisé UTC serveur LOT 3) ── */
   const [activeSession, setActiveSession] = useState(null);
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [totalSessionSeconds, setTotalSessionSeconds] = useState(1);
+  const [serverNow, setServerNow] = useState(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [extendingSession, setExtendingSession] = useState(false);
+
+  const serverTimer = useServerTimer({
+    startedAt: activeSession?.started_at || activeSession?.check_in || null,
+    endAt: activeSession?.reservations?.date_fin || null,
+    serverNow,
+    active: Boolean(activeSession),
+  });
+  const timerSeconds = serverTimer.remainingSeconds;
+  const totalSessionSeconds = Math.max(1, serverTimer.totalPlannedSeconds || 1);
 
   /* ── Booking state ── */
   const [cancellingId, setCancellingId] = useState(null);
@@ -341,8 +351,8 @@ export default function Dashboard({ session }) {
       }
 
       try {
-        const { session: sess } = await sessionApi.getActive();
-        hydrateSession(sess);
+        const activeRes = await sessionApi.getActive();
+        hydrateSession(activeRes.session, activeRes.server_now);
       } catch {
         setActiveSession(null);
       }
@@ -368,16 +378,9 @@ export default function Dashboard({ session }) {
     }
   };
 
-  const hydrateSession = (sess) => {
+  const hydrateSession = (sess, srvNow = null) => {
     setActiveSession(sess);
-    if (sess?.reservations?.date_fin) {
-      const remaining = Math.max(0, Math.floor((new Date(sess.reservations.date_fin).getTime() - Date.now()) / 1000));
-      setTimerSeconds(remaining);
-      if (sess.check_in) {
-        const total = Math.max(1, Math.floor((new Date(sess.reservations.date_fin).getTime() - new Date(sess.check_in).getTime()) / 1000));
-        setTotalSessionSeconds(total);
-      }
-    }
+    if (srvNow) setServerNow(srvNow);
   };
 
   /* ── Initial load ── */
@@ -410,8 +413,6 @@ export default function Dashboard({ session }) {
       }),
       onSessionEnded(() => {
         setActiveSession(null);
-        setTimerSeconds(0);
-        setTotalSessionSeconds(1);
         loadData();
       }),
       onSessionOvertime(() => { loadData(); }),
@@ -426,22 +427,13 @@ export default function Dashboard({ session }) {
     };
   }, [session?.user?.id]);
 
-  /* ── Timer tick ── */
-  useEffect(() => {
-    if (!activeSession || timerSeconds <= 0) return;
-    const id = setInterval(() => {
-      setTimerSeconds((s) => (s <= 1 ? (clearInterval(id), 0) : s - 1));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [activeSession?.id]);
-
   /* ── Poll active session every 30 s ── */
   useEffect(() => {
     if (!activeSession) return;
     const id = setInterval(() => {
       sessionApi
         .getActive()
-        .then(({ session: sess }) => hydrateSession(sess))
+        .then(({ session: sess, server_now }) => hydrateSession(sess, server_now))
         .catch(() => {});
     }, 30000);
     return () => clearInterval(id);
@@ -452,13 +444,29 @@ export default function Dashboard({ session }) {
     setCheckingIn(true);
     setError('');
     try {
-      const { session: sess } = await sessionApi.checkIn({ reservation_id: reservationId });
-      hydrateSession(sess);
-      setSuccess('Check-in réussi ! Bonne session.');
+      const res = await sessionApi.start({ reservation_id: reservationId });
+      hydrateSession(res.session, res.server_now);
+      setSuccess('Chronomètre démarré ! Bonne session.');
     } catch (e) {
       setError(e.message);
     } finally {
       setCheckingIn(false);
+    }
+  };
+
+  const handleExtendMemberSession = async () => {
+    if (!activeSession) return;
+    setExtendingSession(true);
+    setError('');
+    try {
+      const res = await sessionApi.extend(activeSession.id, { minutes: 30 });
+      setSuccess(res.message || 'Session prolongée de 30 min (facturable).');
+      const activeRes = await sessionApi.getActive();
+      hydrateSession(activeRes.session, activeRes.server_now);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExtendingSession(false);
     }
   };
 
@@ -469,8 +477,6 @@ export default function Dashboard({ session }) {
     try {
       await sessionApi.checkOut({ session_id: activeSession.id });
       setActiveSession(null);
-      setTimerSeconds(0);
-      setTotalSessionSeconds(1);
       setSuccess('Check-out enregistré. À bientôt !');
     } catch (e) {
       setError(e.message);
@@ -666,15 +672,19 @@ export default function Dashboard({ session }) {
                   </p>
                 </div>
                 {timerIsLow && (
-                  <p className="text-xs font-semibold text-[#FF6F59]">Moins de 15 minutes restantes</p>
+                  <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+                    Alerte : moins de 15 minutes restantes — souhaitez-vous prolonger ?
+                  </p>
                 )}
                 <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
-                  <Link
-                    to="/dashboard/abonnement"
-                    className="px-4 py-2 rounded-lg border border-outline-variant/30 text-sm font-semibold text-on-surface-variant hover:bg-surface-container transition-all"
+                  <button
+                    type="button"
+                    onClick={handleExtendMemberSession}
+                    disabled={extendingSession}
+                    className="px-4 py-2 rounded-lg border border-orange-300 bg-orange-50 text-xs sm:text-sm font-bold text-[#f95d00] hover:bg-orange-100 transition-all disabled:opacity-50"
                   >
-                    Prolonger
-                  </Link>
+                    {extendingSession ? 'Prolongation…' : 'Prolonger +30 min (facturable)'}
+                  </button>
                   <button
                     onClick={handleCheckOut}
                     disabled={checkingOut}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import PortalLayout from '../components/layout/PortalLayout';
 import { useSessionUser } from '../hooks/useSessionUser';
@@ -429,7 +429,9 @@ export default function AdminClients({ session }) {
                 filteredPersonnes.map((m) => (
                   <tr key={`${m.source}-${m.id}`} className={`hover:bg-surface-container-low/40 ${m.archived_at ? 'opacity-60 bg-slate-50/70' : ''}`}>
                     <td className="py-3 px-4">
-                      <p className="font-semibold text-primary">{m.prenom} {m.nom}</p>
+                      <Link to={`/admin/clients/${m.id}`} className="font-semibold text-primary hover:text-[#f95d00] transition-colors">
+                        {m.prenom} {m.nom}
+                      </Link>
                       <p className="text-xs text-on-surface-variant">{m.email || '—'} {m.telephone ? `· ${m.telephone}` : ''}</p>
                     </td>
                     <td className="py-3 px-4">
@@ -466,6 +468,12 @@ export default function AdminClients({ session }) {
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="inline-flex items-center gap-1.5">
+                        <Link
+                          to={`/admin/clients/${m.id}`}
+                          className="px-2.5 py-1 rounded-lg border border-orange-200 bg-orange-50/70 text-[#f95d00] text-xs font-bold hover:bg-orange-100"
+                        >
+                          Fiche 360°
+                        </Link>
                         {m.archived_at ? (
                           <button
                             type="button"

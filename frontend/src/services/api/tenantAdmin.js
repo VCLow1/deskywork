@@ -111,4 +111,30 @@ export const tenantAdminApi = {
   createSupportTicket: (payload) =>
     apiFetch('/api/admin/support-tickets', { method: 'POST', body: JSON.stringify(payload) }),
   getMarketplaceStats: () => apiFetch('/api/admin/marketplace-stats'),
+  // Unités & Postes (LOT 3)
+  getUnites: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch(`/api/admin/unites${qs ? `?${qs}` : ''}`);
+  },
+  getPublicUnites: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch(`/api/unites/public${qs ? `?${qs}` : ''}`);
+  },
+  createUnite: (payload) =>
+    apiFetch('/api/admin/unites', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUnite: (id, payload) =>
+    apiFetch(`/api/admin/unites/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  changeUniteStatus: (id, payload) =>
+    apiFetch(`/api/admin/unites/${id}/status`, { method: 'POST', body: JSON.stringify(payload) }),
+  archiveUnite: (id) =>
+    apiFetch(`/api/admin/unites/${id}/archive`, { method: 'POST' }),
+  restoreUnite: (id) =>
+    apiFetch(`/api/admin/unites/${id}/restore`, { method: 'POST' }),
+  // Fiche Membre 360° & Dédoublonnage téléphone (LOT 3)
+  checkPersonnePhone: (telephone) =>
+    apiFetch(`/api/admin/personnes/check-phone?telephone=${encodeURIComponent(telephone || '')}`),
+  getPersonne360: (id) =>
+    apiFetch(`/api/admin/personnes/${id}/360`),
+  updatePersonneNotes: (id, notes_internes) =>
+    apiFetch(`/api/admin/personnes/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes_internes }) }),
 };

@@ -1,8 +1,10 @@
-// controllers/floorPlansController.js — Plans de salle interactifs 2D & occupation temps réel (CDC v3.0)
+// controllers/floorPlansController.js — Plans de salle interactifs 2D & occupation temps réel (LOT 3)
 'use strict';
 
 const crypto = require('crypto');
 const { supabaseAdmin } = require('../config/supabase');
+const { computeOvertime15Min } = require('../models/walkinBilling');
+const { loadSpaceUnitsForTenant } = require('../models/bookingAvailability');
 
 const VALID_ITEM_TYPES = ['desk', 'quiet_desk', 'private_office', 'meeting_room', 'training_room', 'event_space'];
 const SHARED_SPACE_TYPES = ['open_space', 'hot_desk'];
@@ -136,7 +138,7 @@ function normalizeItem(item, floorPlanId, tenantId, idx) {
     width: Math.max(24, Math.round(Number(item?.width) || 72)),
     height: Math.max(24, Math.round(Number(item?.height) || 52)),
     rotation: ((Math.round(Number(item?.rotation) || 0) % 360) + 360) % 360,
-    status: item?.status === 'maintenance' ? 'maintenance' : 'active',
+    status: ['maintenance', 'unavailable'].includes(item?.status) ? item.status : 'active',
     metadata: item?.metadata && typeof item.metadata === 'object' ? item.metadata : {},
   };
 }
@@ -369,22 +371,44 @@ async function loadTenantReservationsAndSessions(tenantId, rangeStartIso, rangeE
 function enrichPlansForClientOrLive({
   plans,
   espacesById,
+  unites = [],
   reservations,
   sessions,
   formations,
   pendingPaymentsByResId,
   mode,
+  isAdmin = false,
   rangeStartMs,
   rangeEndMs,
   nowMs,
   overtimeRate,
 }) {
   const sessionByResId = new Map();
+  const walkinSessionByUniteId = new Map();
   for (const s of sessions) {
     if (!s.check_out && s.statut !== 'completed') {
-      sessionByResId.set(s.reservation_id, s);
+      if (s.reservation_id) sessionByResId.set(s.reservation_id, s);
+      if (s.is_walkin && s.unite_id) walkinSessionByUniteId.set(s.unite_id, s);
     }
   }
+
+  // Indexation unités liées par floor_plan_item_id ou (espace_id + code)
+  const uniteByItemId = new Map();
+  const uniteBySpaceCode = new Map();
+  for (const u of unites || []) {
+    if (u.archived_at) continue;
+    if (u.floor_plan_item_id) uniteByItemId.set(String(u.floor_plan_item_id), u);
+    if (u.espace_id && u.code) {
+      uniteBySpaceCode.set(`${u.espace_id}:${String(u.code).trim().toLowerCase()}`, u);
+    }
+  }
+  const resolveLinkedUnite = (item) => {
+    if (uniteByItemId.has(String(item.id))) return uniteByItemId.get(String(item.id));
+    if (item.space_id && item.label) {
+      return uniteBySpaceCode.get(`${item.space_id}:${String(item.label).trim().toLowerCase()}`) || null;
+    }
+    return null;
+  };
 
   // Rassembler tous les items de tous les plans pour résoudre l'occupation par space_id de façon cohérente
   const allItems = plans.flatMap((p) => p.items || []);
@@ -503,24 +527,60 @@ function enrichPlansForClientOrLive({
   const enrichedPlans = plans.map((plan) => {
     const items = (plan.items || []).map((item) => {
       const space = item.space_id ? espacesById.get(item.space_id) : null;
+      const linkedUnite = resolveLinkedUnite(item);
+      const effectiveUniteStatus = linkedUnite?.statut || (item.status === 'maintenance' ? 'en_maintenance' : item.status === 'unavailable' ? 'non_disponible' : 'disponible');
       const hourly = Number(space?.tarif_horaire || 0);
       const baseFields = {
         ...item,
+        unite_id: linkedUnite?.id || null,
+        unite_code: linkedUnite?.code || null,
+        unite_statut: effectiveUniteStatus,
+        date_retour_auto: linkedUnite?.date_retour_auto || null,
+        // SÉCURITÉ : motif_interne strictement réservé à l'administration (isAdmin === true)
+        ...(isAdmin && linkedUnite?.motif_interne ? { motif_interne: linkedUnite.motif_interne } : {}),
         space_name: space?.nom || null,
         space_type: space?.type || null,
-        capacite: space?.capacite || (EXCLUSIVE_ITEM_TYPES.includes(item.item_type) ? 4 : 1),
+        capacite: linkedUnite?.capacite || space?.capacite || (EXCLUSIVE_ITEM_TYPES.includes(item.item_type) ? 4 : 1),
         tarif_horaire: hourly,
         tarif_journalier: Number((hourly * 8).toFixed(3)),
         equipements: Array.isArray(space?.equipements) ? space.equipements : [],
-        bookable: Boolean(item.space_id) && item.status !== 'maintenance' && space?.actif !== false,
+        bookable: Boolean(item.space_id) && effectiveUniteStatus === 'disponible' && item.status !== 'maintenance' && item.status !== 'unavailable' && space?.actif !== false,
       };
 
-      if (item.status === 'maintenance' || space?.actif === false) {
+      if (item.status === 'maintenance' || effectiveUniteStatus === 'en_maintenance' || space?.actif === false) {
         return {
           ...baseFields,
+          status: 'maintenance',
           live_status: 'maintenance',
           status_label: 'En maintenance',
           bookable: false,
+        };
+      }
+
+      if (item.status === 'unavailable' || effectiveUniteStatus === 'non_disponible') {
+        return {
+          ...baseFields,
+          status: 'unavailable',
+          live_status: 'unavailable',
+          status_label: 'Non disponible',
+          bookable: false,
+        };
+      }
+
+      const walkinSess = linkedUnite ? walkinSessionByUniteId.get(linkedUnite.id) : null;
+      if (walkinSess) {
+        return {
+          ...baseFields,
+          live_status: 'occupied',
+          status_label: 'Sur place (Chrono)',
+          bookable: false,
+          ...(isAdmin ? {
+            is_walkin: true,
+            session_id: walkinSess.id,
+            started_at: walkinSess.started_at || walkinSess.check_in,
+            check_in: walkinSess.check_in || walkinSess.started_at,
+            client_name: walkinSess.client_nom || 'Client sur place',
+          } : {}),
         };
       }
 
@@ -549,10 +609,14 @@ function enrichPlansForClientOrLive({
         const overtimeSeconds = isOvertime ? Math.floor((nowMs - finMs) / 1000) : 0;
         const isEndingSoon = !isOvertime && secondsRemaining > 0 && secondsRemaining <= 15 * 60;
         const effectiveRate = overtimeRate != null ? overtimeRate : hourly;
-        const overtimeMinutes = Math.ceil(overtimeSeconds / 60);
-        const montantDepassement = overtimeMinutes > 0 && effectiveRate > 0
-          ? Number(((overtimeMinutes / 60) * effectiveRate).toFixed(3))
-          : 0;
+        const overtimeCalc = isOvertime
+          ? computeOvertime15Min({
+            dateFin: booking.date_fin,
+            nowOrStop: new Date(nowMs).toISOString(),
+            tarifHoraireTTC: effectiveRate,
+            tvaPct: Number(space?.tva_pct ?? 19),
+          })
+          : { overtimeMinutes: 0, slices15Min: 0, montantTTC: 0 };
 
         let liveStatus = 'occupied';
         let statusLabel = 'Occupé';
@@ -563,13 +627,15 @@ function enrichPlansForClientOrLive({
           } else if (isEndingSoon) {
             liveStatus = 'ending_soon';
             statusLabel = 'Bientôt terminée (-15 min)';
-          } else if (!sess && booking.statut === 'pending') {
-            statusLabel = 'Réservé (en attente)';
+          } else if (!sess && (booking.statut === 'pending' || booking.statut === 'en_attente_confirmation')) {
+            statusLabel = booking.statut === 'en_attente_confirmation'
+              ? 'En attente de confirmation'
+              : 'Réservé (en attente)';
           }
         }
 
-        const client = mode === 'live' ? extractClientInfo(booking) : null;
-        const pendingPay = mode === 'live' ? (pendingPaymentsByResId.get(booking.id) || null) : null;
+        const client = isAdmin ? extractClientInfo(booking) : null;
+        const pendingPay = isAdmin ? (pendingPaymentsByResId.get(booking.id) || null) : null;
 
         return {
           ...baseFields,
@@ -578,10 +644,11 @@ function enrichPlansForClientOrLive({
           bookable: false,
           date_debut: booking.date_debut,
           date_fin: booking.date_fin,
-          ...(mode === 'live' ? {
+          ...(isAdmin ? {
             reservation_id: booking.id,
             reservation_statut: booking.statut,
             session_id: sess?.id || null,
+            started_at: sess?.started_at || sess?.check_in || null,
             check_in: sess?.check_in || null,
             needs_checkin: !sess,
             client_name: client.client_name,
@@ -589,7 +656,8 @@ function enrichPlansForClientOrLive({
             client_type: client.client_type,
             seconds_remaining: secondsRemaining,
             overtime_seconds: overtimeSeconds,
-            montant_depassement: montantDepassement,
+            overtime_slices_15min: overtimeCalc.slices15Min,
+            montant_depassement: overtimeCalc.montantTTC,
             pending_payment: pendingPay,
           } : {}),
         };
@@ -942,9 +1010,10 @@ async function getLiveFloorPlanStatus(req, res) {
     const dayStartIso = new Date(`${tunisNow.date}T00:00:00+01:00`).toISOString();
     const dayEndIso = new Date(`${tunisNow.date}T23:59:59+01:00`).toISOString();
 
-    const [{ plans }, espacesById, { reservations, sessions, formations, pendingPaymentsByResId }, tenantMeta] = await Promise.all([
+    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }, tenantMeta] = await Promise.all([
       loadTenantPlansWithItems(tenantId),
       loadTenantEspacesMap(tenantId),
+      loadSpaceUnitsForTenant(supabaseAdmin, tenantId, null, { includeInternal: true }),
       loadTenantReservationsAndSessions(tenantId, dayStartIso, dayEndIso),
       supabaseAdmin.from('tenants').select('settings, tarif_depassement_heure').eq('id', tenantId).maybeSingle(),
     ]);
@@ -957,11 +1026,13 @@ async function getLiveFloorPlanStatus(req, res) {
     const enriched = enrichPlansForClientOrLive({
       plans,
       espacesById,
+      unites,
       reservations,
       sessions,
       formations,
       pendingPaymentsByResId,
       mode: 'live',
+      isAdmin: true,
       rangeStartMs: tunisNow.ms,
       rangeEndMs: tunisNow.ms + 60000,
       nowMs: tunisNow.ms,
@@ -979,11 +1050,13 @@ async function getLiveFloorPlanStatus(req, res) {
       ending_soon: allItems.filter((i) => i.live_status === 'ending_soon').length,
       overtime: allItems.filter((i) => i.live_status === 'overtime').length,
       maintenance: allItems.filter((i) => i.live_status === 'maintenance').length,
+      unavailable: allItems.filter((i) => i.live_status === 'unavailable').length,
       total: allItems.length,
     };
 
     res.json({
       server_time: tunisNow.iso,
+      server_now: tunisNow.iso,
       tunis_date: tunisNow.date,
       tunis_time: tunisNow.time,
       floor_plans: enriched,
@@ -1010,15 +1083,17 @@ async function getPublicFloorPlans(req, res) {
     const slot = tunisSlotToUtcRange(date, start, end);
     const tunisNow = nowTunisParts();
 
-    const [{ plans }, espacesById, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
+    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
       loadTenantPlansWithItems(tenant.id, { onlyActive: true }),
       loadTenantEspacesMap(tenant.id),
+      loadSpaceUnitsForTenant(supabaseAdmin, tenant.id),
       loadTenantReservationsAndSessions(tenant.id, slot.startDate.toISOString(), slot.endDate.toISOString()),
     ]);
 
     const enriched = enrichPlansForClientOrLive({
       plans,
       espacesById,
+      unites,
       reservations,
       sessions,
       formations,
@@ -1093,20 +1168,23 @@ async function getPublicSpacesLive(req, res) {
     const rangeStartMs = rangeStartDate.getTime();
     const rangeEndMs = rangeEndDate.getTime();
 
-    const [{ plans }, espacesById, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
+    const [{ plans }, espacesById, unites, { reservations, sessions, formations, pendingPaymentsByResId }] = await Promise.all([
       loadTenantPlansWithItems(tenant.id, { onlyActive: true }),
       loadTenantEspacesMap(tenant.id),
+      loadSpaceUnitsForTenant(supabaseAdmin, tenant.id),
       loadTenantReservationsAndSessions(tenant.id, rangeStartDate.toISOString(), rangeEndDate.toISOString()),
     ]);
 
     const enrichedPlans = enrichPlansForClientOrLive({
       plans,
       espacesById,
+      unites,
       reservations,
       sessions,
       formations,
       pendingPaymentsByResId,
       mode: isNow ? 'live' : 'booking',
+      isAdmin: false,
       rangeStartMs,
       rangeEndMs,
       nowMs: tunisNow.ms,

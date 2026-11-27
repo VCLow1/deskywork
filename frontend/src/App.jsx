@@ -150,6 +150,7 @@ const AdminEspaces = lazy(() => import('./pages/AdminEspaces'));
 const AdminCoworkingProfile = lazy(() => import('./pages/AdminCoworkingProfile'));
 const AdminMultiSites = lazy(() => import('./pages/AdminMultiSites'));
 const AdminClients = lazy(() => import('./pages/AdminClients'));
+const AdminMember360 = lazy(() => import('./pages/AdminMember360'));
 const AdminTeam = lazy(() => import('./pages/AdminTeam'));
 const AdminSubscription = lazy(() => import('./pages/AdminSubscription'));
 const AdminReports = lazy(() => import('./pages/AdminReports'));
@@ -386,6 +387,7 @@ export default function App() {
             <Route path="/admin/dashboard" element={<AdminRoute><AdminDashboard session={session} /></AdminRoute>} />
             <Route path="/admin/reservations" element={<AdminRoute><AdminReservations session={session} /></AdminRoute>} />
             <Route path="/admin/clients" element={<AdminRoute><AdminClients session={session} /></AdminRoute>} />
+            <Route path="/admin/clients/:id" element={<AdminRoute><AdminMember360 session={session} /></AdminRoute>} />
             <Route path="/admin/abonnements" element={<AdminRoute><AdminSubscriptions session={session} /></AdminRoute>} />
             <Route path="/admin/payments" element={<AdminRoute><AdminPayments session={session} /></AdminRoute>} />
             <Route path="/admin/espaces" element={<AdminRoute><AdminEspaces session={session} /></AdminRoute>} />

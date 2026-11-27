@@ -10,6 +10,7 @@ import AdminPricing from './AdminPricing';
 import { formatDT, formatDateTimeDMY } from '../utils/format';
 import Money from '../components/common/Money';
 import { DEFAULT_TVA_PCT, computeTTC } from '../utils/pricingMath';
+import UnitStatusModal from '../components/units/UnitStatusModal';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -82,6 +83,7 @@ const inputCls = 'w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/
 
 const HUB_TABS = [
   { id: 'espaces', label: 'Espaces', icon: 'meeting_room' },
+  { id: 'unites', label: 'Unités & Postes', icon: 'grid_view' },
   { id: 'plan', label: 'Plan 2D', icon: 'map' },
   { id: 'ressources', label: 'Ressources', icon: 'inventory_2' },
   { id: 'services', label: 'Services', icon: 'room_service' },
@@ -100,6 +102,9 @@ export default function AdminEspaces({ session }) {
     userId ? { id: userId, email, role: metadata.role || 'admin', prenom: metadata.prenom || '', nom: metadata.nom || '', ...metadata } : null
   );
   const [espaces, setEspaces] = useState([]);
+  const [unites, setUnites] = useState([]);
+  const [unitForm, setUnitForm] = useState({ espace_id: '', mode: 'single', code: '', nom: '', type_unite: 'bureau_prive', capacite: 1, batch_prefix: 'B', batch_count: 4 });
+  const [statusModalUnit, setStatusModalUnit] = useState(null);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [ressources, setRessources] = useState([]);
   const [services, setServices] = useState([]);
@@ -130,17 +135,19 @@ export default function AdminEspaces({ session }) {
     try {
       setLoading(true);
       const archParam = includeArchived ? { include_archived: 'true' } : {};
-      const [res, tRes, resList, svcList, incList] = await Promise.all([
+      const [res, tRes, resList, svcList, incList, uniList] = await Promise.all([
         tenantAdminApi.getEspaces(archParam),
         tenantAdminApi.getTenant().catch(() => null),
         tenantAdminApi.getRessources(archParam).catch(() => ({ items: [] })),
         tenantAdminApi.getServices(archParam).catch(() => ({ items: [] })),
         tenantAdminApi.getIncidents(archParam).catch(() => ({ items: [] })),
+        tenantAdminApi.getUnites(archParam).catch(() => ({ unites: [] })),
       ]);
       setEspaces(res.espaces || []);
       setRessources(resList.items || []);
       setServices(svcList.items || []);
       setIncidents(incList.items || []);
+      setUnites(uniList.unites || []);
       if (tRes?.tenant?.settings?.domiciliation) {
         setDomForm({
           actif: Boolean(tRes.tenant.settings.domiciliation.actif),
@@ -312,6 +319,265 @@ export default function AdminEspaces({ session }) {
 
         {activeTab === 'plan' ? (
           <FloorPlanEditor espaces={espaces} showToast={showToast} showError={showError} />
+        ) : activeTab === 'unites' ? (
+          <div className="space-y-5 text-left">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!unitForm.espace_id) { showError('Sélectionnez un espace de rattachement.'); return; }
+                try {
+                  if (unitForm.mode === 'batch') {
+                    await tenantAdminApi.createUnite({
+                      espace_id: unitForm.espace_id,
+                      type_unite: unitForm.type_unite,
+                      capacite: Number(unitForm.capacite || 1),
+                      batch_prefix: unitForm.batch_prefix || 'B',
+                      batch_count: Number(unitForm.batch_count || 1),
+                      nom: unitForm.nom || unitForm.batch_prefix,
+                    });
+                    showToast('Lot d\'unités créé avec succès.');
+                  } else {
+                    await tenantAdminApi.createUnite({
+                      espace_id: unitForm.espace_id,
+                      code: unitForm.code,
+                      nom: unitForm.nom || unitForm.code,
+                      type_unite: unitForm.type_unite,
+                      capacite: Number(unitForm.capacite || 1),
+                    });
+                    showToast('Unité créée avec succès.');
+                  }
+                  setUnitForm((f) => ({ ...f, code: '', nom: '' }));
+                  await loadData();
+                } catch (err) {
+                  showError(err.message);
+                }
+              }}
+              className="bg-white rounded-3xl border border-outline-variant/20 p-5 space-y-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-sora font-bold text-base text-primary">Ajouter des unités / postes</h2>
+                  <p className="text-xs text-on-surface-variant">
+                    Modélisez chaque bureau privé (ex : B-01, B-02) ou poste Open Space pour le contrôle de disponibilité atomique.
+                  </p>
+                </div>
+                <div className="flex gap-1.5">
+                  {[
+                    { id: 'single', label: 'Unitaire' },
+                    { id: 'batch', label: 'Création en lot' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setUnitForm((f) => ({ ...f, mode: m.id }))}
+                      style={unitForm.mode === m.id ? { backgroundColor: '#f95d00', color: '#ffffff' } : undefined}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                        unitForm.mode === m.id ? '' : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-bold text-on-surface-variant mb-1">Espace rattaché *</label>
+                  <select
+                    required
+                    value={unitForm.espace_id}
+                    onChange={(e) => setUnitForm((f) => ({ ...f, espace_id: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="">— Choisir un espace —</option>
+                    {espaces.filter((es) => !es.archived_at).map((es) => (
+                      <option key={es.id} value={es.id}>{es.nom}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-on-surface-variant mb-1">Type d&apos;unité</label>
+                  <select
+                    value={unitForm.type_unite}
+                    onChange={(e) => setUnitForm((f) => ({ ...f, type_unite: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="bureau_prive">Bureau privé</option>
+                    <option value="poste_open_space">Poste Open space</option>
+                    <option value="poste_fixe">Poste fixe</option>
+                    <option value="salle">Salle dédiée</option>
+                  </select>
+                </div>
+
+                {unitForm.mode === 'batch' ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant mb-1">Préfixe (ex : B, OS)</label>
+                      <input
+                        required
+                        value={unitForm.batch_prefix}
+                        onChange={(e) => setUnitForm((f) => ({ ...f, batch_prefix: e.target.value.toUpperCase() }))}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant mb-1">Nombre à créer</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        required
+                        value={unitForm.batch_count}
+                        onChange={(e) => setUnitForm((f) => ({ ...f, batch_count: e.target.value }))}
+                        className={inputCls}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant mb-1">Code * (ex : B-01)</label>
+                      <input
+                        required
+                        value={unitForm.code}
+                        onChange={(e) => setUnitForm((f) => ({ ...f, code: e.target.value }))}
+                        placeholder="B-01"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant mb-1">Libellé</label>
+                      <input
+                        value={unitForm.nom}
+                        onChange={(e) => setUnitForm((f) => ({ ...f, nom: e.target.value }))}
+                        placeholder="Bureau privé 01"
+                        className={inputCls}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-2">
+                  <div className="w-24">
+                    <label className="block text-xs font-bold text-on-surface-variant mb-1">Capacité</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={unitForm.capacite}
+                      onChange={(e) => setUnitForm((f) => ({ ...f, capacite: e.target.value }))}
+                      className={inputCls}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold shadow-xs hover:opacity-95"
+                  >
+                    Créer
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            <div className="bg-white rounded-3xl border border-outline-variant/15 overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm border-collapse">
+                <thead>
+                  <tr className="border-b text-xs uppercase text-on-surface-variant">
+                    <th className="py-3.5 px-4">Code / Nom</th>
+                    <th className="py-3.5 px-4">Espace</th>
+                    <th className="py-3.5 px-4">Type &amp; Capacité</th>
+                    <th className="py-3.5 px-4">Statut</th>
+                    <th className="py-3.5 px-4">Motif interne / Retour</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {unites.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-on-surface-variant text-sm">
+                        Aucune unité ou poste configuré pour cet établissement.
+                      </td>
+                    </tr>
+                  ) : (
+                    unites.map((u) => {
+                      const espName = u.espaces?.nom || espaces.find((e) => e.id === u.espace_id)?.nom || '—';
+                      const badge = u.statut === 'en_maintenance'
+                        ? { cls: 'bg-slate-100 text-slate-800 border-slate-300', icon: 'construction', txt: 'En maintenance' }
+                        : u.statut === 'non_disponible'
+                          ? { cls: 'bg-amber-100 text-amber-900 border-amber-300', icon: 'block', txt: 'Non disponible' }
+                          : { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', icon: 'check_circle', txt: 'Disponible' };
+                      return (
+                        <tr key={u.id} className={u.archived_at ? 'opacity-60 bg-slate-50/70' : 'hover:bg-surface-container-low/40'}>
+                          <td className="py-3 px-4 font-bold text-primary">
+                            {u.code} · <span className="font-semibold">{u.nom}</span>
+                          </td>
+                          <td className="py-3 px-4">{espName}</td>
+                          <td className="py-3 px-4 text-xs text-on-surface-variant">
+                            {u.type_unite.replace(/_/g, ' ')} · {u.capacite} place(s)
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-bold ${badge.cls}`}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{badge.icon}</span>
+                              {badge.txt}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-xs text-on-surface-variant">
+                            {u.motif_interne ? <p className="font-medium text-primary">{u.motif_interne}</p> : '—'}
+                            {u.date_retour_auto && <p>Retour auto : {formatDateTimeDMY(u.date_retour_auto)}</p>}
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap space-x-2">
+                            {u.archived_at ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await tenantAdminApi.restoreUnite(u.id);
+                                  showToast('Unité restaurée.');
+                                  await loadData();
+                                }}
+                                className="rounded-lg border border-emerald-300 px-2.5 py-1 text-xs font-bold text-emerald-700"
+                              >
+                                Restaurer
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => setStatusModalUnit(u)}
+                                  style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                                  className="rounded-lg px-3 py-1.5 text-xs font-bold"
+                                >
+                                  Changer statut
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Archiver l'unité ${u.code} ?`)) return;
+                                    try {
+                                      await tenantAdminApi.archiveUnite(u.id);
+                                      showToast('Unité archivée.');
+                                      await loadData();
+                                    } catch (err) {
+                                      showError(err.message);
+                                    }
+                                  }}
+                                  className="rounded-lg border border-outline-variant/30 px-2.5 py-1.5 text-xs font-semibold text-on-surface-variant"
+                                >
+                                  Archiver
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : activeTab === 'tarifs' ? (
           <AdminPricing session={session} embedded initialTab="espaces_tarifs" />
         ) : activeTab === 'promos' ? (
@@ -883,6 +1149,16 @@ export default function AdminEspaces({ session }) {
         </>
         )}
       </div>
+
+      <UnitStatusModal
+        unite={statusModalUnit}
+        isOpen={Boolean(statusModalUnit)}
+        onClose={() => setStatusModalUnit(null)}
+        onSaved={(res) => {
+          showToast(res?.message || 'Statut de l\'unité mis à jour.');
+          loadData();
+        }}
+      />
     </PortalLayout>
   );
 }

@@ -24,6 +24,9 @@ const {
   createPersonne,
   archivePersonne,
   restorePersonne,
+  checkPersonnePhone,
+  getPersonne360,
+  updatePersonneNotes,
   getMemberHistory,
   listStaff,
   createStaff,
@@ -43,6 +46,15 @@ const {
   incidentsHandlers,
   devisFacturesHandlers,
 } = require('../controllers/adminController');
+const {
+  listAdminUnites,
+  listPublicUnites,
+  createUnite,
+  updateUnite,
+  changeUniteStatus,
+  archiveUnite,
+  restoreUnite,
+} = require('../controllers/unitesController');
 
 // Packs & Journal d'activité
 router.get('/admin/packs', authenticate, requireRoles('super_admin', 'admin', 'staff'), getPacks);
@@ -76,8 +88,20 @@ router.post('/admin/members', authenticate, requireRoles('super_admin', 'admin',
 router.post('/admin/personnes', authenticate, requireRoles('super_admin', 'admin', 'staff'), createPersonne);
 router.post('/admin/personnes/:id/archive', authenticate, requireRoles('super_admin', 'admin'), archivePersonne);
 router.post('/admin/personnes/:id/restore', authenticate, requireRoles('super_admin', 'admin'), restorePersonne);
+router.get('/admin/personnes/check-phone', authenticate, requireRoles('super_admin', 'admin', 'staff'), checkPersonnePhone);
+router.get('/admin/personnes/:id/360', authenticate, requireRoles('super_admin', 'admin', 'staff'), getPersonne360);
+router.patch('/admin/personnes/:id/notes', authenticate, requireRoles('super_admin', 'admin', 'staff'), updatePersonneNotes);
 router.get('/admin/members/:id/history', authenticate, requireRoles('super_admin', 'admin', 'staff'), getMemberHistory);
 router.get('/admin/clients/overview', authenticate, requireRoles('super_admin', 'admin', 'staff'), getClientsOverview);
+
+// Unités & Postes (LOT 3)
+router.get('/admin/unites', authenticate, requireRoles('super_admin', 'admin', 'staff'), listAdminUnites);
+router.post('/admin/unites', authenticate, requireRoles('super_admin', 'admin'), createUnite);
+router.patch('/admin/unites/:id', authenticate, requireRoles('super_admin', 'admin'), updateUnite);
+router.post('/admin/unites/:id/status', authenticate, requireRoles('super_admin', 'admin'), changeUniteStatus);
+router.post('/admin/unites/:id/archive', authenticate, requireRoles('super_admin', 'admin'), archiveUnite);
+router.post('/admin/unites/:id/restore', authenticate, requireRoles('super_admin', 'admin'), restoreUnite);
+router.get('/unites/public', listPublicUnites);
 
 // Hub Espaces et offres : Ressources, Services, Maintenance/Incidents, Devis & Factures
 router.get('/admin/ressources', authenticate, requireRoles('super_admin', 'admin', 'staff'), ressourcesHandlers.list);

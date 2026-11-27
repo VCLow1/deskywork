@@ -2192,6 +2192,213 @@ const devisFacturesHandlers = makeCollectionHandlers({
   requiredField: 'numero',
 });
 
+function normalizePhoneTNAdmin(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00216') && digits.length >= 13) return `+216${digits.slice(5, 13)}`;
+  if (digits.startsWith('216') && digits.length >= 11) return `+216${digits.slice(3, 11)}`;
+  if (digits.length === 8) return `+216${digits}`;
+  return null;
+}
+
+// GET /api/admin/personnes/check-phone?telephone=...
+async function checkPersonnePhone(req, res) {
+  try {
+    const tid = req.tenantId;
+    const phone = normalizePhoneTNAdmin(req.query.telephone || '');
+    if (!phone) return res.json({ valid: false, exists: false, match: null });
+
+    const [{ data: profiles }, { data: guests }, persRes, settings] = await Promise.all([
+      supabaseAdmin.from('profiles').select('id, nom, prenom, email, telephone, role').eq('tenant_id', tid),
+      supabaseAdmin.from('guests').select('id, nom, prenom, email, telephone').eq('tenant_id', tid),
+      Promise.resolve(supabaseAdmin.from('personnes').select('*').eq('tenant_id', tid)).catch(() => ({ data: [] })),
+      readTenantSettings(tid),
+    ]);
+
+    const matchProfile = (profiles || []).find((p) => !isStaffRole(p.role) && normalizePhoneTNAdmin(p.telephone) === phone);
+    if (matchProfile) {
+      return res.json({ valid: true, normalized: phone, exists: true, match: { ...matchProfile, source: 'profile', type_personne: 'membre' } });
+    }
+    const persList = Array.isArray(persRes?.data) && persRes.data.length > 0
+      ? persRes.data
+      : (Array.isArray(settings?.personnes) ? settings.personnes : []);
+    const matchPers = persList.find((p) => normalizePhoneTNAdmin(p.telephone) === phone);
+    if (matchPers) {
+      return res.json({ valid: true, normalized: phone, exists: true, match: { ...matchPers, source: 'personnes' } });
+    }
+    const matchGuest = (guests || []).find((g) => normalizePhoneTNAdmin(g.telephone) === phone);
+    if (matchGuest) {
+      return res.json({ valid: true, normalized: phone, exists: true, match: { ...matchGuest, source: 'guest', type_personne: 'invite' } });
+    }
+
+    res.json({ valid: true, normalized: phone, exists: false, match: null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /api/admin/personnes/:id/360 — Fiche Membre / Invité / Prospect 360°
+async function getPersonne360(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+
+    const [{ data: prof }, { data: guest }, persRes, settings] = await Promise.all([
+      supabaseAdmin.from('profiles').select('*').eq('id', id).maybeSingle(),
+      supabaseAdmin.from('guests').select('*').eq('id', id).maybeSingle(),
+      Promise.resolve(supabaseAdmin.from('personnes').select('*').eq('id', id).maybeSingle()).catch(() => ({ data: null })),
+      readTenantSettings(tid),
+    ]);
+
+    const fbPers = (Array.isArray(settings?.personnes) ? settings.personnes : []).find((p) => p.id === id) || null;
+    const rawPers = persRes?.data || fbPers;
+
+    if (!prof && !guest && !rawPers) {
+      return res.status(404).json({ error: 'Fiche personne introuvable.' });
+    }
+
+    const personTenant = prof?.tenant_id || guest?.tenant_id || rawPers?.tenant_id || tid;
+    if (tid && personTenant && personTenant !== tid) {
+      return res.status(403).json({ error: 'Accès non autorisé.' });
+    }
+
+    const linkedUserId = prof?.id || rawPers?.profile_id || null;
+    const linkedGuestId = guest?.id || null;
+
+    const personne = {
+      id,
+      profile_id: linkedUserId,
+      guest_id: linkedGuestId,
+      source: prof ? 'profile' : rawPers ? 'personnes' : 'guest',
+      type_personne: rawPers?.type_personne || (guest ? 'invite' : 'membre'),
+      nom: rawPers?.nom || prof?.nom || guest?.nom || '',
+      prenom: rawPers?.prenom || prof?.prenom || guest?.prenom || '',
+      email: rawPers?.email || prof?.email || guest?.email || null,
+      telephone: rawPers?.telephone || prof?.telephone || guest?.telephone || null,
+      type_membre: prof?.type_membre || rawPers?.type_membre || 'particulier',
+      statut_compte: prof?.statut_compte || (rawPers?.archived_at ? 'archive' : 'actif'),
+      entreprise_id: prof?.entreprise_id || rawPers?.entreprise_id || null,
+      entreprise_nom: rawPers?.entreprise_nom || null,
+      notes_internes: (settings?.personnes_notes && settings.personnes_notes[id] !== undefined)
+        ? settings.personnes_notes[id]
+        : (rawPers?.notes_internes || rawPers?.notes || prof?.notes_internes || ''),
+      created_at: rawPers?.created_at || prof?.created_at || guest?.created_at,
+    };
+
+    const userIdsToQuery = [linkedUserId, id].filter(Boolean);
+    const [
+      { data: entreprise },
+      { data: abonnements },
+      { data: reservations },
+      { data: paiements },
+      { data: documents },
+      { data: formationsInsc },
+      incRes,
+      logs,
+    ] = await Promise.all([
+      personne.entreprise_id
+        ? supabaseAdmin.from('entreprises').select('*').eq('id', personne.entreprise_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      linkedUserId
+        ? supabaseAdmin.from('abonnements').select('*').eq('user_id', linkedUserId).order('date_fin', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      supabaseAdmin
+        .from('reservations')
+        .select('*, espaces(id, nom, type, tarif_horaire), paiements(id, statut, mode, montant)')
+        .eq('tenant_id', tid)
+        .or([
+          linkedUserId ? `user_id.eq.${linkedUserId}` : null,
+          linkedGuestId ? `guest_id.eq.${linkedGuestId}` : null,
+        ].filter(Boolean).join(',') || `user_id.eq.${id}`)
+        .order('date_debut', { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from('paiements')
+        .select('*')
+        .eq('tenant_id', tid)
+        .in('user_id', userIdsToQuery)
+        .order('created_at', { ascending: false })
+        .limit(50),
+      linkedUserId
+        ? supabaseAdmin.from('documents_membres').select('*').eq('user_id', linkedUserId).order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      linkedUserId
+        ? supabaseAdmin.from('inscriptions_formations').select('*, formations(id, titre, date_debut, date_fin, statut)').eq('user_id', linkedUserId).order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      Promise.resolve(supabaseAdmin.from('incidents_maintenance').select('*').eq('tenant_id', tid).order('created_at', { ascending: false })).catch(() => ({ data: [] })),
+      listActivityLogs({ supabaseAdmin, tenantId: tid, limit: 150 }),
+    ]);
+
+    const aboList = abonnements || [];
+    const activeAbo = aboList.find((a) => ['active', 'actif', 'a_renouveler'].includes(String(a.statut || '').toLowerCase())) || aboList[0] || null;
+    const devisFactures = (Array.isArray(settings?.devis_factures) ? settings.devis_factures : [])
+      .filter((df) => df.user_id === id || df.personne_id === id || df.client_nom === `${personne.prenom} ${personne.nom}`.trim());
+
+    const incidentsList = (incRes?.data && Array.isArray(incRes.data) ? incRes.data : (Array.isArray(settings?.incidents_maintenance) ? settings.incidents_maintenance : []))
+      .filter((inc) => inc.user_id === id || inc.personne_id === id);
+
+    const resIdsSet = new Set((reservations || []).map((r) => r.id));
+    const payIdsSet = new Set((paiements || []).map((p) => p.id));
+    const chronologie = (logs || []).filter((l) =>
+      l.entity_id === id
+      || (linkedUserId && l.entity_id === linkedUserId)
+      || resIdsSet.has(l.entity_id)
+      || payIdsSet.has(l.entity_id)
+    );
+
+    res.json({
+      personne,
+      entreprise: entreprise || (personne.entreprise_nom ? { raison_sociale: personne.entreprise_nom } : null),
+      abonnement_actif: activeAbo,
+      abonnements: aboList,
+      reservations: reservations || [],
+      paiements: paiements || [],
+      devis_factures: devisFactures,
+      documents_signes: documents || [],
+      formations: formationsInsc || [],
+      incidents: incidentsList,
+      chronologie,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// PATCH /api/admin/personnes/:id/notes — Mise à jour notes internes 360°
+async function updatePersonneNotes(req, res) {
+  try {
+    const tid = req.tenantId;
+    const { id } = req.params;
+    const notes = String(req.body?.notes_internes ?? req.body?.notes ?? '');
+
+    await supabaseAdmin.from('personnes').update({ notes_internes: notes, notes }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+    await supabaseAdmin.from('profiles').update({ notes_internes: notes }).eq('id', id).eq('tenant_id', tid).then(() => {}).catch(() => {});
+
+    const settings = await readTenantSettings(tid);
+    const nextNotesMap = { ...(settings.personnes_notes || {}), [id]: notes };
+    const nextPers = (Array.isArray(settings.personnes) ? settings.personnes : [])
+      .map((p) => (p.id === id ? { ...p, notes_internes: notes, notes } : p));
+    await supabaseAdmin
+      .from('tenants')
+      .update({ settings: { ...settings, personnes_notes: nextNotesMap, personnes: nextPers }, updated_at: new Date().toISOString() })
+      .eq('id', tid);
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'modification_notes',
+      entityType: 'personne',
+      entityId: id,
+      entityLabel: 'Mise à jour des notes internes (Fiche 360°)',
+      afterData: { notes_internes: notes },
+    });
+
+    res.json({ notes_internes: notes, message: 'Notes internes enregistrées.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getTenant,
   updateTenant,
@@ -2213,6 +2420,9 @@ module.exports = {
   createPersonne,
   archivePersonne,
   restorePersonne,
+  checkPersonnePhone,
+  getPersonne360,
+  updatePersonneNotes,
   getMemberHistory,
   listStaff,
   createStaff,

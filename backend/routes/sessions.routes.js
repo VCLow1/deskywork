@@ -17,8 +17,13 @@ router.get('/sessions/me/active', authenticate, ctrl.getMyActiveSessions);
 router.post('/sessions/check-in', authenticate, ctrl.checkIn);
 router.post('/sessions/check-out', authenticate, ctrl.checkOut);
 
-// Administration des sessions de travail (Staff — CDC v3.0 D3 & D4)
+// Administration & chrono synchronisé serveur (LOT 3)
 router.get('/sessions/live', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.getLiveSessions);
+router.post('/sessions/start', authenticate, ctrl.startSession);
+router.post('/sessions/walkin/start', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.startWalkinSession);
+router.post('/sessions/auto-close-sweep', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.autoCloseSweep);
+router.post('/sessions/:id/stop', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.stopSession);
+router.post('/sessions/:id/extend', authenticate, ctrl.extendSession);
 router.post('/sessions/:id/release', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.releaseSession);
 router.get('/sessions', authenticate, requireRoles('super_admin', 'admin', 'staff'), ctrl.listSessions);
 

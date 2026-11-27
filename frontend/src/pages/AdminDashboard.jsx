@@ -18,6 +18,7 @@ import PeriodFilter from '../components/dashboard/PeriodFilter';
 import AIReportPanel from '../components/dashboard/AIReportPanel';
 import { useSessionUser } from '../hooks/useSessionUser';
 import { useTheme } from '../context/ThemeContext';
+import { useServerTimer } from '../hooks/useServerTimer';
 import {
   DEFAULT_PERIOD, periodWindow, windowLabel, trendBadge, CHART_COLORS, inWindow,
 } from '../utils/dashboardPeriod';
@@ -336,47 +337,54 @@ function DonutBySpace({ data, title, sub, totalFormatter }) {
   );
 }
 
-// ─── Ligne session live isolée (minuteur 1s local) ────────────────────────────
-function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
+// ─── Ligne session live isolée (chronomètre synchronisé serveur UTC + Walk-in) ─
+function LiveSessionClockRow({ s, serverNow, releasingId, onStart, onRelease, onExtend }) {
   const isUpcoming = s.statut === 'upcoming' || s.etat === 'a_venir';
-  const [nowEpoch, setNowEpoch] = useState(() => Date.now());
+  const isWalkin = Boolean(s.is_walkin);
+  const timer = useServerTimer({
+    startedAt: s.started_at || s.check_in,
+    endAt: !isUpcoming && !isWalkin ? s.reservations?.date_fin : null,
+    serverNow,
+    active: !isUpcoming,
+  });
 
-  useEffect(() => {
-    if (isUpcoming) return undefined;
-    const tick = setInterval(() => setNowEpoch(Date.now()), 1000);
-    return () => clearInterval(tick);
-  }, [isUpcoming]);
-
-  const finMs = s.reservations?.date_fin ? new Date(s.reservations.date_fin).getTime() : nowEpoch;
+  const isOvertime = !isUpcoming && !isWalkin && timer.isOvertime;
+  const isSoon = !isUpcoming && !isWalkin && timer.isEndingSoon;
   const diffSec = isUpcoming
     ? Math.max(0, Math.floor(s.seconds_remaining || 0))
-    : Math.floor((finMs - nowEpoch) / 1000);
-  const isOvertime = !isUpcoming && diffSec < 0;
-  const isSoon = !isUpcoming && diffSec >= 0 && diffSec <= 15 * 60;
-  const overtimeMin = isOvertime ? Math.ceil(Math.abs(diffSec) / 60) : 0;
+    : isWalkin
+      ? timer.elapsedSeconds
+      : isOvertime
+        ? -timer.overtimeSeconds
+        : timer.remainingSeconds;
+
+  const overtimeMin = isOvertime ? Math.ceil(timer.overtimeSeconds / 60) : 0;
+  const overtimeSlices = isOvertime ? Math.ceil(overtimeMin / 15) : 0;
   const rate = Number(s.hourly_overtime_rate ?? s.reservations?.espaces?.tarif_horaire ?? 0);
-  const overtimeCost = overtimeMin > 0 && rate > 0
-    ? Number(((overtimeMin / 60) * rate).toFixed(3))
+  const overtimeCost = overtimeSlices > 0 && rate > 0
+    ? Number(((overtimeSlices / 4) * rate).toFixed(3))
     : Number(s.montant_depassement || 0);
 
   const badgeCfg = isUpcoming
     ? { txt: 'À venir', cls: 'bg-slate-100 text-slate-700 border-slate-200' }
-    : isOvertime
-      ? { txt: 'En dépassement', cls: 'bg-red-100 text-red-800 border-red-200 animate-pulse' }
-      : isSoon
-        ? { txt: 'Bientôt terminée - 15 min', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
-        : { txt: 'En cours', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+    : isWalkin
+      ? { txt: 'Client sur place', cls: 'bg-orange-100 text-[#c2410c] border-orange-200' }
+      : isOvertime
+        ? { txt: 'En dépassement', cls: 'bg-red-100 text-red-800 border-red-200 animate-pulse' }
+        : isSoon
+          ? { txt: 'Bientôt terminée - 15 min', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
+          : { txt: 'En cours', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
 
   return (
     <div className="py-3 px-2 rounded-2xl hover:bg-surface-container-low/50 transition-colors flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
         <span
           className={`flex items-center justify-center w-10 h-10 rounded-xl shrink-0 ${
-            isOvertime ? 'bg-red-500/15 text-red-600' : isSoon ? 'bg-amber-500/15 text-amber-600' : isUpcoming ? 'bg-slate-500/10 text-slate-600' : 'bg-emerald-500/15 text-emerald-600'
+            isOvertime ? 'bg-red-500/15 text-red-600' : isWalkin ? 'bg-orange-500/15 text-[#f95d00]' : isSoon ? 'bg-amber-500/15 text-amber-600' : isUpcoming ? 'bg-slate-500/10 text-slate-600' : 'bg-emerald-500/15 text-emerald-600'
           }`}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
-            {isOvertime ? 'warning' : 'timer'}
+            {isOvertime ? 'warning' : isWalkin ? 'directions_walk' : 'timer'}
           </span>
         </span>
         <div className="min-w-0">
@@ -390,19 +398,24 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
             {s.espace_nom || s.reservations?.espaces?.nom || 'Espace'} ·{' '}
             {isUpcoming
               ? `Prévu ${formatTimeShort(s.reservations?.date_debut)}`
-              : `Check-in ${formatTimeShort(s.check_in)}`}
+              : `Démarré ${formatTimeShort(s.started_at || s.check_in)}`}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 ml-auto shrink-0">
+      <div className="flex items-center gap-2.5 ml-auto shrink-0 flex-wrap">
         <div className="text-right">
-          <p className={`font-mono text-sm font-bold ${isOvertime ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-emerald-600'}`}>
+          <p className={`font-mono text-sm font-bold ${isOvertime ? 'text-red-600' : isWalkin ? 'text-[#f95d00]' : isSoon ? 'text-amber-600' : 'text-emerald-600'}`}>
             {isOvertime ? `+${formatClockSeconds(Math.abs(diffSec))}` : formatClockSeconds(diffSec)}
           </p>
           {isOvertime && (
             <p className="text-xs font-bold text-red-600">
-              Surplus : {formatDTMillimes(overtimeCost)}
+              Surplus ({overtimeSlices} tr. 15 min) : {formatDTMillimes(overtimeCost)}
+            </p>
+          )}
+          {isWalkin && s.walkin_estimate && (
+            <p className="text-xs font-bold text-on-surface-variant">
+              Est. : <Money amount={s.walkin_estimate.montantTTC} showTaxType="TTC" />
             </p>
           )}
         </div>
@@ -412,20 +425,34 @@ function LiveSessionClockRow({ s, releasingId, onStart, onRelease }) {
             type="button"
             onClick={() => onStart(s.reservation_id)}
             disabled={releasingId === s.reservation_id}
-            className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all hover:-translate-y-0.5 disabled:opacity-50"
+            style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold hover:opacity-95 transition-all disabled:opacity-50"
           >
             Démarrer
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => onRelease(s.id)}
-            disabled={releasingId === s.id}
-            className="px-3.5 py-2 rounded-xl bg-[#f95d00] text-white text-xs font-bold hover:bg-[#e55500] shadow-sm transition-all hover:-translate-y-0.5 disabled:opacity-50"
-            title="Marquer la session de travail terminée et libérer la ressource"
-          >
-            {releasingId === s.id ? 'Libération…' : "C'est bon, libérée"}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {!isWalkin && (isSoon || isOvertime) && onExtend && (
+              <button
+                type="button"
+                onClick={() => onExtend(s.id)}
+                disabled={releasingId === s.id}
+                className="px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 text-xs font-bold hover:bg-amber-100 disabled:opacity-50"
+              >
+                Prolonger (facturable)
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onRelease(s)}
+              disabled={releasingId === s.id}
+              style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold hover:opacity-95 shadow-sm transition-all disabled:opacity-50"
+              title="Arrêter la session de travail et libérer la ressource"
+            >
+              {releasingId === s.id ? 'Arrêt…' : isWalkin ? 'Arrêter & facturer' : "Arrêter / Libérer"}
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -449,6 +476,8 @@ export default function AdminDashboard({ session }) {
   const [coworking, setCoworking] = useState(null);
   const [guests, setGuests] = useState([]);
   const [liveSessions, setLiveSessions] = useState([]);
+  const [liveServerNow, setLiveServerNow] = useState(null);
+  const [autoClosedAlerts, setAutoClosedAlerts] = useState([]);
   const [releasingId, setReleasingId] = useState(null);
   const [sessionActionMsg, setSessionActionMsg] = useState('');
   const hasLoadedRef = useRef(false);
@@ -493,6 +522,10 @@ export default function AdminDashboard({ session }) {
         sessionApi.getLive().catch(() => ({ live_sessions: null })),
       ]);
       if (Array.isArray(liveRes?.live_sessions)) setLiveSessions(liveRes.live_sessions);
+      if (liveRes?.server_now) setLiveServerNow(liveRes.server_now);
+      if (Array.isArray(liveRes?.auto_closed_alerts) && liveRes.auto_closed_alerts.length > 0) {
+        setAutoClosedAlerts(liveRes.auto_closed_alerts);
+      }
       setKpis(kpiRes);
       setChart(chartRes);
       setPendingAccounts(pendingRes.pending || []);
@@ -531,6 +564,10 @@ export default function AdminDashboard({ session }) {
       const liveRes = await sessionApi.getLive().catch(() => null);
       if (Array.isArray(liveRes?.live_sessions)) {
         setLiveSessions(liveRes.live_sessions);
+        if (liveRes?.server_now) setLiveServerNow(liveRes.server_now);
+        if (Array.isArray(liveRes?.auto_closed_alerts) && liveRes.auto_closed_alerts.length > 0) {
+          setAutoClosedAlerts(liveRes.auto_closed_alerts);
+        }
         const activeCount = liveRes.live_sessions.filter(
           (s) => s.statut === 'in_progress' || s.etat === 'en_cours'
         ).length;
@@ -540,13 +577,17 @@ export default function AdminDashboard({ session }) {
     } catch (_) { /* silencieux */ }
   }, []);
 
-  // D3 : Libération manuelle explicite (« C'est bon, libérée ») + D4 dépassement
-  const handleReleaseSession = async (sessionId) => {
+  // LOT 3 : Arrêt session synchronisé serveur (Walk-in & Réservation) + Prolongation 1-clic
+  const handleReleaseSession = async (sessionOrId) => {
+    const sessionId = typeof sessionOrId === 'object' ? sessionOrId.id : sessionOrId;
     setReleasingId(sessionId);
     setSessionActionMsg('');
     try {
-      const res = await sessionApi.release(sessionId);
-      setSessionActionMsg(res.message || "C'est bon, la ressource a été libérée.");
+      const res = await sessionApi.stop(sessionId);
+      const msg = res?.billing
+        ? `Session clôturée : ${res.billing.billedSlices} tranches de 15 min — Total ${formatDTMillimes(res.billing.montantTTC)}.`
+        : (res.message || "C'est bon, la ressource a été libérée.");
+      setSessionActionMsg(msg);
       await fetchSessionsOnly();
     } catch (e) {
       setError(e.message || 'Impossible de libérer la session de travail.');
@@ -555,11 +596,25 @@ export default function AdminDashboard({ session }) {
     }
   };
 
+  const handleExtendLiveSession = async (sessionId) => {
+    setReleasingId(sessionId);
+    setSessionActionMsg('');
+    try {
+      const res = await sessionApi.extend(sessionId, { minutes: 30 });
+      setSessionActionMsg(res.message || 'Session prolongée de 30 min (facturable).');
+      await fetchSessionsOnly();
+    } catch (e) {
+      setError(e.message || 'Créneau suivant occupé, prolongation impossible.');
+    } finally {
+      setReleasingId(null);
+    }
+  };
+
   const handleStartUpcomingSession = async (reservationId) => {
     setReleasingId(reservationId);
     try {
-      await sessionApi.checkIn({ reservation_id: reservationId, force: true });
-      setSessionActionMsg('Session de travail démarrée.');
+      await sessionApi.start({ reservation_id: reservationId });
+      setSessionActionMsg('Chronomètre démarré côté serveur.');
       await fetchSessionsOnly();
     } catch (e) {
       setError(e.message || 'Impossible de démarrer la session de travail.');
@@ -1326,6 +1381,20 @@ export default function AdminDashboard({ session }) {
             </div>
           </div>
 
+          {autoClosedAlerts.length > 0 && (
+            <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>Oubli d&apos;arrêt détecté : {autoClosedAlerts.length} session(s) clôturée(s) automatiquement à la fermeture</span>
+                <button type="button" onClick={() => setAutoClosedAlerts([])} className="underline">Fermer</button>
+              </div>
+              {autoClosedAlerts.map((a) => (
+                <p key={a.session_id} className="text-amber-800">
+                  · {a.client_nom} ({a.espace_nom}) — clôturée à {formatTimeShort(a.closed_at)}
+                </p>
+              ))}
+            </div>
+          )}
+
           {sessionActionMsg && (
             <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
               <span>{sessionActionMsg}</span>
@@ -1344,9 +1413,11 @@ export default function AdminDashboard({ session }) {
                 <LiveSessionClockRow
                   key={s.id}
                   s={s}
+                  serverNow={liveServerNow}
                   releasingId={releasingId}
                   onStart={handleStartUpcomingSession}
                   onRelease={handleReleaseSession}
+                  onExtend={handleExtendLiveSession}
                 />
               ))}
             </div>

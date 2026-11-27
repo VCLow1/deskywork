@@ -1,8 +1,40 @@
-// controllers/sessionsController.js — MODULE B : Politique d'annulation & Sessions check-in/out
+// controllers/sessionsController.js — MODULE B : Sessions check-in/out, Chrono Serveur & Walk-in (LOT 3)
+const crypto = require('crypto');
 const { supabaseAdmin } = require('../config/supabase');
-const { getCancellationPolicy, buildDynamicCancellationMessage, hasActiveSubscription, computeRemainingMinutes } = require('../models/helpers');
+const { getCancellationPolicy, buildDynamicCancellationMessage, hasActiveSubscription, computeRemainingMinutes, insertWithColumnFallback } = require('../models/helpers');
 const { applyTenantFilter } = require('../middleware/guards');
 const { emitSessionStarted, emitSessionEnded, emitSessionOvertime } = require('../services/socketService');
+const { computeWalkinBilling, computeOvertime15Min, getClosingTimestampTunis } = require('../models/walkinBilling');
+const { checkAvailabilityWithBuffer, getTenantTamponMinutes, loadSpaceUnitsForTenant } = require('../models/bookingAvailability');
+const { logActivity } = require('../models/activityLogger');
+const { DEFAULT_TVA_PCT, roundMillime, computeTTC, computeHTFromTTC } = require('../models/pricingMath');
+
+function normalizePhoneTN(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00216') && digits.length >= 13) return `+216${digits.slice(5, 13)}`;
+  if (digits.startsWith('216') && digits.length >= 11) return `+216${digits.slice(3, 11)}`;
+  if (digits.length === 8) return `+216${digits}`;
+  return null;
+}
+
+async function readTenantSettingsSafe(tenantId) {
+  if (!tenantId) return {};
+  try {
+    const { data } = await supabaseAdmin.from('tenants').select('settings').eq('id', tenantId).maybeSingle();
+    return data?.settings && typeof data.settings === 'object' ? data.settings : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveWalkinFallback(tenantId, walkins) {
+  const settings = await readTenantSettingsSafe(tenantId);
+  await supabaseAdmin
+    .from('tenants')
+    .update({ settings: { ...settings, walkin_sessions: walkins }, updated_at: new Date().toISOString() })
+    .eq('id', tenantId);
+}
 
 async function getCancellationPolicyRoute(req, res) {
   try {
@@ -134,15 +166,17 @@ async function getMySessions(req, res) {
 
     if (error) return res.status(500).json({ error: error.message });
 
+    const nowIso = new Date().toISOString();
     const sessions = (data || []).map((session) => ({
       ...session,
+      started_at: session.started_at || session.check_in,
       temps_restant: session.statut === 'active'
         ? computeRemainingMinutes(session.reservations?.date_fin)
         : session.temps_restant,
     }));
 
     const activeSession = sessions.find((s) => s.statut === 'active') || null;
-    res.json({ sessions, activeSession });
+    res.json({ sessions, activeSession, server_now: nowIso });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,12 +212,14 @@ async function getMyActiveSessions(req, res) {
     if (error) return res.status(500).json({ error: error.message });
 
     if (!data) {
-      return res.json({ session: null });
+      return res.json({ session: null, server_now: new Date().toISOString() });
     }
 
     res.json({
+      server_now: new Date().toISOString(),
       session: {
         ...data,
+        started_at: data.started_at || data.check_in,
         temps_restant: computeRemainingMinutes(data.reservations?.date_fin),
       },
     });
@@ -477,25 +513,28 @@ function computeWorkSessionDetails(sessionRow, overtimeRateOverride = null) {
     etat_label = 'Bientôt terminée';
   }
 
-  const overtime_minutes = Math.ceil(overtime_seconds / 60);
-  const hourlyRate = Number(
-    overtimeRateOverride != null ? overtimeRateOverride : (res.espaces?.tarif_horaire || 0)
-  );
-  const montant_depassement = overtime_minutes > 0 && hourlyRate > 0
-    ? Number(((overtime_minutes / 60) * hourlyRate).toFixed(3))
-    : 0;
+    const overtimeCalc = overtime_seconds > 0
+      ? computeOvertime15Min({
+        dateFin: res.date_fin,
+        nowOrStop: isReleased && sessionRow.check_out ? sessionRow.check_out : new Date(nowMs).toISOString(),
+        tarifHoraireTTC: hourlyRate,
+        tvaPct: Number(res.espaces?.tva_pct ?? DEFAULT_TVA_PCT),
+      })
+      : { overtimeMinutes: 0, slices15Min: 0, montantHT: 0, montantTTC: 0 };
 
-  return {
-    etat,
-    etat_label,
-    is_released: isReleased,
-    seconds_remaining,
-    temps_restant: Math.ceil(seconds_remaining / 60),
-    overtime_seconds,
-    overtime_minutes,
-    hourly_overtime_rate: hourlyRate,
-    montant_depassement,
-  };
+    return {
+      etat,
+      etat_label,
+      is_released: isReleased,
+      started_at: sessionRow.started_at || sessionRow.check_in || null,
+      seconds_remaining,
+      temps_restant: Math.ceil(seconds_remaining / 60),
+      overtime_seconds,
+      overtime_minutes: overtimeCalc.overtimeMinutes,
+      overtime_slices_15min: overtimeCalc.slices15Min,
+      hourly_overtime_rate: hourlyRate,
+      montant_depassement: overtimeCalc.montantTTC,
+    };
 }
 
 async function getTenantOvertimeRate(tenantId) {
@@ -509,9 +548,168 @@ async function getTenantOvertimeRate(tenantId) {
   return null;
 }
 
+async function runAutoCloseSweepForTenant(tenantId, req = null) {
+  if (!tenantId) return [];
+  const closedAlerts = [];
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  try {
+    const [{ data: activeSql }, { data: espRows }, settings] = await Promise.all([
+      supabaseAdmin
+        .from('sessions')
+        .select('*, reservations(id, user_id, espace_id, tenant_id, date_debut, date_fin, unite_id, espaces(id, nom, type, horaires, tarif_horaire, tarif_horaire_ht, tarif_journalier_ht, tva_pct))')
+        .in('statut', ['active', 'overtime'])
+        .is('check_out', null),
+      supabaseAdmin.from('espaces').select('*').eq('tenant_id', tenantId),
+      readTenantSettingsSafe(tenantId),
+    ]);
+
+    const espById = new Map((espRows || []).map((e) => [e.id, e]));
+    const tenantSessions = (activeSql || []).filter((s) => s.tenant_id === tenantId || s.reservations?.tenant_id === tenantId);
+
+    for (const s of tenantSessions) {
+      const esp = s.reservations?.espaces || espById.get(s.espace_id) || {};
+      const startIso = s.started_at || s.check_in || s.created_at;
+      if (!startIso) continue;
+      const closeIso = getClosingTimestampTunis(esp.horaires || '08:00 - 20:00', startIso);
+      if (nowMs <= new Date(closeIso).getTime() + 5 * 60 * 1000) continue;
+
+      // Clôture automatique à l'heure de fermeture
+      if (s.is_walkin) {
+        const bill = computeWalkinBilling({
+          startedAt: startIso,
+          stoppedAt: closeIso,
+          tarifHoraireHT: esp.tarif_horaire_ht ?? computeHTFromTTC(esp.tarif_horaire || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+          tarifJournalierHT: esp.tarif_journalier_ht ?? computeHTFromTTC(esp.tarif_journalier || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+          tvaPct: esp.tva_pct ?? DEFAULT_TVA_PCT,
+        });
+        await supabaseAdmin
+          .from('sessions')
+          .update({
+            check_out: closeIso,
+            stopped_at: closeIso,
+            statut: 'completed',
+            temps_restant: 0,
+            tranches_15min: bill.billedSlices,
+            montant_calcule_ht: bill.montantHT,
+            montant_calcule_ttc: bill.montantTTC,
+            auto_closed_at: nowIso,
+            auto_close_alert: true,
+          })
+          .eq('id', s.id)
+          .catch(() => supabaseAdmin.from('sessions').update({ check_out: closeIso, statut: 'completed', temps_restant: 0 }).eq('id', s.id));
+        if (bill.montantTTC > 0 && (s.personne_id || s.reservations?.user_id)) {
+          await supabaseAdmin.from('paiements').insert({
+            user_id: s.personne_id || s.reservations?.user_id,
+            montant: bill.montantTTC,
+            mode: 'cash',
+            statut: 'pending',
+            tenant_id: tenantId,
+            reference_externe: `WALKIN-AUTOCLOSE-${bill.billedSlices}T`,
+          }).catch(() => {});
+        }
+        closedAlerts.push({
+          session_id: s.id,
+          client_nom: s.client_nom || 'Client sur place',
+          espace_nom: esp.nom || 'Espace',
+          closed_at: closeIso,
+          montant_ttc: bill.montantTTC,
+          reason: 'Oubli d\'arrêt détecté — clôture automatique à l\'heure de fermeture.',
+        });
+      } else {
+        await supabaseAdmin
+          .from('sessions')
+          .update({
+            check_out: closeIso,
+            stopped_at: closeIso,
+            statut: 'completed',
+            temps_restant: 0,
+            auto_closed_at: nowIso,
+            auto_close_alert: true,
+          })
+          .eq('id', s.id)
+          .catch(() => supabaseAdmin.from('sessions').update({ check_out: closeIso, statut: 'completed', temps_restant: 0 }).eq('id', s.id));
+        closedAlerts.push({
+          session_id: s.id,
+          client_nom: s.reservations?.profiles ? `${s.reservations.profiles.prenom || ''} ${s.reservations.profiles.nom || ''}`.trim() : 'Client',
+          espace_nom: esp.nom || 'Espace',
+          closed_at: closeIso,
+          reason: 'Oubli d\'arrêt détecté — clôture automatique à l\'heure de fermeture.',
+        });
+      }
+    }
+
+    // Même contrôle sur fallback settings walkin_sessions
+    const fallbackWalkins = Array.isArray(settings.walkin_sessions) ? settings.walkin_sessions : [];
+    let fbChanged = false;
+    const nextFallback = fallbackWalkins.map((w) => {
+      if (w.check_out || w.statut === 'completed') return w;
+      const esp = espById.get(w.espace_id) || {};
+      const closeIso = getClosingTimestampTunis(esp.horaires || '08:00 - 20:00', w.started_at || w.check_in);
+      if (nowMs <= new Date(closeIso).getTime() + 5 * 60 * 1000) return w;
+      fbChanged = true;
+      const bill = computeWalkinBilling({
+        startedAt: w.started_at || w.check_in,
+        stoppedAt: closeIso,
+        tarifHoraireHT: esp.tarif_horaire_ht ?? computeHTFromTTC(esp.tarif_horaire || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+        tarifJournalierHT: esp.tarif_journalier_ht ?? computeHTFromTTC(esp.tarif_journalier || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+        tvaPct: esp.tva_pct ?? DEFAULT_TVA_PCT,
+      });
+      closedAlerts.push({
+        session_id: w.id,
+        client_nom: w.client_nom || 'Client sur place',
+        espace_nom: esp.nom || w.espace_nom || 'Espace',
+        closed_at: closeIso,
+        montant_ttc: bill.montantTTC,
+        reason: 'Oubli d\'arrêt détecté — clôture automatique à l\'heure de fermeture.',
+      });
+      return {
+        ...w,
+        check_out: closeIso,
+        stopped_at: closeIso,
+        statut: 'completed',
+        auto_closed_at: nowIso,
+        auto_close_alert: true,
+        tranches_15min: bill.billedSlices,
+        montant_calcule_ht: bill.montantHT,
+        montant_calcule_ttc: bill.montantTTC,
+      };
+    });
+    if (fbChanged) await saveWalkinFallback(tenantId, nextFallback);
+
+    if (closedAlerts.length > 0) {
+      const { data: admins } = await supabaseAdmin.from('profiles').select('id').eq('tenant_id', tenantId).in('role', ['admin', 'staff']);
+      for (const a of closedAlerts) {
+        for (const adm of admins || []) {
+          await supabaseAdmin.from('notifications').insert({
+            user_id: adm.id,
+            type: 'cloture_auto_session',
+            canal: 'Dashboard',
+            message: `Alerte chrono : la session de ${a.client_nom} (${a.espace_nom}) a été clôturée automatiquement à la fermeture.`,
+          }).catch(() => {});
+        }
+        await logActivity({
+          tenantId,
+          req,
+          action: 'cloture_automatique',
+          entityType: 'session',
+          entityId: a.session_id,
+          entityLabel: `${a.client_nom} (${a.espace_nom})`,
+          afterData: a,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('autoCloseSweep warning:', err.message);
+  }
+  return closedAlerts;
+}
+
 async function getLiveSessions(req, res) {
   try {
     const overtimeRate = await getTenantOvertimeRate(req.tenantId);
+    const autoClosedAlerts = req.tenantId ? await runAutoCloseSweepForTenant(req.tenantId, req) : [];
 
     // 1. Sessions en base (priorité aux non libérées : check_out IS NULL)
     let q = supabaseAdmin
@@ -519,8 +717,8 @@ async function getLiveSessions(req, res) {
       .select(`
         *,
         reservations (
-          id, user_id, guest_id, espace_id, tenant_id, date_debut, date_fin, statut,
-          espaces (id, nom, type, tarif_horaire),
+          id, user_id, guest_id, espace_id, unite_id, tenant_id, date_debut, date_fin, statut,
+          espaces (id, nom, type, tarif_horaire, tarif_horaire_ht, tarif_journalier_ht, tva_pct, horaires),
           profiles!user_id (id, nom, prenom, email, telephone)
         )
       `)
@@ -531,19 +729,76 @@ async function getLiveSessions(req, res) {
 
     const filtered = (sessionRows || []).filter((s) => {
       if (!req.tenantId) return true;
-      return s.reservations?.tenant_id === req.tenantId;
+      return s.tenant_id === req.tenantId || s.reservations?.tenant_id === req.tenantId;
     });
 
-    const live = filtered
+    const settings = await readTenantSettingsSafe(req.tenantId);
+    const { data: allSpaces } = req.tenantId
+      ? await supabaseAdmin.from('espaces').select('*').eq('tenant_id', req.tenantId)
+      : { data: [] };
+    const espById = new Map((allSpaces || []).map((e) => [e.id, e]));
+
+    const sqlLive = filtered
       .filter((s) => !s.check_out && s.statut !== 'completed')
-      .map((s) => ({
-        ...s,
-        membre: s.reservations?.profiles
-          ? `${s.reservations.profiles.prenom || ''} ${s.reservations.profiles.nom || ''}`.trim() || s.reservations.profiles.email
-          : 'Visiteur',
-        espace_nom: s.reservations?.espaces?.nom || 'Espace',
-        ...computeWorkSessionDetails(s, overtimeRate),
-      }));
+      .map((s) => {
+        if (s.is_walkin) {
+          const esp = espById.get(s.espace_id) || {};
+          const bill = computeWalkinBilling({
+            startedAt: s.started_at || s.check_in,
+            tarifHoraireHT: esp.tarif_horaire_ht ?? computeHTFromTTC(esp.tarif_horaire || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+            tarifJournalierHT: esp.tarif_journalier_ht ?? computeHTFromTTC(esp.tarif_journalier || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+            tvaPct: esp.tva_pct ?? DEFAULT_TVA_PCT,
+          });
+          return {
+            ...s,
+            started_at: s.started_at || s.check_in,
+            membre: s.client_nom || 'Client sur place',
+            espace_nom: esp.nom || 'Espace',
+            etat: 'en_cours',
+            etat_label: 'Client sur place',
+            is_walkin: true,
+            walkin_estimate: bill,
+            seconds_remaining: 0,
+            overtime_seconds: 0,
+            montant_depassement: 0,
+          };
+        }
+        return {
+          ...s,
+          started_at: s.started_at || s.check_in,
+          membre: s.reservations?.profiles
+            ? `${s.reservations.profiles.prenom || ''} ${s.reservations.profiles.nom || ''}`.trim() || s.reservations.profiles.email
+            : 'Visiteur',
+          espace_nom: s.reservations?.espaces?.nom || 'Espace',
+          ...computeWorkSessionDetails(s, overtimeRate),
+        };
+      });
+
+    const fallbackWalkins = (Array.isArray(settings.walkin_sessions) ? settings.walkin_sessions : [])
+      .filter((w) => !w.check_out && w.statut !== 'completed')
+      .map((w) => {
+        const esp = espById.get(w.espace_id) || {};
+        const bill = computeWalkinBilling({
+          startedAt: w.started_at || w.check_in,
+          tarifHoraireHT: esp.tarif_horaire_ht ?? computeHTFromTTC(esp.tarif_horaire || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+          tarifJournalierHT: esp.tarif_journalier_ht ?? computeHTFromTTC(esp.tarif_journalier || 0, esp.tva_pct ?? DEFAULT_TVA_PCT),
+          tvaPct: esp.tva_pct ?? DEFAULT_TVA_PCT,
+        });
+        return {
+          ...w,
+          membre: w.client_nom || 'Client sur place',
+          espace_nom: esp.nom || w.espace_nom || 'Espace',
+          etat: 'en_cours',
+          etat_label: 'Client sur place',
+          is_walkin: true,
+          walkin_estimate: bill,
+          seconds_remaining: 0,
+          overtime_seconds: 0,
+          montant_depassement: 0,
+        };
+      });
+
+    const live = [...sqlLive, ...fallbackWalkins];
 
     // 2. Réservations confirmées du jour pas encore check-in (statut "À venir")
     const todayStart = new Date();
@@ -583,11 +838,15 @@ async function getLiveSessions(req, res) {
         montant_depassement: 0,
       }));
 
+    const nowIso = new Date().toISOString();
     res.json({
+      server_now: nowIso,
       live_sessions: [...live, ...upcoming],
+      auto_closed_alerts: autoClosedAlerts,
       counts: {
         total_open: live.length,
         en_cours: live.filter((s) => s.etat === 'en_cours').length,
+        walkin: live.filter((s) => s.is_walkin).length,
         bientot_terminee: live.filter((s) => s.etat === 'bientot_terminee').length,
         en_depassement: live.filter((s) => s.etat === 'en_depassement').length,
         a_venir: upcoming.length,
@@ -680,6 +939,568 @@ async function releaseSession(req, res) {
   }
 }
 
+// POST /api/sessions/start — Démarrage idempotent avec started_at UTC côté serveur
+async function startSession(req, res) {
+  try {
+    const { reservation_id, idempotency_key } = req.body || {};
+    if (!reservation_id) {
+      return res.status(400).json({ error: 'reservation_id est requis.' });
+    }
+    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile?.role);
+    const { data: reservation, error: resErr } = await supabaseAdmin
+      .from('reservations')
+      .select('*, espaces(id, nom, type, tenant_id)')
+      .eq('id', reservation_id)
+      .single();
+    if (resErr || !reservation) return res.status(404).json({ error: 'Réservation introuvable.' });
+    if (!isStaff && reservation.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Action non autorisée.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data: existing } = await supabaseAdmin
+      .from('sessions')
+      .select('*, reservations(id, date_debut, date_fin, statut, espaces(nom, type))')
+      .eq('reservation_id', reservation_id)
+      .is('check_out', null)
+      .maybeSingle();
+
+    if (existing) {
+      return res.json({
+        already_started: true,
+        server_now: nowIso,
+        session: { ...existing, started_at: existing.started_at || existing.check_in },
+      });
+    }
+
+    const remaining = computeRemainingMinutes(reservation.date_fin);
+    const payload = {
+      tenant_id: reservation.tenant_id || req.tenantId || null,
+      espace_id: reservation.espace_id,
+      unite_id: reservation.unite_id || null,
+      reservation_id,
+      started_at: nowIso,
+      check_in: nowIso,
+      statut: 'active',
+      temps_restant: remaining,
+      ...(idempotency_key ? { idempotency_key: String(idempotency_key) } : {}),
+    };
+
+    const { data: created, error: insErr } = await insertWithColumnFallback(
+      supabaseAdmin,
+      'sessions',
+      payload,
+      { select: '*, reservations(id, date_debut, date_fin, statut, espaces(nom, type))' }
+    );
+    if (insErr) return res.status(400).json({ error: insErr.message });
+
+    await logActivity({
+      tenantId: reservation.tenant_id || req.tenantId,
+      req,
+      action: 'demarrage_session',
+      entityType: 'session',
+      entityId: created.id,
+      entityLabel: reservation.espaces?.nom || 'Session',
+    });
+
+    emitSessionStarted({
+      id: created.id,
+      user_id: reservation.user_id,
+      reservation_id,
+      check_in: created.check_in,
+      started_at: created.started_at || created.check_in,
+      temps_restant: remaining,
+      espace: reservation.espaces,
+    });
+
+    res.status(201).json({
+      server_now: nowIso,
+      session: { ...created, started_at: created.started_at || created.check_in },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/sessions/walkin/start — Client sur place sans réservation + chrono serveur
+async function startWalkinSession(req, res) {
+  try {
+    const tid = req.tenantId;
+    if (!tid) return res.status(400).json({ error: 'Établissement requis.' });
+
+    const { nom, prenom = '', telephone, espace_id, unite_id = null, idempotency_key = null } = req.body || {};
+    if (!nom || !espace_id || !telephone) {
+      return res.status(400).json({ error: 'Nom, téléphone (+216) et espace sont obligatoires.' });
+    }
+
+    const phone = normalizePhoneTN(telephone);
+    if (!phone) {
+      return res.status(400).json({ error: 'Numéro invalide : saisissez +216 suivi de 8 chiffres.' });
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // Idempotence : vérifier idempotency_key ou walk-in déjà ouvert sur la même unité
+    if (idempotency_key) {
+      const { data: dupSql } = await supabaseAdmin
+        .from('sessions')
+        .select('*')
+        .eq('tenant_id', tid)
+        .eq('idempotency_key', String(idempotency_key))
+        .maybeSingle()
+        .catch(() => ({ data: null }));
+      if (dupSql) {
+        return res.json({ already_started: true, server_now: nowIso, session: dupSql });
+      }
+      const settings = await readTenantSettingsSafe(tid);
+      const dupFb = (Array.isArray(settings.walkin_sessions) ? settings.walkin_sessions : [])
+        .find((w) => w.idempotency_key === String(idempotency_key));
+      if (dupFb) {
+        return res.json({ already_started: true, server_now: nowIso, session: dupFb });
+      }
+    }
+
+    // Dédoublonnage téléphone sur personnes / profiles / guests
+    const [{ data: profs }, { data: gs }, persRes] = await Promise.all([
+      supabaseAdmin.from('profiles').select('id, nom, prenom, email, telephone').eq('tenant_id', tid),
+      supabaseAdmin.from('guests').select('id, nom, prenom, email, telephone').eq('tenant_id', tid),
+      Promise.resolve(supabaseAdmin.from('personnes').select('*').eq('tenant_id', tid)).catch(() => ({ data: [] })),
+    ]);
+
+    let personneRecord = (persRes?.data || []).find((p) => normalizePhoneTN(p.telephone) === phone)
+      || (profs || []).find((p) => normalizePhoneTN(p.telephone) === phone)
+      || (gs || []).find((g) => normalizePhoneTN(g.telephone) === phone)
+      || null;
+
+    let duplicateReused = Boolean(personneRecord);
+    if (!personneRecord) {
+      const cleanEmail = `invite-${phone.replace('+', '')}@deskywork.local`;
+      const newPers = {
+        tenant_id: tid,
+        type_personne: 'invite',
+        nom: String(nom).trim(),
+        prenom: String(prenom).trim(),
+        telephone: phone,
+        email: cleanEmail,
+        created_at: nowIso,
+      };
+      const { data: persCreated, error: persErr } = await supabaseAdmin.from('personnes').insert(newPers).select().maybeSingle();
+      if (!persErr && persCreated) {
+        personneRecord = persCreated;
+      } else {
+        const { data: gCreated } = await insertWithColumnFallback(supabaseAdmin, 'guests', {
+          tenant_id: tid,
+          nom: String(nom).trim(),
+          prenom: String(prenom).trim(),
+          telephone: phone,
+          email: cleanEmail,
+        });
+        personneRecord = gCreated || { id: crypto.randomUUID(), ...newPers };
+        if (!gCreated) {
+          const settings = await readTenantSettingsSafe(tid);
+          const list = Array.isArray(settings.personnes) ? settings.personnes : [];
+          await supabaseAdmin.from('tenants').update({
+            settings: { ...settings, personnes: [personneRecord, ...list] },
+          }).eq('id', tid);
+        }
+      }
+    }
+
+    const fullName = `${personneRecord.prenom || prenom || ''} ${personneRecord.nom || nom}`.trim();
+    const { data: esp } = await supabaseAdmin.from('espaces').select('*').eq('id', espace_id).single();
+    if (!esp) return res.status(404).json({ error: 'Espace introuvable.' });
+
+    const sessionId = crypto.randomUUID();
+    const rowPayload = {
+      id: sessionId,
+      tenant_id: tid,
+      espace_id,
+      unite_id: unite_id || null,
+      started_at: nowIso,
+      check_in: nowIso,
+      statut: 'active',
+      temps_restant: 0,
+      is_walkin: true,
+      client_nom: fullName,
+      client_telephone: phone,
+      personne_id: personneRecord.id || null,
+      ...(idempotency_key ? { idempotency_key: String(idempotency_key) } : {}),
+    };
+
+    let createdSession = null;
+    const { data: sqlRow, error: sqlErr } = await supabaseAdmin.from('sessions').insert(rowPayload).select().maybeSingle();
+    if (!sqlErr && sqlRow && sqlRow.is_walkin !== undefined) {
+      createdSession = sqlRow;
+    } else {
+      // Fallback structuré dans tenants.settings.walkin_sessions
+      const settings = await readTenantSettingsSafe(tid);
+      const list = Array.isArray(settings.walkin_sessions) ? settings.walkin_sessions : [];
+      createdSession = { ...rowPayload, espace_nom: esp.nom };
+      await saveWalkinFallback(tid, [createdSession, ...list]);
+    }
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'demarrage_walkin',
+      entityType: 'session',
+      entityId: createdSession.id,
+      entityLabel: `${fullName} · ${esp.nom}`,
+      afterData: { telephone: phone, espace_id, unite_id, duplicate_reused: duplicateReused },
+    });
+
+    res.status(201).json({
+      server_now: nowIso,
+      session: createdSession,
+      personne: personneRecord,
+      duplicate_reused: duplicateReused,
+      espace: esp,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/sessions/:id/stop — Arrêt idempotent + calcul Walk-in (15min / min 1h / plafond jour) ou Overtime 15min
+async function stopSession(req, res) {
+  try {
+    const { id } = req.params;
+    const { encaisser_maintenant = false, mode_paiement = 'cash' } = req.body || {};
+    const tid = req.tenantId;
+    const nowIso = new Date().toISOString();
+
+    // 1. Chercher en base SQL
+    const { data: sqlSess } = await supabaseAdmin
+      .from('sessions')
+      .select('*, reservations(id, user_id, guest_id, espace_id, tenant_id, date_debut, date_fin, espaces(id, nom, type, tarif_horaire, tarif_horaire_ht, tarif_journalier, tarif_journalier_ht, tva_pct))')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (sqlSess) {
+      if (sqlSess.check_out && sqlSess.statut === 'completed') {
+        return res.json({ already_stopped: true, session: sqlSess, server_now: nowIso });
+      }
+      const effectiveTid = sqlSess.tenant_id || sqlSess.reservations?.tenant_id || tid;
+
+      if (sqlSess.is_walkin) {
+        const { data: esp } = await supabaseAdmin.from('espaces').select('*').eq('id', sqlSess.espace_id).maybeSingle();
+        const bill = computeWalkinBilling({
+          startedAt: sqlSess.started_at || sqlSess.check_in,
+          stoppedAt: nowIso,
+          tarifHoraireHT: esp?.tarif_horaire_ht ?? computeHTFromTTC(esp?.tarif_horaire || 0, esp?.tva_pct ?? DEFAULT_TVA_PCT),
+          tarifJournalierHT: esp?.tarif_journalier_ht ?? computeHTFromTTC(esp?.tarif_journalier || 0, esp?.tva_pct ?? DEFAULT_TVA_PCT),
+          tvaPct: esp?.tva_pct ?? DEFAULT_TVA_PCT,
+        });
+
+        await supabaseAdmin
+          .from('sessions')
+          .update({
+            check_out: nowIso,
+            stopped_at: nowIso,
+            statut: 'completed',
+            temps_restant: 0,
+            tranches_15min: bill.billedSlices,
+            montant_calcule_ht: bill.montantHT,
+            montant_calcule_ttc: bill.montantTTC,
+          })
+          .eq('id', id)
+          .catch(() => supabaseAdmin.from('sessions').update({ check_out: nowIso, statut: 'completed', temps_restant: 0 }).eq('id', id));
+
+        let paiement = null;
+        if (bill.montantTTC > 0) {
+          const validModes = ['cash', 'check', 'bank_transfer', 'card'];
+          const { data: payRow } = await supabaseAdmin
+            .from('paiements')
+            .insert({
+              user_id: sqlSess.personne_id || null,
+              montant: bill.montantTTC,
+              mode: validModes.includes(mode_paiement) ? mode_paiement : 'cash',
+              statut: encaisser_maintenant ? 'paid' : 'pending',
+              ...(encaisser_maintenant ? { date_paiement: nowIso, montant_encaisse: bill.montantTTC } : {}),
+              tenant_id: effectiveTid,
+              reference_externe: `WALKIN-${bill.billedSlices}T`,
+            })
+            .select('*')
+            .maybeSingle();
+          paiement = payRow || null;
+        }
+
+        await logActivity({
+          tenantId: effectiveTid,
+          req,
+          action: 'arret_walkin',
+          entityType: 'session',
+          entityId: id,
+          entityLabel: `${sqlSess.client_nom || 'Client sur place'} (${bill.montantTTC.toFixed(3)} DT TTC)`,
+          afterData: bill,
+        });
+
+        return res.json({
+          server_now: nowIso,
+          session: { ...sqlSess, check_out: nowIso, stopped_at: nowIso, statut: 'completed' },
+          billing: bill,
+          paiement,
+        });
+      }
+
+      // Session liée à une réservation : arrêt + dépassement 15 min
+      const overtimeRate = await getTenantOvertimeRate(effectiveTid);
+      const esp = sqlSess.reservations?.espaces || {};
+      const overtime = computeOvertime15Min({
+        dateFin: sqlSess.reservations?.date_fin || nowIso,
+        nowOrStop: nowIso,
+        tarifHoraireTTC: overtimeRate != null ? overtimeRate : Number(esp.tarif_horaire || 0),
+        tvaPct: Number(esp.tva_pct ?? DEFAULT_TVA_PCT),
+      });
+
+      const { data: updSess } = await supabaseAdmin
+        .from('sessions')
+        .update({
+          check_out: nowIso,
+          stopped_at: nowIso,
+          statut: 'completed',
+          temps_restant: 0,
+          overtime_tranches_15min: overtime.slices15Min,
+          overtime_montant_ttc: overtime.montantTTC,
+        })
+        .eq('id', id)
+        .select('*')
+        .maybeSingle()
+        .catch(async () => supabaseAdmin.from('sessions').update({ check_out: nowIso, statut: 'completed', temps_restant: 0 }).eq('id', id).select('*').maybeSingle());
+
+      if (sqlSess.reservation_id) {
+        await supabaseAdmin.from('reservations').update({ statut: 'completed' }).eq('id', sqlSess.reservation_id).catch(() => {});
+      }
+
+      let overtimePay = null;
+      if (overtime.montantTTC > 0 && sqlSess.reservations?.user_id) {
+        const { data: pRow } = await supabaseAdmin
+          .from('paiements')
+          .insert({
+            user_id: sqlSess.reservations.user_id,
+            reservation_id: sqlSess.reservation_id,
+            montant: overtime.montantTTC,
+            mode: 'cash',
+            statut: encaisser_maintenant ? 'paid' : 'pending',
+            ...(encaisser_maintenant ? { date_paiement: nowIso, montant_encaisse: overtime.montantTTC } : {}),
+            tenant_id: effectiveTid,
+            reference_externe: `DEPASSEMENT-${overtime.slices15Min}T`,
+          })
+          .select('*')
+          .maybeSingle();
+        overtimePay = pRow || null;
+      }
+
+      emitSessionEnded({
+        id,
+        user_id: sqlSess.reservations?.user_id,
+        reservation_id: sqlSess.reservation_id,
+        check_out: nowIso,
+        statut: 'completed',
+        espace: esp,
+      });
+
+      return res.json({
+        server_now: nowIso,
+        session: updSess || { ...sqlSess, check_out: nowIso, statut: 'completed' },
+        overtime,
+        paiement: overtimePay,
+      });
+    }
+
+    // 2. Chercher dans fallback walkin_sessions
+    if (tid) {
+      const settings = await readTenantSettingsSafe(tid);
+      const walkins = Array.isArray(settings.walkin_sessions) ? settings.walkin_sessions : [];
+      const idx = walkins.findIndex((w) => w.id === id);
+      if (idx >= 0) {
+        const w = walkins[idx];
+        if (w.check_out && w.statut === 'completed') {
+          return res.json({ already_stopped: true, session: w, server_now: nowIso });
+        }
+        const { data: esp } = await supabaseAdmin.from('espaces').select('*').eq('id', w.espace_id).maybeSingle();
+        const bill = computeWalkinBilling({
+          startedAt: w.started_at || w.check_in,
+          stoppedAt: nowIso,
+          tarifHoraireHT: esp?.tarif_horaire_ht ?? computeHTFromTTC(esp?.tarif_horaire || 0, esp?.tva_pct ?? DEFAULT_TVA_PCT),
+          tarifJournalierHT: esp?.tarif_journalier_ht ?? computeHTFromTTC(esp?.tarif_journalier || 0, esp?.tva_pct ?? DEFAULT_TVA_PCT),
+          tvaPct: esp?.tva_pct ?? DEFAULT_TVA_PCT,
+        });
+        const updated = {
+          ...w,
+          check_out: nowIso,
+          stopped_at: nowIso,
+          statut: 'completed',
+          tranches_15min: bill.billedSlices,
+          montant_calcule_ht: bill.montantHT,
+          montant_calcule_ttc: bill.montantTTC,
+        };
+        const nextList = [...walkins];
+        nextList[idx] = updated;
+        await saveWalkinFallback(tid, nextList);
+
+        let paiement = null;
+        if (bill.montantTTC > 0) {
+          const validModes = ['cash', 'check', 'bank_transfer', 'card'];
+          const { data: payRow } = await supabaseAdmin
+            .from('paiements')
+            .insert({
+              user_id: w.personne_id || null,
+              montant: bill.montantTTC,
+              mode: validModes.includes(mode_paiement) ? mode_paiement : 'cash',
+              statut: encaisser_maintenant ? 'paid' : 'pending',
+              ...(encaisser_maintenant ? { date_paiement: nowIso, montant_encaisse: bill.montantTTC } : {}),
+              tenant_id: tid,
+              reference_externe: `WALKIN-${bill.billedSlices}T`,
+            })
+            .select('*')
+            .maybeSingle();
+          paiement = payRow || null;
+        }
+
+        await logActivity({
+          tenantId: tid,
+          req,
+          action: 'arret_walkin',
+          entityType: 'session',
+          entityId: id,
+          entityLabel: `${w.client_nom || 'Client sur place'} (${bill.montantTTC.toFixed(3)} DT TTC)`,
+          afterData: bill,
+        });
+
+        return res.json({ server_now: nowIso, session: updated, billing: bill, paiement });
+      }
+    }
+
+    return res.status(404).json({ error: 'Session introuvable.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/sessions/:id/extend — Prolongation 1 clic facturable si créneau suivant libre
+async function extendSession(req, res) {
+  try {
+    const { id } = req.params;
+    const minutes = Math.max(15, Math.min(240, parseInt(req.body?.minutes, 10) || 30));
+
+    const { data: sess, error: sErr } = await supabaseAdmin
+      .from('sessions')
+      .select('*, reservations(*, espaces(*))')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (sErr || !sess || !sess.reservations) {
+      return res.status(404).json({ error: 'Session liée à une réservation introuvable.' });
+    }
+
+    const resRow = sess.reservations;
+    const isStaff = ['super_admin', 'admin', 'staff'].includes(req.profile?.role);
+    if (!isStaff && resRow.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Action non autorisée.' });
+    }
+
+    const tid = resRow.tenant_id || req.tenantId || resRow.espaces?.tenant_id;
+    const tamponMinutes = await getTenantTamponMinutes(supabaseAdmin, tid);
+    const units = tid ? await loadSpaceUnitsForTenant(supabaseAdmin, tid, resRow.espace_id) : [];
+    const targetUnite = resRow.unite_id ? units.find((u) => u.id === resRow.unite_id) : null;
+    const oldEndMs = new Date(resRow.date_fin).getTime();
+    const newEndIso = new Date(oldEndMs + minutes * 60 * 1000).toISOString();
+
+    const avail = await checkAvailabilityWithBuffer({
+      supabaseAdmin,
+      tenantId: tid,
+      espace: resRow.espaces || { id: resRow.espace_id, type: 'open_space', capacite: 1, nom: 'Espace' },
+      unite: targetUnite,
+      dateDebut: resRow.date_fin,
+      dateFin: newEndIso,
+      tamponMinutes,
+      excludeReservationId: resRow.id,
+    });
+    if (!avail.isAvailable) {
+      return res.status(409).json({
+        error: avail.reason || 'Impossible de prolonger : créneau suivant déjà réservé.',
+        conflict: true,
+        alternatives: avail.alternatives,
+      });
+    }
+
+    const tva = Number(resRow.tva_pct_applique ?? resRow.espaces?.tva_pct ?? DEFAULT_TVA_PCT);
+    const tarifTTC = roundMillime(resRow.espaces?.tarif_horaire || 0);
+    const tarifHT = resRow.tarif_applique_ht != null
+      ? roundMillime(resRow.tarif_applique_ht)
+      : (resRow.espaces?.tarif_horaire_ht != null ? roundMillime(resRow.espaces.tarif_horaire_ht) : computeHTFromTTC(tarifTTC, tva));
+    const supplementHT = roundMillime((minutes / 60) * tarifHT);
+    const supplementTTC = computeTTC(supplementHT, tva);
+
+    await supabaseAdmin
+      .from('reservations')
+      .update({
+        date_fin: newEndIso,
+        montant_ht: roundMillime(Number(resRow.montant_ht || 0) + supplementHT),
+        montant_ttc: roundMillime(Number(resRow.montant_ttc ?? resRow.montant_total ?? 0) + supplementTTC),
+        montant_total: roundMillime(Number(resRow.montant_total || 0) + supplementTTC),
+      })
+      .eq('id', resRow.id)
+      .catch(() => supabaseAdmin.from('reservations').update({ date_fin: newEndIso }).eq('id', resRow.id));
+
+    await supabaseAdmin
+      .from('sessions')
+      .update({ temps_restant: computeRemainingMinutes(newEndIso), statut: 'active' })
+      .eq('id', id);
+
+    let paiement = null;
+    if (supplementTTC > 0 && resRow.user_id) {
+      const { data: pRow } = await supabaseAdmin
+        .from('paiements')
+        .insert({
+          user_id: resRow.user_id,
+          reservation_id: resRow.id,
+          montant: supplementTTC,
+          mode: 'cash',
+          statut: 'pending',
+          tenant_id: tid,
+          reference_externe: `PROLONGATION-${minutes}MIN`,
+        })
+        .select('*')
+        .maybeSingle();
+      paiement = pRow || null;
+    }
+
+    await logActivity({
+      tenantId: tid,
+      req,
+      action: 'prolongation_session',
+      entityType: 'session',
+      entityId: id,
+      entityLabel: `+${minutes} min (${supplementTTC.toFixed(3)} DT TTC)`,
+      afterData: { date_fin: newEndIso, supplement_ht: supplementHT, supplement_ttc: supplementTTC },
+    });
+
+    res.json({
+      server_now: new Date().toISOString(),
+      reservation_id: resRow.id,
+      date_fin: newEndIso,
+      supplement_ht: supplementHT,
+      supplement_ttc: supplementTTC,
+      paiement,
+      message: `Session prolongée de ${minutes} min (+${supplementTTC.toFixed(3)} DT TTC).`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/sessions/auto-close-sweep
+async function autoCloseSweep(req, res) {
+  try {
+    const alerts = await runAutoCloseSweepForTenant(req.tenantId, req);
+    res.json({ server_now: new Date().toISOString(), auto_closed_alerts: alerts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getCancellationPolicyRoute,
   updateCancellationPolicyRoute,
@@ -690,4 +1511,9 @@ module.exports = {
   checkOut,
   getLiveSessions,
   releaseSession,
+  startSession,
+  startWalkinSession,
+  stopSession,
+  extendSession,
+  autoCloseSweep,
 };

@@ -11,6 +11,8 @@ import {
   formatCountdown,
 } from './floorPlanConstants';
 import { formatDT, formatTimeTunis } from '../../utils/format';
+import Money from '../common/Money';
+import UnitStatusModal from '../units/UnitStatusModal';
 
 export default function FloorPlanLiveView({ onToast, onError }) {
   const { dark } = useTheme();
@@ -25,6 +27,7 @@ export default function FloorPlanLiveView({ onToast, onError }) {
   const [tickNowMs, setTickNowMs] = useState(() => Date.now());
   const [serverDriftMs, setServerDriftMs] = useState(0);
   const [collectMode, setCollectMode] = useState('cash');
+  const [statusModalUnit, setStatusModalUnit] = useState(null);
 
   const loadLive = useCallback(async (planIdOverride = null, silent = false) => {
     try {
@@ -55,6 +58,7 @@ export default function FloorPlanLiveView({ onToast, onError }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => loadLive(activePlanId, true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, () => loadLive(activePlanId, true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paiements' }, () => loadLive(activePlanId, true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'unites' }, () => loadLive(activePlanId, true))
       .subscribe();
 
     return () => {
@@ -99,25 +103,35 @@ export default function FloorPlanLiveView({ onToast, onError }) {
       occupied: items.filter((i) => i.live_status === 'occupied').length,
       alert: items.filter((i) => ['ending_soon', 'overtime'].includes(i.live_status)).length,
       maintenance: items.filter((i) => i.live_status === 'maintenance').length,
+      unavailable: items.filter((i) => i.live_status === 'unavailable').length,
     };
   }, [activePlan]);
 
-  // Calcul live côté client basé sur serverDriftMs
+  // Calcul live côté client basé sur serverDriftMs + started_at
   const computeLiveTiming = (item) => {
-    if (!item || !item.date_fin) return { secondsRemaining: 0, overtimeSeconds: 0, isOvertime: false };
+    if (!item) return { secondsRemaining: 0, overtimeSeconds: 0, elapsedSeconds: 0, isOvertime: false, isEndingSoon: false };
+    const startRef = item.started_at || item.check_in;
+    const elapsedSeconds = startRef ? Math.max(0, Math.floor((tickNowMs - new Date(startRef).getTime()) / 1000)) : 0;
+    if (!item.date_fin) return { secondsRemaining: 0, overtimeSeconds: 0, elapsedSeconds, isOvertime: false, isEndingSoon: false };
     const finMs = new Date(item.date_fin).getTime();
     const diffSec = Math.floor((finMs - tickNowMs) / 1000);
     if (item.session_id && diffSec < 0) {
-      return { secondsRemaining: 0, overtimeSeconds: Math.abs(diffSec), isOvertime: true };
+      return { secondsRemaining: 0, overtimeSeconds: Math.abs(diffSec), elapsedSeconds, isOvertime: true, isEndingSoon: false };
     }
-    return { secondsRemaining: Math.max(0, diffSec), overtimeSeconds: 0, isOvertime: false };
+    return {
+      secondsRemaining: Math.max(0, diffSec),
+      overtimeSeconds: 0,
+      elapsedSeconds,
+      isOvertime: false,
+      isEndingSoon: diffSec > 0 && diffSec <= 15 * 60,
+    };
   };
 
   const handleRelease = async (item) => {
     if (!item?.session_id) return;
     try {
       setBusyAction(true);
-      const res = await sessionApi.release(item.session_id);
+      const res = await sessionApi.stop(item.session_id);
       onToast?.(res.message || "C'est bon, la ressource a été libérée.");
       await loadLive(activePlan?.id, true);
     } catch (e) {
@@ -127,15 +141,29 @@ export default function FloorPlanLiveView({ onToast, onError }) {
     }
   };
 
+  const handleExtend = async (item, minutes = 30) => {
+    if (!item?.session_id) return;
+    try {
+      setBusyAction(true);
+      const res = await sessionApi.extend(item.session_id, { minutes });
+      onToast?.(res.message || `Prolongée de ${minutes} min.`);
+      await loadLive(activePlan?.id, true);
+    } catch (e) {
+      onError?.(e.message || 'Créneau suivant occupé, prolongation impossible.');
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
   const handleCheckIn = async (item) => {
     if (!item?.reservation_id) return;
     try {
       setBusyAction(true);
-      const res = await sessionApi.checkIn({ reservation_id: item.reservation_id, force: true });
-      onToast?.(res.warning || 'Check-in enregistré.');
+      const res = await sessionApi.start({ reservation_id: item.reservation_id });
+      onToast?.(res.already_started ? 'Chronomètre déjà actif.' : 'Chronomètre démarré côté serveur.');
       await loadLive(activePlan?.id, true);
     } catch (e) {
-      onError?.(e.message || 'Erreur lors du check-in.');
+      onError?.(e.message || 'Erreur lors du démarrage.');
     } finally {
       setBusyAction(false);
     }
@@ -248,6 +276,11 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             <span className="px-2.5 py-1 rounded-full bg-slate-500/15 text-slate-600 dark:text-slate-300">
               {counts.maintenance} Maintenance
             </span>
+            {counts.unavailable > 0 && (
+              <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-800 dark:text-amber-300">
+                {counts.unavailable} Non disponible
+              </span>
+            )}
             <button
               type="button"
               onClick={() => loadLive(activePlan?.id, true)}
@@ -267,7 +300,8 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             { key: 'occupied', label: 'Occupé / Réservé' },
             { key: 'ending_soon', label: 'Bientôt terminée (-15 min)' },
             { key: 'overtime', label: 'En dépassement' },
-            { key: 'maintenance', label: 'Maintenance (rayé)' },
+            { key: 'maintenance', label: 'En maintenance (hachuré)' },
+            { key: 'unavailable', label: 'Non disponible' },
           ].map((lg) => {
             const st = palette.statuses[lg.key];
             return (
@@ -298,9 +332,9 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                     ● {item.status_label}
                   </span>
                 </div>
-                {item.space_name && <p className="opacity-75 text-[11px]">{item.space_name}</p>}
+                {item.space_name && <p className="opacity-75 text-xs">{item.space_name}</p>}
                 {item.date_fin && (
-                  <p className="text-[11px] font-semibold">
+                  <p className="text-xs font-semibold">
                     Fin prévue : {formatTimeTunis(item.date_fin)}
                     {item.client_name ? ` · ${item.client_name}` : ''}
                   </p>
@@ -326,14 +360,14 @@ export default function FloorPlanLiveView({ onToast, onError }) {
             <div className="space-y-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-secondary">
+                  <span className="text-xs font-bold uppercase tracking-wider text-secondary">
                     {getItemTypeMeta(selectedItem.item_type).shortLabel}
                   </span>
                   <h4 className="font-sora font-bold text-lg">{selectedItem.label}</h4>
                   <p className="text-xs opacity-75">{selectedItem.space_name || 'Non associé à un espace'}</p>
                 </div>
                 <span
-                  className="px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0"
+                  className="px-2.5 py-1 rounded-full text-xs font-bold shrink-0"
                   style={{
                     backgroundColor: palette.statuses[selectedItem.live_status || 'free']?.dot + '22',
                     color: palette.statuses[selectedItem.live_status || 'free']?.dot,
@@ -403,7 +437,7 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                             : 'bg-slate-500/10 border-outline-variant/20'
                         }`}
                       >
-                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-75">
+                        <p className="text-xs font-bold uppercase tracking-wider opacity-75">
                           {t.isOvertime ? 'En dépassement depuis' : 'Temps restant (Minuteur live)'}
                         </p>
                         <p className="font-sora text-2xl font-extrabold mt-1">
@@ -421,24 +455,37 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                   {/* Actions staff obligatoires */}
                   <div className="space-y-2">
                     {selectedItem.session_id ? (
-                      <button
-                        type="button"
-                        disabled={busyAction}
-                        onClick={() => handleRelease(selectedItem)}
-                        className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
-                        « C&apos;est bon, libérée »
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          disabled={busyAction}
+                          onClick={() => handleExtend(selectedItem, 30)}
+                          style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                          className="w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm hover:opacity-95 disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>more_time</span>
+                          Prolonger (+30 min facturable)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyAction}
+                          onClick={() => handleRelease(selectedItem)}
+                          className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                          Arrêter / Libérer la ressource
+                        </button>
+                      </>
                     ) : (
                       <button
                         type="button"
                         disabled={busyAction}
                         onClick={() => handleCheckIn(selectedItem)}
-                        className="w-full py-2.5 px-4 rounded-xl bg-secondary hover:bg-secondary/90 text-white font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                        style={{ backgroundColor: '#f95d00', color: '#ffffff' }}
+                        className="w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 17 }}>login</span>
-                        Enregistrer le Check-in
+                        <span className="material-symbols-outlined" style={{ fontSize: 17 }}>play_arrow</span>
+                        Démarrer le chronomètre (Check-in)
                       </button>
                     )}
 
@@ -477,22 +524,54 @@ export default function FloorPlanLiveView({ onToast, onError }) {
                 </div>
               )}
 
-              {/* Toggle maintenance rapide si poste libre ou en maintenance */}
-              {!selectedItem.reservation_id && !selectedItem.is_formation && (
-                <button
-                  type="button"
-                  disabled={busyAction}
-                  onClick={() => handleToggleMaintenance(selectedItem)}
-                  className="w-full py-2 px-3 rounded-xl border border-outline-variant/30 text-xs font-semibold hover:bg-slate-500/10 flex items-center justify-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>construction</span>
-                  {selectedItem.status === 'maintenance' ? 'Remettre en service' : 'Passer en maintenance'}
-                </button>
+              {/* Toggle maintenance / statut unité si poste libre ou en maintenance */}
+              {!selectedItem.reservation_id && !selectedItem.is_formation && !selectedItem.is_walkin && (
+                selectedItem.unite_id ? (
+                  <button
+                    type="button"
+                    disabled={busyAction}
+                    onClick={() =>
+                      setStatusModalUnit({
+                        id: selectedItem.unite_id,
+                        code: selectedItem.unite_code || selectedItem.label,
+                        nom: selectedItem.label,
+                        statut: selectedItem.unite_statut || 'disponible',
+                        motif_interne: selectedItem.motif_interne || '',
+                        date_retour_auto: selectedItem.date_retour_auto || null,
+                      })
+                    }
+                    className="w-full py-2 px-3 rounded-xl border border-outline-variant/30 text-xs font-semibold hover:bg-slate-500/10 flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>construction</span>
+                    Changer statut unité ({selectedItem.status_label})
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busyAction}
+                    onClick={() => handleToggleMaintenance(selectedItem)}
+                    className="w-full py-2 px-3 rounded-xl border border-outline-variant/30 text-xs font-semibold hover:bg-slate-500/10 flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>construction</span>
+                    {selectedItem.status === 'maintenance' ? 'Remettre en service' : 'Passer en maintenance'}
+                  </button>
+                )
               )}
             </div>
           )}
         </div>
       </div>
+
+      <UnitStatusModal
+        unite={statusModalUnit}
+        isOpen={Boolean(statusModalUnit)}
+        onClose={() => setStatusModalUnit(null)}
+        onSaved={() => {
+          onToast?.('Statut de l\'unité mis à jour.');
+          loadLive(activePlan?.id, true);
+        }}
+      />
     </div>
   );
 }
+

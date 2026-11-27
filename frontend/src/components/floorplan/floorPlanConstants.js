@@ -135,6 +135,14 @@ export function getFloorPlanPalette(dark = false) {
         dot: '#64748b',
         furniture: dark ? 'rgba(148, 163, 184, 0.25)' : 'rgba(100, 116, 139, 0.22)',
       },
+      unavailable: {
+        label: 'Non disponible',
+        fill: dark ? 'url(#fp-hatch-unavailable-dark)' : 'url(#fp-hatch-unavailable-light)',
+        stroke: '#d97706',
+        text: dark ? '#fde68a' : '#92400e',
+        dot: '#d97706',
+        furniture: dark ? 'rgba(245, 158, 11, 0.22)' : 'rgba(217, 119, 6, 0.18)',
+      },
     },
   };
 }
@@ -189,3 +197,4 @@ export function getDefaultTunisSlot() {
     end: `${String(endH).padStart(2, '0')}:00`,
   };
 }
+

@@ -148,6 +148,7 @@ export async function apiFetch(path, options = {}, retried = false) {
         const err = new Error(message);
         err.status = response.status;
         err.body = body;
+        err.data = body;
         throw err;
       }
 
