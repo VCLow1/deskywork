@@ -625,25 +625,27 @@ export default function AdminReservations({ session }) {
                                 Expire à {formatTime24h(b.confirmation_expires_at)}
                               </p>
                             )}
+                            {b.statut === 'refused' && (b.motif_refus || b.motif_annulation) && (
+                              <p className="text-xs text-rose-700 font-medium mt-0.5 max-w-[200px] truncate" title={b.motif_refus || b.motif_annulation}>
+                                {b.motif_refus || b.motif_annulation}
+                              </p>
+                            )}
                           </td>
 
-                      {/* Statut Badge */}
-                      <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${cfg.badgeClass}`}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{cfg.icon}</span>
-                          <span>{cfg.label}</span>
-                        </span>
-                        {b.statut === 'en_attente_confirmation' && b.confirmation_expires_at && (
-                          <p className="text-xs text-[#c2410c] font-semibold mt-0.5">
-                            Expire à {formatTime24h(b.confirmation_expires_at)}
-                          </p>
-                        )}
-                        {b.statut === 'refused' && (b.motif_refus || b.motif_annulation) && (
-                          <p className="text-xs text-rose-700 font-medium mt-0.5 max-w-[200px] truncate" title={b.motif_refus || b.motif_annulation}>
-                            {b.motif_refus || b.motif_annulation}
-                          </p>
-                        )}
-                      </td>
+                          {/* Menu d'actions explicites avec libellés (LOT 3) */}
+                          <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1.5 relative">
+                              {(b.statut === 'pending' || b.statut === 'en_attente_confirmation') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmBooking(b)}
+                                  disabled={isActing}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-50"
+                                >
+                                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
+                                  <span>Confirmer</span>
+                                </button>
+                              )}
 
                               {b.statut === 'confirmed' && !activeSess && (
                                 <button
@@ -716,41 +718,33 @@ export default function AdminReservations({ session }) {
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => { setOpenMenuId(null); handleUpdateStatus(b.id, 'refused', 'Refuser cette réservation ?', 'Réservation refusée.'); }}
+                                          onClick={() => {
+                                            setOpenMenuId(null);
+                                            setRefuseModalBooking(b);
+                                            setRefuseMotif('');
+                                          }}
                                           className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
                                         >
                                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>block</span>
-                                          Refuser
+                                          Refuser (avec motif)
                                         </button>
                                       </>
                                     )}
 
-                            {openMenuId === b.id && (
-                              <div className="absolute right-0 mt-1.5 w-56 rounded-2xl border border-outline-variant/25 bg-white shadow-xl z-40 py-1.5 text-left text-xs font-semibold">
-                                {(b.statut === 'pending' || b.statut === 'en_attente_confirmation') && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => { setOpenMenuId(null); handleConfirmBooking(b); }}
-                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700"
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
-                                      Confirmer
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenMenuId(null);
-                                        setRefuseModalBooking(b);
-                                        setRefuseMotif('');
-                                      }}
-                                      className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>block</span>
-                                      Refuser (avec motif)
-                                    </button>
-                                  </>
-                                )}
+                                    {['pending', 'confirmed', 'en_attente_confirmation', 'waitlisted'].includes(b.statut) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenMenuId(null);
+                                          setCancelModalBooking(b);
+                                          setCancelMotif('');
+                                        }}
+                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                      >
+                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>cancel</span>
+                                        Annuler (avec motif)
+                                      </button>
+                                    )}
 
                                     {['pending', 'confirmed', 'en_attente_confirmation'].includes(b.statut) && (
                                       <>
