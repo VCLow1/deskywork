@@ -731,170 +731,170 @@ export default function AdminReservations({ session }) {
                                       </>
                                     )}
 
-                                    {['pending', 'confirmed', 'en_attente_confirmation', 'waitlisted'].includes(b.statut) && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setOpenMenuId(null);
-                                          setCancelModalBooking(b);
-                                          setCancelMotif('');
-                                        }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>cancel</span>
-                                        Annuler (avec motif)
-                                      </button>
-                                    )}
+                                        {['pending', 'confirmed', 'en_attente_confirmation', 'waitlisted'].includes(b.statut) && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setOpenMenuId(null);
+                                              setCancelModalBooking(b);
+                                              setCancelMotif('');
+                                            }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>cancel</span>
+                                            Annuler (avec motif)
+                                          </button>
+                                        )}
 
-                                    {['pending', 'confirmed', 'en_attente_confirmation'].includes(b.statut) && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenMenuId(null);
-                                            setMoveModalBooking(b);
-                                            setMoveAlternatives(null);
-                                            setMoveForm({
-                                              date: new Date(b.date_debut).toISOString().slice(0, 10),
-                                              heure_debut: formatTime24h(b.date_debut) || '09:00',
-                                              heure_fin: formatTime24h(b.date_fin) || '12:00',
-                                              unite_id: b.unite_id || '',
-                                            });
-                                          }}
-                                          className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
-                                        >
-                                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>drive_file_move</span>
-                                          Déplacer
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={async () => {
-                                            setOpenMenuId(null);
-                                            setActionId(b.id);
-                                            try {
-                                              const r = await bookingApi.extend(b.id, { minutes: 60 });
-                                              showToast(r.message || 'Prolongée de +1h (facturable).');
+                                        {['pending', 'confirmed', 'en_attente_confirmation'].includes(b.statut) && (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setOpenMenuId(null);
+                                                setMoveModalBooking(b);
+                                                setMoveAlternatives(null);
+                                                setMoveForm({
+                                                  date: new Date(b.date_debut).toISOString().slice(0, 10),
+                                                  heure_debut: formatTime24h(b.date_debut) || '09:00',
+                                                  heure_fin: formatTime24h(b.date_fin) || '12:00',
+                                                  unite_id: b.unite_id || '',
+                                                });
+                                              }}
+                                              className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
+                                            >
+                                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>drive_file_move</span>
+                                              Déplacer
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={async () => {
+                                                setOpenMenuId(null);
+                                                setActionId(b.id);
+                                                try {
+                                                  const r = await bookingApi.extend(b.id, { minutes: 60 });
+                                                  showToast(r.message || 'Prolongée de +1h (facturable).');
+                                                  await loadData();
+                                                } catch (err) {
+                                                  setError(err.message);
+                                                } finally {
+                                                  setActionId(null);
+                                                }
+                                              }}
+                                              className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
+                                            >
+                                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>more_time</span>
+                                              Prolonger (+1h)
+                                            </button>
+                                          </>
+                                        )}
+
+                                        {b.statut === 'confirmed' && !activeSess && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setOpenMenuId(null);
+                                              await sessionApi.start({ reservation_id: b.id });
+                                              showToast('Check-in validé.');
                                               await loadData();
-                                            } catch (err) {
-                                              setError(err.message);
-                                            } finally {
-                                              setActionId(null);
-                                            }
-                                          }}
-                                          className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
-                                        >
-                                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>more_time</span>
-                                          Prolonger (+1h)
-                                        </button>
-                                      </>
-                                    )}
+                                            }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>login</span>
+                                            Check-in
+                                          </button>
+                                        )}
 
-                                    {b.statut === 'confirmed' && !activeSess && (
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          setOpenMenuId(null);
-                                          await sessionApi.start({ reservation_id: b.id });
-                                          showToast('Check-in validé.');
-                                          await loadData();
-                                        }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-primary"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>login</span>
-                                        Check-in
-                                      </button>
-                                    )}
+                                        {activeSess && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setOpenMenuId(null);
+                                              await sessionApi.stop(activeSess.id);
+                                              showToast('Check-out validé.');
+                                              await loadData();
+                                            }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>logout</span>
+                                            Check-out
+                                          </button>
+                                        )}
 
-                                    {activeSess && (
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          setOpenMenuId(null);
-                                          await sessionApi.stop(activeSess.id);
-                                          showToast('Check-out validé.');
-                                          await loadData();
-                                        }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>logout</span>
-                                        Check-out
-                                      </button>
-                                    )}
+                                        {pendingPayment && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setOpenMenuId(null);
+                                              await paymentApi.collect(pendingPayment.id, { mode_paiement: 'cash' });
+                                              showToast('Paiement encaissé.');
+                                              await loadData();
+                                            }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>payments</span>
+                                            Encaisser
+                                          </button>
+                                        )}
 
-                                    {pendingPayment && (
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          setOpenMenuId(null);
-                                          await paymentApi.collect(pendingPayment.id, { mode_paiement: 'cash' });
-                                          showToast('Paiement encaissé.');
-                                          await loadData();
-                                        }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>payments</span>
-                                        Encaisser
-                                      </button>
-                                    )}
+                                        {paidPayment && (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => { setOpenMenuId(null); paymentApi.downloadReceipt(paidPayment.id); }}
+                                              className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
+                                            >
+                                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>receipt_long</span>
+                                              Télécharger le reçu
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setOpenMenuId(null);
+                                                navigate(`/admin/payments?tab=remboursements&search=${encodeURIComponent(paidPayment.id)}`);
+                                              }}
+                                              className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
+                                            >
+                                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>currency_exchange</span>
+                                              Rembourser
+                                            </button>
+                                          </>
+                                        )}
 
-                                    {paidPayment && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => { setOpenMenuId(null); paymentApi.downloadReceipt(paidPayment.id); }}
-                                          className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-[#f95d00]"
-                                        >
-                                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>receipt_long</span>
-                                          Télécharger le reçu
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenMenuId(null);
-                                            navigate(`/admin/payments?tab=remboursements&search=${encodeURIComponent(paidPayment.id)}`);
-                                          }}
-                                          className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-rose-700"
-                                        >
-                                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>currency_exchange</span>
-                                          Rembourser
-                                        </button>
-                                      </>
-                                    )}
+                                        {b.statut === 'confirmed' && !noShowBlocked && (
+                                          <button
+                                            type="button"
+                                            onClick={() => { setOpenMenuId(null); handleUpdateStatus(b.id, 'no_show', 'Marquer No-show (Absent) ?', 'No-show (Absent) enregistré.'); }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_off</span>
+                                            No-show (Absent)
+                                          </button>
+                                        )}
 
-                                    {b.statut === 'confirmed' && !noShowBlocked && (
-                                      <button
-                                        type="button"
-                                        onClick={() => { setOpenMenuId(null); handleUpdateStatus(b.id, 'no_show', 'Marquer No-show (Absent) ?', 'No-show (Absent) enregistré.'); }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-800"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_off</span>
-                                        No-show (Absent)
-                                      </button>
-                                    )}
-
-                                    {isManager && !b.archived_at && (
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          setOpenMenuId(null);
-                                          if (!window.confirm('Archiver cette réservation ? Elle restera dans l\'historique.')) return;
-                                          try {
-                                            await bookingApi.archive(b.id);
-                                            showToast('Réservation archivée.');
-                                            await loadData();
-                                          } catch (err) {
-                                            setError(err.message);
-                                          }
-                                        }}
-                                        className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-on-surface-variant border-t border-outline-variant/10 mt-1"
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>archive</span>
-                                        Archiver
-                                      </button>
+                                        {isManager && !b.archived_at && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setOpenMenuId(null);
+                                              if (!window.confirm('Archiver cette réservation ? Elle restera dans l\'historique.')) return;
+                                              try {
+                                                await bookingApi.archive(b.id);
+                                                showToast('Réservation archivée.');
+                                                await loadData();
+                                              } catch (err) {
+                                                setError(err.message);
+                                              }
+                                            }}
+                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-on-surface-variant border-t border-outline-variant/10 mt-1"
+                                          >
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>archive</span>
+                                            Archiver
+                                          </button>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
-                                )}
-                              </div>
                             </div>
                           </td>
                         </tr>
@@ -984,78 +984,78 @@ export default function AdminReservations({ session }) {
             </div>
           )}
 
-      {refuseModalBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (refuseMotif.trim().length < 3) {
-                setError('Saisissez un motif de refus (minimum 3 caractères).');
-                return;
-              }
-              try {
-                await bookingApi.update(refuseModalBooking.id, {
-                  statut: 'refused',
-                  motif_refus: refuseMotif.trim(),
-                });
-                const { data: linkedForm } = await supabase
-                  .from('formations')
-                  .select('id')
-                  .eq('reservation_id', refuseModalBooking.id)
-                  .maybeSingle();
-                if (linkedForm) {
-                  await supabase.from('formations').update({ statut: 'annulee' }).eq('id', linkedForm.id);
-                }
-                setRefuseModalBooking(null);
-                setRefuseMotif('');
-                showToast('Réservation refusée avec motif transmis au membre.');
-                await loadData();
-              } catch (err) {
-                setError(err.message);
-              }
-            }}
-            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3 text-left"
-          >
-            <h3 className="font-sora text-base font-bold text-primary">Refuser la réservation</h3>
-            <p className="text-xs text-on-surface-variant">
-              Ce motif sera visible directement par le membre sur sa page « Mes réservations » et dans son e-mail.
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                'Salle indisponible pour maintenance',
-                'Capacité / effectif non compatible',
-                'Créneau réservé à un événement privé',
-              ].map((tpl) => (
-                <button
-                  key={tpl}
-                  type="button"
-                  onClick={() => setRefuseMotif(tpl)}
-                  className="px-2.5 py-1 rounded-lg border border-outline-variant/25 text-xs font-semibold text-primary hover:border-[#f95d00]"
-                >
-                  {tpl}
-                </button>
-              ))}
+          {refuseModalBooking && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (refuseMotif.trim().length < 3) {
+                    setError('Saisissez un motif de refus (minimum 3 caractères).');
+                    return;
+                  }
+                  try {
+                    await bookingApi.update(refuseModalBooking.id, {
+                      statut: 'refused',
+                      motif_refus: refuseMotif.trim(),
+                    });
+                    const { data: linkedForm } = await supabase
+                      .from('formations')
+                      .select('id')
+                      .eq('reservation_id', refuseModalBooking.id)
+                      .maybeSingle();
+                    if (linkedForm) {
+                      await supabase.from('formations').update({ statut: 'annulee' }).eq('id', linkedForm.id);
+                    }
+                    setRefuseModalBooking(null);
+                    setRefuseMotif('');
+                    showToast('Réservation refusée avec motif transmis au membre.');
+                    await loadData();
+                  } catch (err) {
+                    setError(err.message);
+                  }
+                }}
+                className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-3 text-left"
+              >
+                <h3 className="font-sora text-base font-bold text-primary">Refuser la réservation</h3>
+                <p className="text-xs text-on-surface-variant">
+                  Ce motif sera visible directement par le membre sur sa page « Mes réservations » et dans son e-mail.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Salle indisponible pour maintenance',
+                    'Capacité / effectif non compatible',
+                    'Créneau réservé à un événement privé',
+                  ].map((tpl) => (
+                    <button
+                      key={tpl}
+                      type="button"
+                      onClick={() => setRefuseMotif(tpl)}
+                      className="px-2.5 py-1 rounded-lg border border-outline-variant/25 text-xs font-semibold text-primary hover:border-[#f95d00]"
+                    >
+                      {tpl}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  required
+                  minLength={3}
+                  rows={3}
+                  value={refuseMotif}
+                  onChange={(e) => setRefuseMotif(e.target.value)}
+                  placeholder="Saisissez le motif du refus (obligatoire)…"
+                  className="w-full rounded-xl border border-slate-300 p-3 text-xs"
+                />
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setRefuseModalBooking(null)} className="rounded-xl border px-4 py-2 text-xs font-semibold">
+                    Fermer
+                  </button>
+                  <button type="submit" className="rounded-xl bg-rose-600 text-white px-4 py-2 text-xs font-bold">
+                    Confirmer le refus
+                  </button>
+                </div>
+              </form>
             </div>
-            <textarea
-              required
-              minLength={3}
-              rows={3}
-              value={refuseMotif}
-              onChange={(e) => setRefuseMotif(e.target.value)}
-              placeholder="Saisissez le motif du refus (obligatoire)…"
-              className="w-full rounded-xl border border-slate-300 p-3 text-xs"
-            />
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setRefuseModalBooking(null)} className="rounded-xl border px-4 py-2 text-xs font-semibold">
-                Fermer
-              </button>
-              <button type="submit" className="rounded-xl bg-rose-600 text-white px-4 py-2 text-xs font-bold">
-                Confirmer le refus
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          )}
 
           {moveModalBooking && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
@@ -1136,7 +1136,8 @@ export default function AdminReservations({ session }) {
             </div>
           )}
         </>
-      )}
-    </PortalLayout>
+      )
+      }
+    </PortalLayout >
   );
 }
